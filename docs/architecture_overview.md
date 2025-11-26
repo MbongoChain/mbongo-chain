@@ -1,448 +1,644 @@
 # Mbongo Chain — Architecture Overview
 
-This document provides a high-level overview of the Mbongo Chain architecture, designed for developers, researchers, and contributors who want to understand how the system works.
+High-level system architecture for Mbongo Chain, a compute-first Layer 1 blockchain.
 
 ---
 
-## 1. Introduction
+## 1. High-Level Summary
 
-**Mbongo Chain** is a compute-first Layer 1 blockchain built entirely in Rust. It combines **Proof of Stake (PoS)** for economic security with **Proof of Useful Work (PoUW)** for verifiable compute validation.
+### What is Mbongo Chain?
 
-The protocol is optimized for:
+**Mbongo Chain** is a next-generation Layer 1 blockchain designed from the ground up for verifiable compute, decentralized GPU coordination, and secure state execution. Built entirely in Rust, the protocol combines economic security with computational utility.
 
-- AI inference and training workloads
-- High-performance computing (HPC) tasks
-- Parallelizable batch processing
-- Decentralized GPU coordination
-
-Mbongo Chain achieves 1-second block times with deterministic execution, enabling real-time compute markets at global scale.
-
----
-
-## 2. Design Philosophy
-
-### Core Principles
-
-| Principle | Description |
-|-----------|-------------|
-| **Rust-Native** | Built from scratch in Rust with no legacy code or compatibility layers |
-| **Secure-by-Default** | Memory safety, type safety, and explicit error handling throughout |
-| **Modular** | Clear separation between networking, consensus, execution, and storage |
-| **Developer-Friendly** | Clean APIs, comprehensive documentation, and intuitive tooling |
-| **Compute-First** | Designed around verifiable compute rather than simple token transfers |
-
-### Why Compute-First?
-
-Traditional blockchains optimize for financial transactions. Mbongo Chain optimizes for **compute verification** — proving that specific computations were performed correctly. This enables:
-
-- Trustless AI model inference
-- Verifiable scientific computations
-- Decentralized rendering and simulation
-- Provably fair resource allocation
-
----
-
-## 3. High-Level Architecture
+### Core Design Principles
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                              CLI                                    │
-│                    (Developer Interface)                            │
-└───────────────────────────┬─────────────────────────────────────────┘
-                            │
-┌───────────────────────────▼─────────────────────────────────────────┐
-│                             NODE                                    │
-│              (Orchestration & Coordination Layer)                   │
-├─────────────┬─────────────┬─────────────┬─────────────┬─────────────┤
-│             │             │             │             │             │
-│  ┌──────────▼──────────┐  │  ┌──────────▼──────────┐  │             │
-│  │     NETWORKING      │  │  │       MEMPOOL       │  │             │
-│  │   (P2P Protocol)    │  │  │  (Tx Queue/Relay)   │  │             │
-│  └──────────┬──────────┘  │  └──────────┬──────────┘  │             │
-│             │             │             │             │             │
-│             └─────────────┼─────────────┘             │             │
-│                           │                           │             │
-│             ┌─────────────▼─────────────┐             │             │
-│             │         RUNTIME           │             │             │
-│             │   (State Machine Logic)   │             │             │
-│             └─────────────┬─────────────┘             │             │
-│                           │                           │             │
-│             ┌─────────────▼─────────────┐             │             │
-│             │    EXECUTION ENGINE       │             │             │
-│             │  (Transaction Processing) │             │             │
-│             └─────────────┬─────────────┘             │             │
-│                           │                           │             │
-│  ┌────────────────────────┼────────────────────────┐  │             │
-│  │                        │                        │  │             │
-│  │  ┌─────────▼─────────┐ │ ┌─────────▼─────────┐  │  │             │
-│  │  │      STORAGE      │ │ │     CONSENSUS     │  │  │             │
-│  │  │   (State/Blocks)  │ │ │   (PoS + PoUW)    │  │  │             │
-│  │  └───────────────────┘ │ └───────────────────┘  │  │             │
-│  └────────────────────────┴────────────────────────┘  │             │
-│                                                       │             │
-└───────────────────────────────────────────────────────┴─────────────┘
-                            │
-              ┌─────────────▼─────────────┐
-              │          CRYPTO           │
-              │   (Primitives & Proofs)   │
-              └───────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     MBONGO CHAIN CORE PRINCIPLES                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  COMPUTE-FIRST ARCHITECTURE                                                 │
+│  ──────────────────────────                                                 │
+│  • Security computation produces real value (AI, ML, scientific)           │
+│  • PoUW transforms waste energy into useful work                           │
+│  • Native support for GPU-accelerated workloads                            │
+│  • Deterministic execution for verifiable compute proofs                   │
+│                                                                             │
+│  HYBRID CONSENSUS (PoS + PoUW)                                              │
+│  ─────────────────────────────                                              │
+│  • PoS provides economic security and finality                             │
+│  • PoUW validates useful computation                                       │
+│  • Combined weight determines canonical chain                              │
+│  • Sustainable security model                                              │
+│                                                                             │
+│  RUST-NATIVE FULL NODE                                                      │
+│  ─────────────────────                                                      │
+│  • No legacy code or compatibility layers                                  │
+│  • Memory safety and performance by design                                 │
+│  • Modern async/await patterns                                             │
+│  • Modular crate architecture                                              │
+│                                                                             │
+│  SECURE EXECUTION PIPELINE                                                  │
+│  ─────────────────────────                                                  │
+│  • Secure mempool with prioritization                                      │
+│  • Deterministic state machine                                             │
+│  • Modular execution engine                                                │
+│  • Verifiable state transitions                                            │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **1-second block time** | Fast finality for responsive applications |
+| **Hybrid consensus** | PoS for security, PoUW for compute utility |
+| **Deterministic execution** | Bit-for-bit reproducible across nodes |
+| **Modular architecture** | Clean separation of concerns |
+| **GPU-ready** | Architecture supports GPU acceleration |
+| **Developer-friendly** | Comprehensive docs, modern tooling |
+
+---
+
+## 2. System Diagram
+
+### Full Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     MBONGO CHAIN ARCHITECTURE                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+                              ┌─────────────────┐
+                              │   EXTERNAL      │
+                              │   CLIENTS       │
+                              │  (RPC/WebSocket)│
+                              └────────┬────────┘
+                                       │
+                                       ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              NODE LAYER                                     │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                         NETWORKING LAYER                            │   │
+│  │                                                                     │   │
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐            │   │
+│  │  │  Peer    │  │  Gossip  │  │   Sync   │  │ Message  │            │   │
+│  │  │ Discovery│  │ Protocol │  │  Engine  │  │  Router  │            │   │
+│  │  └──────────┘  └──────────┘  └──────────┘  └──────────┘            │   │
+│  │                                                                     │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                          MEMPOOL LAYER                              │   │
+│  │                                                                     │   │
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐            │   │
+│  │  │    Tx    │  │ Priority │  │ Eviction │  │ Broadcast│            │   │
+│  │  │Validation│  │  Queue   │  │  Policy  │  │  Logic   │            │   │
+│  │  └──────────┘  └──────────┘  └──────────┘  └──────────┘            │   │
+│  │                                                                     │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                         CONSENSUS LAYER                             │   │
+│  │                                                                     │   │
+│  │  ┌────────────────────────┐  ┌────────────────────────┐            │   │
+│  │  │       PoS ENGINE       │  │      PoUW ENGINE       │            │   │
+│  │  │                        │  │                        │            │   │
+│  │  │  • Stake Management    │  │  • Compute Tasks       │            │   │
+│  │  │  • Leader Election     │  │  • Proof Verification  │            │   │
+│  │  │  • Slashing Logic      │  │  • Scoring System      │            │   │
+│  │  │  • Finality Gadget     │  │  • Receipt Validation  │            │   │
+│  │  │                        │  │                        │            │   │
+│  │  └───────────┬────────────┘  └────────────┬───────────┘            │   │
+│  │              │                            │                         │   │
+│  │              └──────────┬─────────────────┘                         │   │
+│  │                         │                                           │   │
+│  │              ┌──────────▼──────────┐                                │   │
+│  │              │   FORK CHOICE RULE  │                                │   │
+│  │              │                     │                                │   │
+│  │              │  W = 0.7×Stake +    │                                │   │
+│  │              │      0.3×Compute    │                                │   │
+│  │              └─────────────────────┘                                │   │
+│  │                                                                     │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                       STATE MACHINE LAYER                           │   │
+│  │                                                                     │   │
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐            │   │
+│  │  │    Tx    │  │Execution │  │   Gas    │  │  Receipt │            │   │
+│  │  │ Dispatch │  │  Engine  │  │ Metering │  │Generator │            │   │
+│  │  └──────────┘  └──────────┘  └──────────┘  └──────────┘            │   │
+│  │                        │                                            │   │
+│  │              ┌─────────▼─────────┐                                  │   │
+│  │              │  STATE TRANSITION │                                  │   │
+│  │              │                   │                                  │   │
+│  │              │  Pre → Exec → Post│                                  │   │
+│  │              └───────────────────┘                                  │   │
+│  │                                                                     │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                         STORAGE LAYER                               │   │
+│  │                                                                     │   │
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐            │   │
+│  │  │  Block   │  │  State   │  │ Receipt  │  │Checkpoint│            │   │
+│  │  │  Store   │  │  Trie    │  │  Store   │  │  Chain   │            │   │
+│  │  └──────────┘  └──────────┘  └──────────┘  └──────────┘            │   │
+│  │                                                                     │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Node Roles
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          NODE ROLES                                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  FULL NODE                                                                  │
+│  ─────────                                                                  │
+│  • Validates all blocks and transactions                                   │
+│  • Maintains complete state                                                │
+│  • Relays transactions and blocks                                          │
+│  • Does NOT produce blocks                                                 │
+│                                                                             │
+│  VALIDATOR NODE                                                             │
+│  ──────────────                                                             │
+│  • Full node + block production rights                                     │
+│  • Stakes tokens for participation                                         │
+│  • Proposes and signs blocks                                               │
+│  • Subject to slashing for misbehavior                                     │
+│                                                                             │
+│  GUARDIAN NODE (Planned)                                                    │
+│  ────────────────────────                                                   │
+│  • Header-only validation                                                  │
+│  • Checkpoint verification                                                 │
+│  • Lightweight monitoring                                                  │
+│  • No full state storage                                                   │
+│                                                                             │
+│  LIGHT NODE (Planned)                                                       │
+│  ────────────────────                                                       │
+│  • Minimal state (headers only)                                            │
+│  • Relies on full nodes for proofs                                         │
+│  • Suitable for mobile/constrained devices                                 │
+│  • ZK proofs for verification (future)                                     │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Network Topology
+
+```
+                              ┌─────────────┐
+                              │  VALIDATOR  │
+                              │    NODE     │
+                              └──────┬──────┘
+                                     │
+         ┌───────────────────────────┼───────────────────────────┐
+         │                           │                           │
+         ▼                           ▼                           ▼
+  ┌─────────────┐            ┌─────────────┐            ┌─────────────┐
+  │  FULL NODE  │◀──────────▶│  FULL NODE  │◀──────────▶│  FULL NODE  │
+  └──────┬──────┘            └──────┬──────┘            └──────┬──────┘
+         │                          │                          │
+         ▼                          ▼                          ▼
+  ┌─────────────┐            ┌─────────────┐            ┌─────────────┐
+  │  GUARDIAN   │            │   LIGHT     │            │  GUARDIAN   │
+  │    NODE     │            │   NODE      │            │    NODE     │
+  └─────────────┘            └─────────────┘            └─────────────┘
 ```
 
 ---
 
-## 4. Core Components
+## 3. Execution Pipeline Overview
 
-### 4.1 Node
-
-The **Node** module is the orchestration layer that coordinates all other components.
-
-**Responsibilities:**
-- Lifecycle management (startup, shutdown, restart)
-- Configuration loading and validation
-- Inter-module communication
-- Event routing and dispatch
-- Health monitoring and metrics
-
-**Location:** `/node/src/`
-
----
-
-### 4.2 Networking
-
-The **Networking** module handles all peer-to-peer communication.
-
-**Responsibilities:**
-- Peer discovery and connection management
-- Message serialization and transport
-- Block and transaction gossip
-- Network topology management
-- DoS protection and rate limiting
-
-**Protocol:** libp2p-based with custom Mbongo extensions
-
-**Location:** `/network/src/`
-
----
-
-### 4.3 Crypto
-
-The **Crypto** module provides cryptographic primitives used throughout the system.
-
-**Responsibilities:**
-- Hash functions (block hashes, transaction IDs)
-- Digital signatures (Ed25519, future BLS support)
-- Keypair generation and management
-- Merkle tree construction
-- Proof serialization
-
-**Location:** `/crypto/src/`
-
----
-
-### 4.4 Mempool
-
-The **Mempool** manages pending transactions before they are included in blocks.
-
-**Responsibilities:**
-- Transaction ingestion and validation
-- Priority ordering (fee-based, compute-weighted)
-- Duplicate detection and rejection
-- Expiration and eviction policies
-- Transaction relay to peers
-
-**Location:** `/runtime/src/` (integrated with runtime)
-
----
-
-### 4.5 Runtime
-
-The **Runtime** module implements the blockchain's state machine.
-
-**Responsibilities:**
-- State representation and transitions
-- Block validation rules
-- Transaction format enforcement
-- Account and balance management
-- System parameter governance
-
-**Location:** `/runtime/src/`
-
----
-
-### 4.6 Execution Engine
-
-The **Execution Engine** processes transactions and produces state changes.
-
-**Responsibilities:**
-- Transaction execution (apply operations to state)
-- Gas/compute metering
-- Deterministic execution guarantees
-- State root computation
-- Receipt generation
-
-**Location:** `/runtime/src/` (integrated with runtime)
-
----
-
-### 4.7 PoW Module (Compute Verification)
-
-The **PoW** module implements Proof of Useful Work for compute verification.
-
-**Responsibilities:**
-- Compute task definition and distribution
-- Proof generation interface
-- Proof verification logic
-- Reward calculation for compute providers
-- Integration with consensus layer
-
-**Location:** `/pow/src/`
-
----
-
-### 4.8 CLI
-
-The **CLI** module provides developer and operator tooling.
-
-**Responsibilities:**
-- Node management commands
-- Key generation and wallet operations
-- Transaction submission
-- Chain inspection and debugging
-- Configuration management
-
-**Location:** `/cli/src/`
-
----
-
-## 5. Block Lifecycle
-
-A block progresses through the following stages:
+### Transaction Lifecycle
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│ Transaction │────▶│  Validation │────▶│   Mempool   │
-│  Received   │     │   (Format)  │     │   (Queue)   │
-└─────────────┘     └─────────────┘     └──────┬──────┘
-                                               │
-                    ┌──────────────────────────┘
-                    │
-              ┌─────▼─────┐     ┌─────────────┐     ┌─────────────┐
-              │   Block   │────▶│   Runtime   │────▶│    State    │
-              │  Assembly │     │  Execution  │     │ Transition  │
-              └───────────┘     └─────────────┘     └──────┬──────┘
-                                                          │
-                    ┌─────────────────────────────────────┘
-                    │
-              ┌─────▼─────┐     ┌─────────────┐     ┌─────────────┐
-              │   Block   │────▶│  Consensus  │────▶│   Network   │
-              │  Sealing  │     │  Finality   │     │   Gossip    │
-              └───────────┘     └─────────────┘     └─────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     TRANSACTION LIFECYCLE                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │ 1. TRANSACTION SUBMISSION                                                │
+  │    User submits transaction via RPC                                     │
+  └────────────────────────────────────────────────────────────┬─────────────┘
+                                                               │
+                                                               ▼
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │ 2. TRANSACTION VALIDATION                                                │
+  │    • Signature verification                                             │
+  │    • Nonce check                                                        │
+  │    • Balance check                                                      │
+  │    • Gas limit validation                                               │
+  └────────────────────────────────────────────────────────────┬─────────────┘
+                                                               │
+                                                               ▼
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │ 3. GOSSIP PROPAGATION                                                    │
+  │    • Broadcast to connected peers                                       │
+  │    • Flood protection                                                   │
+  │    • Deduplication                                                      │
+  └────────────────────────────────────────────────────────────┬─────────────┘
+                                                               │
+                                                               ▼
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │ 4. MEMPOOL PRIORITIZATION                                                │
+  │    • Fee-based ordering                                                 │
+  │    • Gas price sorting                                                  │
+  │    • Account nonce ordering                                             │
+  │    • Eviction of low-priority txs                                       │
+  └────────────────────────────────────────────────────────────┬─────────────┘
+                                                               │
+                                                               ▼
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │ 5. BLOCK BUILDING                                                        │
+  │    • Validator selects transactions                                     │
+  │    • Orders by priority                                                 │
+  │    • Respects gas limit                                                 │
+  └────────────────────────────────────────────────────────────┬─────────────┘
+                                                               │
+                                                               ▼
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │ 6. BLOCK VALIDATION                                                      │
+  │    • Header validation                                                  │
+  │    • PoUW receipt verification                                          │
+  │    • Transaction validation                                             │
+  │    • State root comparison                                              │
+  └────────────────────────────────────────────────────────────┬─────────────┘
+                                                               │
+                                                               ▼
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │ 7. STATE TRANSITION                                                      │
+  │    • Execute transactions                                               │
+  │    • Update account states                                              │
+  │    • Generate receipts                                                  │
+  │    • Compute new state root                                             │
+  └────────────────────────────────────────────────────────────┬─────────────┘
+                                                               │
+                                                               ▼
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │ 8. FINALITY                                                              │
+  │    • Block committed to chain                                           │
+  │    • Checkpoint created (periodic)                                      │
+  │    • State finalized                                                    │
+  └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Detailed Flow
-
-1. **Transaction Received** — Node receives transaction from user or peer
-2. **Validation** — Format, signature, and basic validity checks
-3. **Mempool** — Valid transactions queued by priority
-4. **Block Assembly** — Block producer selects transactions for inclusion
-5. **Runtime Execution** — Transactions executed against current state
-6. **State Transition** — New state root computed from execution results
-7. **Block Sealing** — Block header finalized with state root and signatures
-8. **Consensus Finality** — PoS validators attest to block validity
-9. **Network Gossip** — Finalized block propagated to all peers
-
----
-
-## 6. Consensus Overview
-
-Mbongo Chain uses a **hybrid consensus model** combining Proof of Stake with Proof of Useful Work.
-
-### Proof of Stake (PoS)
-
-**Role:** Economic security and block finality
-
-- Validators stake tokens to participate in consensus
-- Block producers are selected based on stake weight
-- Attestations from validators finalize blocks
-- Slashing penalties discourage misbehavior
-
-### Proof of Useful Work (PoUW)
-
-**Role:** Compute verification and resource allocation
-
-- Compute providers prove they performed useful work
-- Proofs are verified on-chain with minimal overhead
-- Valid proofs earn compute rewards
-- Work includes AI inference, scientific computation, rendering
-
-### Hybrid Model Benefits
-
-| Aspect | PoS Contribution | PoUW Contribution |
-|--------|------------------|-------------------|
-| Security | Economic finality | Compute integrity |
-| Incentives | Staking rewards | Compute rewards |
-| Participation | Token holders | Compute providers |
-| Attack Cost | Capital requirements | Hardware + computation |
-
-The hybrid model ensures that both capital and computation are required to attack the network, significantly raising the cost of malicious behavior.
-
----
-
-## 7. Storage & State
-
-### State Model
-
-Mbongo Chain maintains the following state:
-
-| State Type | Description |
-|------------|-------------|
-| **Account State** | Balances, nonces, metadata for all accounts |
-| **System State** | Chain parameters, validator set, epoch data |
-| **Compute State** | Active compute tasks, proofs, rewards |
-| **Block State** | Block headers, transaction receipts, state roots |
-
-### Data Flow
+### State Transition Flow
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│ Transaction │────▶│  Execution  │────▶│    State    │
-│   Input     │     │   Engine    │     │   Change    │
-└─────────────┘     └─────────────┘     └──────┬──────┘
-                                               │
-                                        ┌──────▼──────┐
-                                        │   Merkle    │
-                                        │    Root     │
-                                        └──────┬──────┘
-                                               │
-                                        ┌──────▼──────┐
-                                        │   Storage   │
-                                        │  (Persist)  │
-                                        └─────────────┘
+   Pre-State                    Execution                    Post-State
+  ┌──────────┐              ┌──────────────┐              ┌──────────┐
+  │          │              │              │              │          │
+  │ Account  │──────────────│  Apply Tx    │──────────────│ Account  │
+  │ Balances │              │              │              │ Balances │
+  │          │              │  • Debit     │              │          │
+  │ Nonces   │              │  • Credit    │              │ Nonces   │
+  │          │              │  • Update    │              │          │
+  │ Storage  │              │              │              │ Storage  │
+  │          │              │              │              │          │
+  └──────────┘              └──────────────┘              └──────────┘
+       │                                                        │
+       │                                                        │
+       ▼                                                        ▼
+  State Root A                                            State Root B
 ```
 
-### Storage Backend
+### Finality Model
 
-- **In-Memory:** Development and testing (current implementation)
-- **RocksDB:** Production persistent storage (planned)
-- **Archive Mode:** Full historical state (planned)
-
----
-
-## 8. Node Responsibilities
-
-A Mbongo Chain node performs the following duties:
-
-### Network Operations
-- **Peer Discovery** — Find and connect to other nodes
-- **Block Propagation** — Receive and relay new blocks
-- **Transaction Relay** — Gossip pending transactions
-- **State Sync** — Download chain state from peers
-
-### Consensus Operations
-- **Block Production** — Assemble and propose new blocks (if validator)
-- **Attestation** — Vote on block validity (if validator)
-- **Finalization** — Track and apply finalized blocks
-
-### Execution Operations
-- **Transaction Processing** — Execute transactions in blocks
-- **State Management** — Maintain and update chain state
-- **Receipt Generation** — Produce execution receipts
-
-### Storage Operations
-- **Block Storage** — Persist blocks and headers
-- **State Storage** — Store account and system state
-- **Pruning** — Remove old data per retention policy
+| Stage | Description | Reversibility |
+|-------|-------------|---------------|
+| **Pending** | Transaction in mempool | Fully reversible |
+| **Included** | Transaction in block | Reorganizable |
+| **Confirmed** | Block has N confirmations | Unlikely reversal |
+| **Finalized** | Checkpoint reached | Irreversible |
 
 ---
 
-## 9. Security Model
+## 4. Consensus Overview
 
-### Safety Assumptions
+### Hybrid PoS + PoUW Model
 
-Mbongo Chain's security relies on:
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     HYBRID CONSENSUS MODEL                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
 
-| Assumption | Requirement |
-|------------|-------------|
-| **Honest Majority** | >2/3 of staked tokens controlled by honest validators |
-| **Network Synchrony** | Messages delivered within known time bounds |
-| **Cryptographic Hardness** | Hash functions and signatures remain secure |
+  ┌───────────────────────────────┐    ┌───────────────────────────────┐
+  │        PROOF OF STAKE         │    │    PROOF OF USEFUL WORK       │
+  │           (70%)               │    │           (30%)               │
+  ├───────────────────────────────┤    ├───────────────────────────────┤
+  │                               │    │                               │
+  │  • Economic security          │    │  • Compute verification       │
+  │  • Validator selection        │    │  • Useful work scoring        │
+  │  • Slashing penalties         │    │  • Receipt validation         │
+  │  • Quick finality             │    │  • GPU market integration     │
+  │                               │    │                               │
+  └───────────────┬───────────────┘    └───────────────┬───────────────┘
+                  │                                    │
+                  └──────────────┬─────────────────────┘
+                                 │
+                                 ▼
+                  ┌───────────────────────────────┐
+                  │       FORK CHOICE RULE        │
+                  │                               │
+                  │   Weight = 0.7 × Stake +      │
+                  │           0.3 × Compute       │
+                  │                               │
+                  │   Canonical = max(Weight)     │
+                  └───────────────────────────────┘
+```
 
-### Validator Security
+### Chain Scoring (Placeholder)
 
-- **Slashing:** Validators lose stake for provable misbehavior
-  - Double signing (signing conflicting blocks)
-  - Surround voting (conflicting attestations)
-  - Inactivity (extended offline periods)
+```rust
+/// Chain weight calculation (placeholder)
+fn calculate_chain_weight(chain: &Chain) -> u128 {
+    let stake_weight = chain.total_stake();           // PoS component
+    let compute_weight = chain.total_compute_score(); // PoUW component
+    
+    // Weighted combination
+    (stake_weight * 70 / 100) + (compute_weight * 30 / 100)
+}
+```
 
-- **Key Management:** Validators must secure signing keys
-  - Hot keys for attestations
-  - Cold keys for withdrawals (planned)
+*Note: Exact scoring formula to be finalized in protocol specification.*
 
-### Compute Security
+### Validator Responsibilities
 
-- **Proof Verification:** All compute proofs verified on-chain
-- **Task Integrity:** Compute tasks cryptographically committed
-- **Result Validation:** Multiple providers can verify results
+| Responsibility | Description |
+|----------------|-------------|
+| **Stake tokens** | Lock tokens as collateral |
+| **Propose blocks** | Create new blocks when selected |
+| **Validate blocks** | Verify blocks from other validators |
+| **Sign attestations** | Confirm block validity |
+| **Maintain uptime** | Stay online and responsive |
+| **Execute honestly** | Follow protocol rules |
 
-### Attack Resistance
+### Guardian Responsibilities (Planned)
 
-| Attack Vector | Mitigation |
-|---------------|------------|
-| 51% Attack | High capital + compute requirements |
-| Long-Range Attack | Checkpointing and weak subjectivity |
-| DoS | Rate limiting and peer scoring |
-| Eclipse | Diverse peer connections |
+| Responsibility | Description |
+|----------------|-------------|
+| **Validate headers** | Verify block headers |
+| **Check signatures** | Validate proposer signatures |
+| **Track checkpoints** | Maintain finality checkpoints |
+| **Report violations** | Flag invalid blocks |
+| **Serve light clients** | Provide proofs to light nodes |
+
+### Security Assumptions
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     SECURITY ASSUMPTIONS                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  HONEST MAJORITY                                                            │
+│  • > 2/3 of stake is honest                                                │
+│  • Honest validators follow protocol                                       │
+│                                                                             │
+│  NETWORK SYNCHRONY                                                          │
+│  • Messages delivered within bounded time                                  │
+│  • Network partitions are temporary                                        │
+│                                                                             │
+│  CRYPTOGRAPHIC HARDNESS                                                     │
+│  • Hash functions are collision-resistant                                  │
+│  • Signatures are unforgeable                                              │
+│                                                                             │
+│  COMPUTE VERIFIABILITY                                                      │
+│  • PoUW tasks are deterministically verifiable                             │
+│  • Compute proofs cannot be forged                                         │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## 10. Future Extensions
+## 5. Networking Overview
 
-### Smart Contract Layer
+### Peer Discovery
 
-*Status: Planned*
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     PEER DISCOVERY                                          │
+└─────────────────────────────────────────────────────────────────────────────┘
 
-- WebAssembly (WASM) execution environment
-- Deterministic gas metering
-- Contract deployment and invocation
-- Standard token interfaces
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │ 1. BOOTSTRAP                                                             │
+  │    Node connects to hardcoded bootstrap nodes                           │
+  └──────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │ 2. PEER EXCHANGE (PEX)                                                   │
+  │    Request peer lists from connected nodes                              │
+  └──────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │ 3. CONNECTION ESTABLISHMENT                                              │
+  │    Connect to discovered peers, perform handshake                       │
+  └──────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │ 4. PEER SCORING                                                          │
+  │    Track peer behavior, prioritize reliable peers                       │
+  └──────────────────────────────────────────────────────────────────────────┘
+```
 
-### Cross-Chain Interoperability
+### Peer Exchange (PEX) and Scoring
 
-*Status: Planned*
+| Metric | Description | Weight |
+|--------|-------------|--------|
+| **Latency** | Response time | High |
+| **Uptime** | Connection stability | Medium |
+| **Data quality** | Valid blocks/txs provided | High |
+| **Protocol compliance** | Follows message protocol | Critical |
 
-- Light client bridges to other chains
-- Asset transfer protocols
-- Message passing interfaces
-- Trustless verification
+### Transport Layer
 
-### Off-Chain Compute Marketplace
+| Feature | Current | Planned |
+|---------|---------|---------|
+| **Protocol** | TCP | QUIC |
+| **Encryption** | TLS 1.3 | TLS 1.3 |
+| **Multiplexing** | Single stream | Multi-stream |
+| **0-RTT** | No | Yes |
 
-*Status: In Development*
+### Message Types
 
-- Compute task bidding and matching
-- Provider reputation system
-- Automated pricing and settlement
-- SLA enforcement
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     MESSAGE TYPES                                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  CONTROL MESSAGES                                                           │
+│  • Ping/Pong           – Liveness check                                    │
+│  • Handshake           – Protocol negotiation                              │
+│  • PeerList            – Peer discovery                                    │
+│                                                                             │
+│  DATA MESSAGES                                                              │
+│  • Transaction         – New transaction                                   │
+│  • Block               – Full block                                        │
+│  • BlockHeader         – Header only                                       │
+│  • PoUWReceipt         – Compute proof                                     │
+│                                                                             │
+│  SYNC MESSAGES                                                              │
+│  • GetHeaders          – Request headers                                   │
+│  • GetBlocks           – Request block bodies                              │
+│  • GetState            – Request state data                                │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
-### Additional Roadmap Items
+---
 
-- [ ] Hardware security module (HSM) support
-- [ ] Threshold signatures for validators
-- [ ] Zero-knowledge proof integration
-- [ ] Sharding for horizontal scaling
-- [ ] Data availability sampling
+## 6. Storage Overview
+
+### Storage Components
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     STORAGE ARCHITECTURE                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │                           BLOCK STORE                                    │
+  │                                                                          │
+  │  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐         │
+  │  │  Headers   │  │   Bodies   │  │  Receipts  │  │   Index    │         │
+  │  │            │  │            │  │            │  │            │         │
+  │  │ hash→header│  │ hash→txs  │  │ hash→rcpts │  │height→hash │         │
+  │  └────────────┘  └────────────┘  └────────────┘  └────────────┘         │
+  │                                                                          │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │                           STATE TRIE                                     │
+  │                                                                          │
+  │  ┌────────────┐  ┌────────────┐  ┌────────────┐                         │
+  │  │  Accounts  │  │  Balances  │  │  Storage   │                         │
+  │  │            │  │            │  │            │                         │
+  │  │ addr→acct  │  │ addr→bal   │  │ addr→data  │                         │
+  │  └────────────┘  └────────────┘  └────────────┘                         │
+  │                                                                          │
+  │                    State Root: 0x...                                     │
+  │                                                                          │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │                         MEMPOOL STORAGE                                  │
+  │                                                                          │
+  │  ┌────────────┐  ┌────────────┐  ┌────────────┐                         │
+  │  │  Pending   │  │ Priority Q │  │  By Sender │                         │
+  │  │            │  │            │  │            │                         │
+  │  │ hash→tx    │  │ fee→hash   │  │ addr→[tx]  │                         │
+  │  └────────────┘  └────────────┘  └────────────┘                         │
+  │                                                                          │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │                        CHECKPOINT CHAIN                                  │
+  │                                                                          │
+  │  ┌────────────┐  ┌────────────┐  ┌────────────┐                         │
+  │  │Checkpoint 1│──│Checkpoint 2│──│Checkpoint 3│──▶ ...                  │
+  │  │ Height: 100│  │ Height: 200│  │ Height: 300│                         │
+  │  │ Root: 0x.. │  │ Root: 0x.. │  │ Root: 0x.. │                         │
+  │  └────────────┘  └────────────┘  └────────────┘                         │
+  │                                                                          │
+  └──────────────────────────────────────────────────────────────────────────┘
+```
+
+### Storage Summary
+
+| Store | Content | Persistence | Size |
+|-------|---------|-------------|------|
+| **Block Store** | Headers, bodies, receipts | Permanent | ~100 GB/year |
+| **State Trie** | Account states | Latest + archive | Variable |
+| **Mempool** | Pending transactions | Ephemeral | ~100 MB |
+| **Checkpoints** | Finality markers | Permanent | Small |
+
+### Checkpoint Model
+
+Checkpoints provide:
+- **Finality guarantee** — Blocks before checkpoint are irreversible
+- **Sync optimization** — New nodes can start from checkpoint
+- **Light client support** — Minimal data for verification
+
+---
+
+## 7. Roadmap Links
+
+### Core Documentation
+
+| Document | Description |
+|----------|-------------|
+| [developer_introduction.md](developer_introduction.md) | Comprehensive introduction for new developers |
+| [developer_environment.md](developer_environment.md) | Environment setup and tooling guide |
+| [getting_started.md](getting_started.md) | Quick start guide (5 minutes) |
+| [developer_workflow.md](developer_workflow.md) | Git workflow and contribution process |
+
+### Architecture Deep Dives
+
+| Document | Description |
+|----------|-------------|
+| [final_architecture_overview.md](final_architecture_overview.md) | Complete end-to-end architecture |
+| [runtime_architecture.md](runtime_architecture.md) | Execution engine and state machine |
+| [node_architecture.md](node_architecture.md) | Node internals and module interactions |
+| [consensus_overview.md](consensus_overview.md) | PoS + PoUW consensus model |
+| [networking_overview.md](networking_overview.md) | P2P networking layer |
+
+### Validation & Sync
+
+| Document | Description |
+|----------|-------------|
+| [block_validation_pipeline.md](block_validation_pipeline.md) | Block validation from proposal to commit |
+| [consensus_validation.md](consensus_validation.md) | Consensus rules and validation |
+| [state_machine_validation.md](state_machine_validation.md) | State transition validation |
+| [sync_validation.md](sync_validation.md) | Chain synchronization mechanisms |
+
+### Components
+
+| Document | Description |
+|----------|-------------|
+| [mempool_overview.md](mempool_overview.md) | Transaction pool design and lifecycle |
+| [guardian_status.md](guardian_status.md) | Guardian node role and architecture |
+
+### Project Planning
+
+| Document | Description |
+|----------|-------------|
+| [roadmap.md](roadmap.md) | Quarterly development roadmap |
+| [setup_validation.md](setup_validation.md) | Environment validation checklist |
 
 ---
 
 ## Summary
 
-Mbongo Chain is a modular, Rust-native blockchain designed for verifiable compute at scale. Its hybrid PoS + PoUW consensus provides both economic security and compute integrity, enabling a new class of decentralized applications.
+Mbongo Chain is a compute-first Layer 1 blockchain with:
 
-For implementation details, see the [Developer Guide](developer_guide.md).
+- **Hybrid PoS + PoUW consensus** for security and utility
+- **Rust-native architecture** for performance and safety
+- **Modular design** for maintainability and extensibility
+- **Deterministic execution** for verifiable computation
+- **Modern networking** with planned QUIC support
+- **Comprehensive documentation** for developer onboarding
 
-For contribution guidelines, see [CONTRIBUTING.md](../CONTRIBUTING.md).
+The architecture prioritizes:
+1. Security through economic incentives and cryptographic proofs
+2. Performance through efficient Rust implementation
+3. Utility through Proof of Useful Work
+4. Developer experience through comprehensive tooling and docs
 
 ---
 
 **Mbongo Chain** — Compute-first blockchain infrastructure for the global future.
-
