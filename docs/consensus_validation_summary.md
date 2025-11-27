@@ -1,3 +1,4 @@
+<!-- Verified against tokenomics.md -->
 # Mbongo Chain — Consensus Validation Summary
 
 > **Document Type:** Technical Specification  
@@ -200,7 +201,7 @@ LIVENESS INVARIANT:
 | `PC-08` | Not Conflicting | `¬∃ v: v.voter == voter ∧ v.block_hash ≠ vote.block_hash` | `E_CONFLICTING_PRECOMMIT` |
 | `PC-09` | Lock Respected | `locked_block == null ∨ vote.block_hash == locked_block` | `E_LOCK_VIOLATION` |
 
-#### B.3 Weight Accumulation (70% Stake + 30% GPU Compute)
+#### B.3 Weight Accumulation (50% Stake + 50% GPU Compute)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────────┐
@@ -215,8 +216,8 @@ LIVENESS INVARIANT:
 │   pouw_component(v)  = (pouw_score[v.voter] / total_pouw) × POUW_COEFFICIENT           │
 │                                                                                         │
 │   Where:                                                                                │
-│     STAKE_COEFFICIENT = 0.70                                                           │
-│     POUW_COEFFICIENT  = 0.30                                                           │
+│     STAKE_COEFFICIENT = 0.50                                                           │
+│     POUW_COEFFICIENT  = 0.50                                                           │
 │                                                                                         │
 │   AGGREGATION:                                                                          │
 │   ────────────                                                                          │
@@ -524,7 +525,7 @@ MAX_ROUNDS         = 10       // Maximum rounds before skip
         ┌───────────────┐
         │ Compute Vote  │
         │ Weight        │
-        │ (70%S + 30%G) │
+        │ (50%S + 50%G) │
         └───────┬───────┘
                 │
                 ▼
@@ -968,7 +969,7 @@ pub fn validate_precommit(
     prevote_quorum: &VoteQuorum,
 ) -> Result<ValidatedVote, ValidationError>;
 
-/// Compute vote weight (70% stake + 30% PoUW)
+/// Compute vote weight (50% stake + 50% PoUW)
 pub fn compute_vote_weight(
     voter: &ValidatorId,
     stake_weights: &StakeWeights,
@@ -1173,7 +1174,7 @@ mod tests {
     
     #[test]
     fn test_weight_calculation_correct() {
-        // 70% stake + 30% PoUW
+        // 50% stake + 50% PoUW
         let stake_weights = StakeWeights::new(vec![
             (VALIDATOR_A, 1000),
             (VALIDATOR_B, 500),
@@ -1184,7 +1185,7 @@ mod tests {
         ]);
         
         let weight_a = compute_vote_weight(&VALIDATOR_A, &stake_weights, &pouw_scores);
-        // A: (1000/1500)*0.70 + (100/500)*0.30 = 0.467 + 0.06 = 0.527
+        // A: (1000/1500)*0.50 + (100/500)*0.50 = 0.333 + 0.10 = 0.433
         assert_approx_eq!(weight_a, 0.527, 0.001);
     }
     
@@ -1244,7 +1245,7 @@ mod tests {
         assert!(detect_weight_insufficiency(&votes, 0.667).is_some());
         
         // Add one more vote
-        let more_votes = create_votes_with_weights(vec![0.3, 0.2, 0.15, 0.05]); // Total: 0.70
+        let more_votes = create_votes_with_weights(vec![0.3, 0.2, 0.15, 0.05]); // Total: 0.70 (above threshold)
         assert!(detect_weight_insufficiency(&more_votes, 0.667).is_none());
     }
 }

@@ -1,3 +1,4 @@
+<!-- Verified against tokenomics.md -->
 # MBO Monetary Policy
 
 > **Document Type:** Monetary Policy Specification  
@@ -35,12 +36,12 @@ MBO has an **absolute fixed supply** that will never be increased:
 
 ## 3. Halving Schedule
 
-Block rewards are reduced by **50% every 5 years** (approximately every 78,840,000 blocks at 2-second block time).
+Block rewards are reduced by **50% every 5 years** (approximately every 157,680,000 blocks at 1-second block time).
 
 ### Halving Rules
 
 - Halving applies to **both PoS and PoUW reward budgets**
-- The 70/30 split between PoS and PoUW is maintained after each halving
+- The 50/50 split between PoS and PoUW is maintained after each halving
 - Halving occurs automatically at predetermined block heights
 - No manual intervention or governance vote required
 
@@ -51,8 +52,8 @@ Block rewards are reduced by **50% every 5 years** (approximately every 78,840,0
 │                                                             │
 │   Halving Interval:       5 years                          │
 │   Reward Reduction:       50% per halving                  │
-│   First Halving:          Year 5 (block ~78,840,000)       │
-│   PoS/PoUW Split:         Maintained at 70/30              │
+│   First Halving:          Year 5 (block ~157,680,000)      │
+│   PoS/PoUW Split:         Maintained at 50/50              │
 │                                                             │
 │   Post-Halving Rewards:                                    │
 │                                                             │
@@ -91,7 +92,7 @@ An **epoch** consists of a fixed number of blocks (e.g., 1,000 blocks). The epoc
 
 The **validator reward** is the portion of the block reward allocated to Proof-of-Stake participants:
 
-- **70%** of each block reward goes to PoS
+- **50%** of each block reward goes to PoS
 - Distributed to the block proposer
 - Proposer shares with delegators according to commission rate
 
@@ -99,7 +100,7 @@ The **validator reward** is the portion of the block reward allocated to Proof-o
 
 The **compute reward** is the portion of the block reward allocated to Proof-of-Useful-Work contributors:
 
-- **30%** of each block reward goes to PoUW
+- **50%** of each block reward goes to PoUW
 - Distributed proportionally to verified compute receipts in the block
 - GPU providers receive rewards based on task completion and score
 
@@ -116,7 +117,7 @@ The **compute reward** is the portion of the block reward allocated to Proof-of-
 │            │                             │                 │
 │            ▼                             ▼                 │
 │   ┌─────────────────┐           ┌─────────────────┐        │
-│   │   PoS (70%)     │           │   PoUW (30%)    │        │
+│   │   PoS (50%)     │           │   PoUW (50%)    │        │
 │   │                 │           │                 │        │
 │   │  → Proposer     │           │  → GPU Provider │        │
 │   │  → Delegators   │           │  → Task Score   │        │
@@ -138,24 +139,20 @@ The following table shows the projected reward schedule over the first 10 years:
 │                           MBO EMISSION SCHEDULE (YEARS 0-10)                             │
 ├──────────────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                          │
-│   Year   │ Block Reward │ Annual Emission  │ Cumulative Issued │ Remaining to Issue    │
+│   Years  │ Block Reward │ Annual Emission  │ Cumulative Issued │ Remaining to Issue    │
 │   ───────┼──────────────┼──────────────────┼───────────────────┼───────────────────────│
-│     1    │    1.0 MBO   │   15,768,000 MBO │    15,768,000 MBO │    15,768,000 MBO     │
-│     2    │    1.0 MBO   │   15,768,000 MBO │    31,536,000 MBO │             0 MBO     │
-│     3    │    0.5 MBO*  │    7,884,000 MBO │    (post-cap)     │             0 MBO     │
-│     4    │    0.5 MBO*  │    7,884,000 MBO │    (post-cap)     │             0 MBO     │
-│     5    │    0.5 MBO*  │    7,884,000 MBO │    (post-cap)     │             0 MBO     │
+│    0-5   │   0.1 MBO    │    3,153,600 MBO │    15,768,000 MBO │    15,768,000 MBO     │
+│    5-10  │  0.05 MBO    │    1,576,800 MBO │    23,652,000 MBO │     7,884,000 MBO     │
+│   10-15  │ 0.025 MBO    │      788,400 MBO │    27,594,000 MBO │     3,942,000 MBO     │
+│   15-20  │0.0125 MBO    │      394,200 MBO │    29,565,000 MBO │     1,971,000 MBO     │
+│   20-25  │0.00625 MBO   │      197,100 MBO │    30,550,500 MBO │       985,500 MBO     │
 │   ───────┼──────────────┼──────────────────┼───────────────────┼───────────────────────│
-│     6    │    0.25 MBO  │    3,942,000 MBO │    (post-cap)     │             0 MBO     │
-│     7    │    0.25 MBO  │    3,942,000 MBO │    (post-cap)     │             0 MBO     │
-│     8    │    0.25 MBO  │    3,942,000 MBO │    (post-cap)     │             0 MBO     │
-│     9    │    0.25 MBO  │    3,942,000 MBO │    (post-cap)     │             0 MBO     │
-│    10    │    0.25 MBO  │    3,942,000 MBO │    (post-cap)     │             0 MBO     │
+│    25+   │ Continues    │   Decreasing     │   Asymptotic      │   Approaching 0       │
 │                                                                                          │
-│   * After supply cap reached, rewards come from transaction fees and/or reserve         │
+│   Note: ~95% emitted by year ~20, ~99.9% by year ~50                                    │
 │                                                                                          │
-│   Block time: 2 seconds                                                                 │
-│   Blocks per year: ~15,768,000                                                          │
+│   Block time: 1 second                                                                  │
+│   Blocks per year: ~31,536,000                                                          │
 │   First halving: Year 5                                                                 │
 │                                                                                          │
 └──────────────────────────────────────────────────────────────────────────────────────────┘

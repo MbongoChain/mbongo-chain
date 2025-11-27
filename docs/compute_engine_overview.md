@@ -1,3 +1,4 @@
+<!-- Verified against tokenomics.md -->
 # Mbongo Chain — Compute Engine Overview
 
 > **Document Version:** 1.0  
@@ -277,8 +278,8 @@ Where:
 │            │      ┌───────────┐        │                            │
 │            └─────▶│  COMBINE  │◀───────┘                            │
 │                   │           │                                     │
-│                   │ α=0.6 PoS │                                     │
-│                   │ β=0.4 PoUW│                                     │
+│                   │ α=0.5 PoS │                                     │
+│                   │ β=0.5 PoUW│                                     │
 │                   └─────┬─────┘                                     │
 │                         │                                           │
 │                         ▼                                           │

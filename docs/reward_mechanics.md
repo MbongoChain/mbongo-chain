@@ -1,3 +1,4 @@
+<!-- Verified against tokenomics.md -->
 # Reward Mechanics & Distribution Model
 
 > **Document Type:** Reward Specification  
@@ -50,8 +51,8 @@ The total reward pool is distributed according to a fixed ratio:
 │                                                             │
 │   Recipient                    │  Share                    │
 │   ─────────────────────────────┼──────────────────────────│
-│   PoS Validators               │  70%                      │
-│   PoUW Compute Providers       │  30%                      │
+│   PoS Validators               │  50%                      │
+│   PoUW Compute Providers       │  50%                      │
 │   ─────────────────────────────┼──────────────────────────│
 │   Total                        │  100%                     │
 │                                                             │
@@ -147,7 +148,7 @@ Validators earn a performance multiplier based on operational metrics:
 Validator_Reward(v) = PoS_Pool × Stake_Weight(v) × Performance_Score(v)
 
 Where:
-  PoS_Pool = Total_Block_Reward × 0.70
+  PoS_Pool = Total_Block_Reward × 0.50
 ```
 
 ### 2.5 Slashing Overview
@@ -260,7 +261,7 @@ Each verified compute receipt generates a reward based on:
 │   Provider_Reward = PoUW_Pool × Provider_Share             │
 │                                                             │
 │   Where:                                                    │
-│     PoUW_Pool = Total_Block_Reward × 0.30                  │
+│     PoUW_Pool = Total_Block_Reward × 0.50                  │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -365,8 +366,8 @@ All collected fees are added to the block reward pool and distributed:
 │                                                             │
 │   Fee Distribution:                                         │
 │   ─────────────────                                         │
-│   • 70% to PoS Validators (proposer + attesters)           │
-│   • 30% to PoUW Providers (if receipts in block)           │
+│   • 50% to PoS Validators (proposer + attesters)           │
+│   • 50% to PoUW Providers (if receipts in block)           │
 │                                                             │
 │   If no PoUW receipts in block:                            │
 │   • 100% to PoS Validators                                 │
@@ -409,7 +410,7 @@ All collected fees are added to the block reward pool and distributed:
                     │                                         │
                     ▼                                         ▼
   ┌──────────────────────────────────┐      ┌──────────────────────────────────┐
-  │         PoS POOL (70%)           │      │        PoUW POOL (30%)           │
+  │         PoS POOL (50%)           │      │        PoUW POOL (50%)           │
   │                                  │      │                                  │
   │   Distribution by:               │      │   Distribution by:               │
   │   • Stake Weight                 │      │   • Work Units                   │
@@ -450,10 +451,10 @@ All collected fees are added to the block reward pool and distributed:
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
 │   Context:                                                  │
-│   • Block Reward: 1.0 MBO                                  │
-│   • Transaction Fees: 0.1 MBO                              │
-│   • Total Pool: 1.1 MBO                                    │
-│   • PoS Pool: 0.77 MBO (70%)                               │
+│   • Block Reward: 0.1 MBO                                  │
+│   • Transaction Fees: 0.01 MBO                             │
+│   • Total Pool: 0.11 MBO                                   │
+│   • PoS Pool: 0.055 MBO (50%)                              │
 │                                                             │
 │   Validator Stats:                                          │
 │   • Stake: 50,000 MBO                                      │
@@ -463,11 +464,11 @@ All collected fees are added to the block reward pool and distributed:
 │                                                             │
 │   Calculation:                                              │
 │   ─────────────                                             │
-│   Base Share = 0.77 × 0.05 = 0.0385 MBO                    │
-│   With Performance = 0.0385 × 0.95 = 0.0366 MBO            │
+│   Base Share = 0.055 × 0.05 = 0.00275 MBO                  │
+│   With Performance = 0.00275 × 0.95 = 0.0026 MBO           │
 │                                                             │
-│   Per-Block Reward: ~0.037 MBO                             │
-│   Daily Reward (43,200 blocks): ~1,598 MBO                 │
+│   Per-Block Reward: ~0.0026 MBO                            │
+│   Daily Reward (86,400 blocks): ~225 MBO                   │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -480,10 +481,10 @@ All collected fees are added to the block reward pool and distributed:
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
 │   Context:                                                  │
-│   • Block Reward: 1.0 MBO                                  │
-│   • Transaction Fees: 0.1 MBO                              │
-│   • Total Pool: 1.1 MBO                                    │
-│   • PoUW Pool: 0.33 MBO (30%)                              │
+│   • Block Reward: 0.1 MBO                                  │
+│   • Transaction Fees: 0.01 MBO                             │
+│   • Total Pool: 0.11 MBO                                   │
+│   • PoUW Pool: 0.055 MBO (50%)                             │
 │                                                             │
 │   Provider Stats:                                           │
 │   • Tasks Completed (block): 5                             │
@@ -494,10 +495,10 @@ All collected fees are added to the block reward pool and distributed:
 │   Calculation:                                              │
 │   ─────────────                                             │
 │   Work Share = 50 / 200 = 25%                              │
-│   Base Reward = 0.33 × 0.25 = 0.0825 MBO                   │
+│   Base Reward = 0.055 × 0.25 = 0.01375 MBO                 │
 │                                                             │
-│   Per-Block Reward: ~0.083 MBO                             │
-│   Daily Reward (if consistent): ~3,586 MBO                 │
+│   Per-Block Reward: ~0.014 MBO                             │
+│   Daily Reward (if consistent): ~1,200 MBO                 │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -510,22 +511,22 @@ All collected fees are added to the block reward pool and distributed:
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
 │   Context:                                                  │
-│   • Block Reward: 1.0 MBO                                  │
-│   • Transaction Fees: 5.0 MBO (network congestion)         │
-│   • Total Pool: 6.0 MBO                                    │
-│   • PoS Pool: 4.2 MBO (70%)                                │
-│   • PoUW Pool: 1.8 MBO (30%)                               │
+│   • Block Reward: 0.1 MBO                                  │
+│   • Transaction Fees: 0.5 MBO (network congestion)         │
+│   • Total Pool: 0.6 MBO                                    │
+│   • PoS Pool: 0.3 MBO (50%)                                │
+│   • PoUW Pool: 0.3 MBO (50%)                               │
 │                                                             │
 │   Block Proposer (10% stake, 0.98 performance):            │
 │   ─────────────────────────────────────────────            │
-│   Base Share = 4.2 × 0.10 = 0.42 MBO                       │
-│   With Performance = 0.42 × 0.98 = 0.41 MBO                │
-│   Proposer Bonus = 0.05 MBO                                │
-│   Total: ~0.46 MBO                                         │
+│   Base Share = 0.3 × 0.10 = 0.03 MBO                       │
+│   With Performance = 0.03 × 0.98 = 0.0294 MBO              │
+│   Proposer Bonus = 0.005 MBO                               │
+│   Total: ~0.034 MBO                                        │
 │                                                             │
 │   Top GPU Provider (30% work share):                       │
 │   ─────────────────────────────────                        │
-│   Work Share = 1.8 × 0.30 = 0.54 MBO                       │
+│   Work Share = 0.3 × 0.30 = 0.09 MBO                       │
 │                                                             │
 │   Note: High-fee blocks significantly boost rewards        │
 │   for all participants proportionally.                     │

@@ -1,3 +1,4 @@
+<!-- Verified against tokenomics.md -->
 # Mbongo Chain — Consensus Master Overview
 
 > **Document Type:** Technical Specification  
@@ -199,7 +200,7 @@ The consensus layer provides the following guarantees for Mbongo Chain:
            ┌───────────────────────────────────────────────────────────────┐
            │                    WEIGHT CALCULATION                         │
            │                                                               │
-           │   vote_weight = stake_weight × 0.70 + pouw_score × 0.30      │
+           │   vote_weight = stake_weight × 0.50 + pouw_score × 0.50      │
            │                                                               │
            │   ┌─────────────────────────────────────────────────────────┐ │
            │   │  Validator   │  Stake  │  PoUW  │  Weight │  Vote     │ │
@@ -335,16 +336,16 @@ The consensus layer provides the following guarantees for Mbongo Chain:
 │   stake_weight = normalized_stake × STAKE_COEFFICIENT                                  │
 │                                                                                         │
 │   Where:                                                                                │
-│   • STAKE_COEFFICIENT = 0.70 (70% weight from stake)                                   │
-│   • Minimum stake required: 10,000 MBG                                                 │
+│   • STAKE_COEFFICIENT = 0.50 (50% weight from stake)                                   │
+│   • Minimum stake required: 10,000 MBO                                                 │
 │   • Maximum stake cap: 10% of total supply per validator                               │
 │                                                                                         │
 │   Example:                                                                              │
 │   ────────                                                                              │
-│   Validator A: 50,000 MBG staked                                                       │
-│   Total staked: 500,000 MBG                                                            │
+│   Validator A: 50,000 MBO staked                                                       │
+│   Total staked: 500,000 MBO                                                            │
 │   normalized_stake = 50,000 / 500,000 = 0.10 (10%)                                     │
-│   stake_weight = 0.10 × 0.70 = 0.07 (7% of total weight)                              │
+│   stake_weight = 0.10 × 0.50 = 0.05 (5% of total weight)                              │
 │                                                                                         │
 └─────────────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -369,14 +370,14 @@ The consensus layer provides the following guarantees for Mbongo Chain:
 │   pouw_weight = normalized_pouw × POUW_COEFFICIENT                                     │
 │                                                                                         │
 │   Where:                                                                                │
-│   • POUW_COEFFICIENT = 0.30 (30% weight from compute)                                  │
+│   • POUW_COEFFICIENT = 0.50 (50% weight from compute)                                  │
 │   • Task difficulty: 1-100 based on compute requirements                               │
 │   • Verification multiplier: 1.0 (verified), 0.0 (failed)                              │
 │                                                                                         │
 │   Combined Weight:                                                                      │
 │   ────────────────                                                                      │
 │   total_weight = stake_weight + pouw_weight                                            │
-│                = (norm_stake × 0.70) + (norm_pouw × 0.30)                              │
+│                = (norm_stake × 0.50) + (norm_pouw × 0.50)                              │
 │                                                                                         │
 │   Example:                                                                              │
 │   ────────                                                                              │
@@ -1045,8 +1046,8 @@ prevote_timeout_ms = 1000
 precommit_timeout_ms = 500
 
 # Weight coefficients
-stake_coefficient = 0.70
-pouw_coefficient = 0.30
+stake_coefficient = 0.50
+pouw_coefficient = 0.50
 
 # Thresholds
 quorum_threshold = 0.667          # ⅔ majority
@@ -1054,7 +1055,7 @@ proposal_threshold = 0.50         # Simple majority for proposal acceptance
 
 # Limits
 max_validators = 1000
-min_stake = 10000                 # MBG tokens
+min_stake = 10000                 # MBO tokens
 max_stake_ratio = 0.10            # 10% of total supply
 
 # Slashing

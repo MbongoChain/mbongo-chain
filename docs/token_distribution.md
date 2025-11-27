@@ -1,3 +1,4 @@
+<!-- Verified against tokenomics.md -->
 # Token Distribution & Allocation Model
 
 > **Document Type:** Distribution Specification  
@@ -247,10 +248,10 @@
 │   • Subject to halving every 5 years                       │
 │                                                             │
 │   Emission Rate (Year 1):                                   │
-│   • ~15,768,000 blocks per year                            │
-│   • ~1.0 MBO per block (total)                             │
-│   • ~0.7 MBO to PoS per block                              │
-│   • ~0.3 MBO to PoUW per block                             │
+│   • ~31,536,000 blocks per year                            │
+│   • ~0.1 MBO per block (total)                             │
+│   • ~0.05 MBO to PoS per block (50%)                       │
+│   • ~0.05 MBO to PoUW per block (50%)                      │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -380,7 +381,7 @@
 │   Why 20% (not higher):                                     │
 │   • PoUW supplements PoS, not replaces it                  │
 │   • Security primarily from stake, utility from compute    │
-│   • 70/30 split balances security vs utility incentives    │
+│   • 50/50 split balances security vs utility incentives    │
 │                                                             │
 │   This allocation positions Mbongo as a leader in the      │
 │   emerging compute-enabled blockchain space.               │
@@ -557,7 +558,7 @@
 
 **How You Earn MBO:**
 - Stake MBO to participate in consensus
-- Earn 70% of block rewards proportional to stake
+- Earn 50% of block rewards proportional to stake
 - Receive proposer bonuses when producing blocks
 - Collect delegation commissions from delegators
 
@@ -578,7 +579,7 @@
 **How You Earn MBO:**
 - Register as a compute provider
 - Complete assigned compute tasks
-- Receive 30% of block rewards proportional to verified work
+- Receive 50% of block rewards proportional to verified work
 
 **How MBO Unlocks:**
 - Rewards unlock immediately upon receipt verification

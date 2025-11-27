@@ -1,3 +1,4 @@
+<!-- Verified against tokenomics.md -->
 # Mbongo Chain — Consensus Validation
 
 This document provides a comprehensive technical specification of the consensus validation mechanisms in Mbongo Chain, covering the hybrid PoS + PoUW architecture, block validation pipeline, fork-choice rules, and security model.
@@ -1075,8 +1076,8 @@ async fn broadcast_commit(
 │  • pouw_work_score = Σ(compute_score) for verified receipts                │
 │                                                                             │
 │  Normalization:                                                             │
-│  • PoS weight: 70% of total                                                │
-│  • PoUW weight: 30% of total                                               │
+│  • PoS weight: 50% of total                                                │
+│  • PoUW weight: 50% of total                                               │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -1090,8 +1091,8 @@ struct ChainWeight {
 
 impl ChainWeight {
     fn total(&self) -> u128 {
-        // 70% PoS, 30% PoUW
-        (self.stake_weight * 70 + self.pouw_weight * 30) / 100
+        // 50% PoS, 50% PoUW
+        (self.stake_weight * 50 + self.pouw_weight * 50) / 100
     }
     
     fn add_block(&mut self, block: &Block, attestations: &[Attestation]) {

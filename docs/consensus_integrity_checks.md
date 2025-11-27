@@ -1,3 +1,4 @@
+<!-- Verified against tokenomics.md -->
 # Mbongo Chain — Consensus Integrity Checks
 
 > **Document Type:** Technical Specification  
@@ -192,8 +193,8 @@ Where:
 │   STEP 1: Compute Selection Score                                                       │
 │   ────────────────────────────────                                                      │
 │   For each validator v:                                                                 │
-│     stake_component = (stake[v] / total_stake) × 0.70                                  │
-│     pouw_component  = (pouw_score[v] / total_pouw) × 0.30                              │
+│     stake_component = (stake[v] / total_stake) × 0.50                                  │
+│     pouw_component  = (pouw_score[v] / total_pouw) × 0.50                              │
 │     base_score      = stake_component + pouw_component                                 │
 │                                                                                         │
 │   STEP 2: Apply VRF Randomness                                                          │
@@ -309,7 +310,7 @@ function check_prevote_conflict(new_vote):
 
 ### 2.D Weight Integrity
 
-#### D.1 Combined PoS (70%) + PoUW (30%) Weight Accumulation
+#### D.1 Combined PoS (50%) + PoUW (50%) Weight Accumulation
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────────┐
@@ -321,8 +322,8 @@ function check_prevote_conflict(new_vote):
 │   W(v) = α × S(v) + β × P(v)                                                           │
 │                                                                                         │
 │   Where:                                                                                │
-│     α = 0.70 (stake coefficient)                                                       │
-│     β = 0.30 (PoUW coefficient)                                                        │
+│     α = 0.50 (stake coefficient)                                                       │
+│     β = 0.50 (PoUW coefficient)                                                        │
 │     S(v) = stake[v] / Σ(stake[all])     (normalized stake)                             │
 │     P(v) = pouw[v] / Σ(pouw[all])       (normalized PoUW score)                        │
 │                                                                                         │
@@ -337,13 +338,13 @@ function check_prevote_conflict(new_vote):
 │   EXAMPLE:                                                                              │
 │   ────────                                                                              │
 │   Validator A: stake=1000 (20%), pouw=500 (50%)                                        │
-│   W(A) = 0.70 × 0.20 + 0.30 × 0.50 = 0.14 + 0.15 = 0.29 (29%)                         │
+│   W(A) = 0.50 × 0.20 + 0.50 × 0.50 = 0.10 + 0.25 = 0.35 (35%)                         │
 │                                                                                         │
 │   Validator B: stake=3000 (60%), pouw=200 (20%)                                        │
-│   W(B) = 0.70 × 0.60 + 0.30 × 0.20 = 0.42 + 0.06 = 0.48 (48%)                         │
+│   W(B) = 0.50 × 0.60 + 0.50 × 0.20 = 0.30 + 0.10 = 0.40 (40%)                         │
 │                                                                                         │
 │   Validator C: stake=1000 (20%), pouw=300 (30%)                                        │
-│   W(C) = 0.70 × 0.20 + 0.30 × 0.30 = 0.14 + 0.09 = 0.23 (23%)                         │
+│   W(C) = 0.50 × 0.20 + 0.50 × 0.30 = 0.10 + 0.15 = 0.25 (25%)                         │
 │                                                                                         │
 │   Total = 0.29 + 0.48 + 0.23 = 1.00 (100%) ✓                                           │
 │                                                                                         │
@@ -882,7 +883,7 @@ function receive_message(msg):
       ┌───────────────┐
       │ Compute       │
       │ Vote Weight   │
-      │ (70%S + 30%P) │
+      │ (50%S + 50%P) │
       └───────┬───────┘
               │
               ▼
@@ -1176,11 +1177,11 @@ mod weight_tests {
             (VALIDATOR_B, 700),   // 70%
         ]);
         
-        // W(A) = 0.70 × 0.50 + 0.30 × 0.30 = 0.35 + 0.09 = 0.44
+        // W(A) = 0.50 × 0.50 + 0.50 × 0.30 = 0.25 + 0.15 = 0.40
         let weight_a = compute_weight(&VALIDATOR_A, &stake_weights, &pouw_scores);
         assert_approx_eq!(weight_a, 0.44, 0.001);
         
-        // W(B) = 0.70 × 0.50 + 0.30 × 0.70 = 0.35 + 0.21 = 0.56
+        // W(B) = 0.50 × 0.50 + 0.50 × 0.70 = 0.25 + 0.35 = 0.60
         let weight_b = compute_weight(&VALIDATOR_B, &stake_weights, &pouw_scores);
         assert_approx_eq!(weight_b, 0.56, 0.001);
         

@@ -1,3 +1,4 @@
+<!-- Verified against tokenomics.md -->
 # Mbongo (MBO) — Token Introduction
 
 > **Document Type:** Token Overview  
@@ -104,8 +105,8 @@ Block rewards are split between PoS validators and PoUW compute providers:
 │                                                             │
 │   Recipient                       │  Share                 │
 │   ────────────────────────────────┼────────────────────────│
-│   PoS Validators                  │  70%                   │
-│   PoUW Compute Providers          │  30%                   │
+│   PoS Validators                  │  50%                   │
+│   PoUW Compute Providers          │  50%                   │
 │                                                             │
 │   Total                           │  100%                  │
 │                                                             │

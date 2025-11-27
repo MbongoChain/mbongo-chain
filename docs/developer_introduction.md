@@ -1,3 +1,4 @@
+<!-- Verified against tokenomics.md -->
 # Mbongo Chain — Developer Introduction
 
 Welcome to the Mbongo Chain developer documentation. This guide provides everything you need to understand, build, and contribute to the project.
@@ -205,7 +206,7 @@ Hybrid consensus combining stake and compute:
 │                     HYBRID CONSENSUS                                        │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│              PoS (70%)                         PoUW (30%)                  │
+│              PoS (50%)                         PoUW (50%)                  │
 │         ┌─────────────────┐              ┌─────────────────┐               │
 │         │                 │              │                 │               │
 │         │  • Stake tokens │              │ • Compute tasks │               │

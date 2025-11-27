@@ -1,3 +1,4 @@
+<!-- Verified against tokenomics.md -->
 # Mbongo Chain — Full System Overview
 
 > **Document Version:** 1.0  
@@ -550,7 +551,7 @@ BlockHeader {
 │   │                                                                                  │  │
 │   │    Eligibility Requirements:                                                    │  │
 │   │    ─────────────────────────                                                    │  │
-│   │    • Minimum stake: 10,000 MBG (placeholder)                                   │  │
+│   │    • Minimum stake: 10,000 MBO                                                 │  │
 │   │    • Registered in validator set                                               │  │
 │   │    • Not currently slashed                                                     │  │
 │   │    • Online and responsive                                                     │  │
@@ -849,7 +850,7 @@ Use Cases:
 │   │   • Attestation signing   • Maintain uptime         • 1 TB NVMe SSD            │  │
 │   │   • Staking               • Secure stake keys       • 1 Gbps network           │  │
 │   │                                                                                  │  │
-│   │   Requirements: Minimum stake of 10,000 MBG (placeholder)                       │  │
+│   │   Requirements: Minimum stake of 10,000 MBO                                     │  │
 │   │                                                                                  │  │
 │   └─────────────────────────────────────────────────────────────────────────────────┘  │
 │                                                                                         │

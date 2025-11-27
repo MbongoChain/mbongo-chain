@@ -1,3 +1,4 @@
+<!-- Verified against tokenomics.md -->
 # Vesting & Unlock Model
 
 > **Document Type:** Vesting Specification  
@@ -253,9 +254,9 @@
 │   • Subject to halving every 5 years                       │
 │                                                             │
 │   Per-Block (Year 1):                                       │
-│   • Total: ~1.0 MBO                                        │
-│   • PoS: ~0.7 MBO (70% of block reward)                    │
-│   • PoUW: ~0.3 MBO (30% of block reward)                   │
+│   • Total: ~0.1 MBO                                        │
+│   • PoS: ~0.05 MBO (50% of block reward)                   │
+│   • PoUW: ~0.05 MBO (50% of block reward)                  │
 │                                                             │
 │   Rationale for Non-Vesting:                                │
 │   • Validators need liquidity for operations               │
@@ -722,7 +723,7 @@
 │   VALIDATORS (PoS):                                        │
 │   ─────────────────                                         │
 │   • Rewards calculated per finalized block                 │
-│   • 70% of block reward distributed to PoS                 │
+│   • 50% of block reward distributed to PoS                 │
 │   • Proposer receives larger share                         │
 │   • Attesters share remainder by stake weight              │
 │   • Rewards immediately transferable                       │
@@ -730,7 +731,7 @@
 │   GPU PROVIDERS (PoUW):                                    │
 │   ─────────────────────                                     │
 │   • Rewards per verified compute receipt                   │
-│   • 30% of block reward distributed to PoUW                │
+│   • 50% of block reward distributed to PoUW                │
 │   • Share proportional to work units                       │
 │   • Rewards immediately transferable                       │
 │                                                             │
