@@ -280,7 +280,7 @@ For a complete hierarchical view of all documentation, see [INDEX.md](INDEX.md).
 
 ## License
 
-All documentation is licensed under [MIT License](../LICENSE).
+All documentation is licensed under [Apache-2.0](../LICENSE).
 
 ---
 

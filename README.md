@@ -4,7 +4,7 @@
 
 Mbongo Chain is a Rust-native, compute-first blockchain that combines Proof of Stake (PoS) with Proof of Useful Work (PoUW) to create a decentralized GPU compute network. By rewarding validators for both staking tokens and performing verifiable AI/ML computations, Mbongo Chain enables affordable, trustless compute while maintaining strong economic security.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Rust Version](https://img.shields.io/badge/rust-1.75%2B-blue.svg)](https://www.rust-lang.org)
 [![Documentation](https://img.shields.io/badge/docs-latest-brightgreen.svg)](./docs)
 
