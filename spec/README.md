@@ -1,1 +1,0 @@
-# Mbongo Chain Specifications

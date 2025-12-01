@@ -1,0 +1,40 @@
+[package]
+name = "mbongo-wallet"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+description = "Wallet and key management for Mbongo Chain"
+
+[dependencies]
+# Internal dependencies
+mbongo-core = { path = "../mbongo-core" }
+
+# Cryptography
+ed25519-dalek = { workspace = true }
+blake3 = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# CLI
+clap = { workspace = true }
+
+# Utilities
+hex = { workspace = true }
+bs58 = { workspace = true }
+
+# Logging
+log = { workspace = true }
+
+[dev-dependencies]
+env_logger = { workspace = true }

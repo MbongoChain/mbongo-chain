@@ -1,0 +1,35 @@
+[package]
+name = "mbongo-core"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+description = "Core blockchain primitives for Mbongo Chain"
+
+[dependencies]
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Cryptography
+ed25519-dalek = { workspace = true }
+blake3 = { workspace = true }
+sha2 = { workspace = true }
+
+# Storage
+rocksdb = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Utilities
+hex = { workspace = true }
+bs58 = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }

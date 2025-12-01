@@ -1,0 +1,45 @@
+[package]
+name = "mbongo-node"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+description = "Full node binary for Mbongo Chain"
+
+[[bin]]
+name = "mbongo-node"
+path = "src/main.rs"
+
+[dependencies]
+# Internal dependencies
+mbongo-core = { path = "../mbongo-core" }
+mbongo-consensus = { path = "../mbongo-consensus" }
+mbongo-verification = { path = "../mbongo-verification" }
+mbongo-compute = { path = "../mbongo-compute" }
+mbongo-network = { path = "../mbongo-network" }
+mbongo-runtime = { path = "../mbongo-runtime" }
+mbongo-api = { path = "../mbongo-api" }
+
+# Async runtime
+tokio = { workspace = true }
+
+# CLI
+clap = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging
+log = { workspace = true }
+env_logger = { workspace = true }
+
+[dev-dependencies]

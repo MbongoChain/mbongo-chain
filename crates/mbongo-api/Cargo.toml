@@ -1,0 +1,38 @@
+[package]
+name = "mbongo-api"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+description = "REST and WebSocket APIs for Mbongo Chain"
+
+[dependencies]
+# Internal dependencies
+mbongo-core = { path = "../mbongo-core" }
+mbongo-consensus = { path = "../mbongo-consensus" }
+
+# Async runtime
+tokio = { workspace = true }
+
+# HTTP/REST
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging
+log = { workspace = true }
+
+[dev-dependencies]
+env_logger = { workspace = true }
