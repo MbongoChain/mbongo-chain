@@ -1,73 +1,103 @@
 ---
 name: Bug Report
-about: Report a bug or unexpected behavior in Mbongo Chain
-title: "[BUG] "
-labels: bug
+about: Report a bug or unexpected behavior
+title: '[BUG] '
+labels: 'bug'
 assignees: ''
 ---
 
-## 🐛 Bug Description
+## Bug Description
 
-A clear and concise description of the bug.
-
----
-
-## ✅ Expected Behavior
-
-Describe what you expected to happen.
+**A clear and concise description of what the bug is.**
 
 ---
 
-## 🔄 Steps to Reproduce
+## Steps to Reproduce
 
 1. Go to '...'
-2. Run command '...'
-3. Observe '...'
+2. Execute command '...'
+3. Observe behavior '...'
 4. See error
 
----
+**Expected behavior:**
+A clear description of what you expected to happen.
 
-## 🖥 Environment
-
-Please provide the following details:
-
-| Field | Value |
-|-------|-------|
-| **Operating System** | e.g., Windows 11, Ubuntu 22.04, macOS 14 |
-| **Rust Version** | `rustc --version` output |
-| **Cargo Version** | `cargo --version` output |
-| **Mbongo Node Version** | e.g., 0.1.0 |
-| **Commit Hash** | `git rev-parse HEAD` output |
-| **Module Affected** | e.g., node, runtime, crypto, network, pow, cli |
+**Actual behavior:**
+A clear description of what actually happened.
 
 ---
 
-## 📋 Logs / Error Messages
+## Environment
 
+**Mbongo Chain Version:**
+- [ ] Latest `main` branch
+- [ ] Specific version/commit: `_______`
+
+**Operating System:**
+- [ ] Linux (distro: `_______`)
+- [ ] macOS (version: `_______`)
+- [ ] Windows (version: `_______`)
+
+**Rust Version:**
 ```
-Paste relevant logs or error messages here.
+rustc --version
+# Output:
+```
+
+**Hardware:**
+- CPU:
+- RAM:
+- GPU (if applicable):
+
+---
+
+## Error Output
+
+**Logs/Error Messages:**
+```
+Paste error output here
+```
+
+**Stack Trace (if applicable):**
+```
+Paste stack trace here
 ```
 
 ---
 
-## 📸 Screenshots (optional)
+## Additional Context
 
-If applicable, add screenshots to help explain the problem.
+**Configuration:**
+```toml
+# Paste relevant config.toml or CLI flags
+```
+
+**Screenshots:**
+If applicable, add screenshots to help explain your problem.
+
+**Related Issues:**
+- Link to related issues: #
 
 ---
 
-## 📝 Additional Context
+## Severity
 
-Add any other context about the problem here (e.g., related issues, possible causes, attempted fixes).
+- [ ] **Critical** - System crash, data loss, security vulnerability
+- [ ] **High** - Major functionality broken, no workaround
+- [ ] **Medium** - Important feature broken, workaround available
+- [ ] **Low** - Minor issue, cosmetic problem
 
 ---
 
-## ⚠️ Security Notice
+## Possible Solution
 
-**Do NOT disclose security vulnerabilities in public issues.**
+If you have ideas on how to fix this bug, please describe them here.
 
-If you have discovered a security issue, please report it privately to:
+---
 
-📧 **security@mbongo.money**
+## Checklist
 
-We follow responsible disclosure practices.
+- [ ] I have searched existing issues to ensure this is not a duplicate
+- [ ] I have provided all requested information
+- [ ] I have included error logs/stack traces
+- [ ] I have tested on the latest version

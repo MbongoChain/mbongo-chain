@@ -1,76 +1,145 @@
 ---
 name: Feature Request
-about: Propose a new feature or enhancement for Mbongo Chain
-title: "[FEATURE] "
-labels: enhancement
+about: Propose a new feature or enhancement
+title: '[FEATURE] '
+labels: 'enhancement'
 assignees: ''
 ---
 
-## 📋 Summary
+## Feature Description
 
-A clear and concise description of the feature you are proposing.
+**What feature are you proposing?**
 
----
-
-## 💡 Motivation / Problem
-
-Describe the problem this feature would solve or the need it addresses.
-
-- What limitation or gap exists today?
-- Who would benefit from this feature?
-- How does this align with Mbongo Chain's goals?
+A clear and concise description of the feature you'd like to see implemented.
 
 ---
 
-## 🛠 Proposed Solution
+## Problem Statement
 
-Describe your proposed solution in detail.
+**What problem does this feature solve?**
 
-- How should the feature work?
-- Which modules would be affected? (e.g., node, runtime, crypto, network, pow, cli)
-- Are there any API changes required?
+Describe the pain point or limitation that this feature addresses.
 
----
-
-## 🔄 Alternatives Considered
-
-Describe any alternative solutions or features you have considered.
-
-- Why were they rejected or deemed less suitable?
-- What trade-offs exist between alternatives?
+**Is your feature request related to a problem? Please describe.**
+Example: "I'm always frustrated when [...]"
 
 ---
 
-## ⚡ Potential Impact
+## Proposed Solution
 
-Describe the potential impact of this feature:
+**Describe the solution you'd like:**
 
-| Area | Impact |
-|------|--------|
-| **Protocol** | e.g., consensus changes, state model |
-| **Performance** | e.g., latency, throughput, memory |
-| **Security** | e.g., attack surface, cryptographic implications |
-| **Developer Experience** | e.g., API usability, documentation needs |
-| **Breaking Changes** | e.g., backward compatibility concerns |
+A clear and concise description of what you want to happen.
+
+**How should it work?**
+
+Describe the expected behavior and user experience.
 
 ---
 
-## 📎 Additional Context
+## Use Cases
 
-Add any other context, references, or resources related to the feature request.
+**Who will benefit from this feature?**
 
-- Links to related issues or discussions
-- External references (papers, specifications, implementations)
-- Mockups or diagrams (if applicable)
+- [ ] Validators
+- [ ] Compute Providers
+- [ ] Developers
+- [ ] End Users
+- [ ] Node Operators
+- [ ] Other: `_______`
+
+**Example Use Case:**
+
+Provide a concrete example of how this feature would be used.
+
+```
+Example scenario:
+1. User does X
+2. System responds with Y
+3. User achieves Z
+```
 
 ---
 
-## ⚠️ Security Notice
+## Technical Considerations
 
-**Do NOT use this form to report security vulnerabilities.**
+**Affected Components:**
 
-If you have discovered a security issue, please report it privately to:
+- [ ] mbongo-core (blockchain primitives)
+- [ ] mbongo-consensus (PoX engine)
+- [ ] mbongo-verification (compute verification)
+- [ ] mbongo-compute (GPU runtime)
+- [ ] mbongo-network (P2P networking)
+- [ ] mbongo-runtime (smart contracts)
+- [ ] mbongo-api (REST/WebSocket APIs)
+- [ ] mbongo-wallet (key management)
+- [ ] mbongo-node (full node)
+- [ ] Documentation
+- [ ] Other: `_______`
 
-📧 **security@mbongo.money**
+**Implementation Complexity:**
 
-We follow responsible disclosure practices.
+- [ ] Low - Simple addition, < 1 week
+- [ ] Medium - Moderate changes, 1-2 weeks
+- [ ] High - Significant refactoring, 2-4 weeks
+- [ ] Very High - Major architectural change, > 1 month
+
+**Breaking Changes:**
+
+- [ ] This feature introduces breaking changes
+- [ ] This feature is backward compatible
+
+---
+
+## Alternatives Considered
+
+**Describe alternatives you've considered:**
+
+Have you thought of other ways to solve this problem? Why is your proposed solution better?
+
+---
+
+## Additional Context
+
+**Mockups/Diagrams:**
+
+Add any mockups, diagrams, or visual aids to help explain your feature.
+
+**Related Work:**
+
+- Are there similar features in other blockchain projects?
+- Links to relevant discussions, RFCs, or research papers
+
+**Related Issues:**
+- Link to related issues: #
+
+---
+
+## Success Metrics
+
+**How will we know this feature is successful?**
+
+- Performance metrics
+- Usage metrics
+- User satisfaction indicators
+
+---
+
+## Priority
+
+**How important is this feature?**
+
+- [ ] **Critical** - Blocker for launch/adoption
+- [ ] **High** - Important for user experience
+- [ ] **Medium** - Nice to have, improves usability
+- [ ] **Low** - Optional enhancement
+
+---
+
+## Checklist
+
+- [ ] I have searched existing issues/PRs for duplicates
+- [ ] I have clearly described the problem and proposed solution
+- [ ] I have considered alternatives
+- [ ] I have identified affected components
+- [ ] I am willing to help implement this feature (optional)
