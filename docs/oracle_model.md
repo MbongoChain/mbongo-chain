@@ -522,7 +522,7 @@ All oracle messages must follow a strict, deterministic format to ensure consist
 │   {                                                                                     │
 │     "version": 1,                                                                       │
 │     "data_type": "PRICE_FEED",        // 0x0001                                        │
-│     "timestamp": 1732924800,          // 2024-11-30 00:00:00 UTC                        │
+│     "timestamp": 1764460800,          // 2025-11-30 00:00:00 UTC                        │
 │     "provider_id": "0xabc123...",     // 32 bytes                                      │
 │     "nonce": 15847,                                                                     │
 │     "payload": {                                                                        │

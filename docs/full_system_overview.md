@@ -1067,7 +1067,7 @@ Proposer creates block
 │                              DEVELOPMENT ROADMAP                                        │
 ├─────────────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                         │
-│   2024 Q4 - 2025 Q1                    2025 Q2 - Q3                                    │
+│   2025 Q4 - 2026 Q1                    2026 Q2 - Q3                                    │
 │   ─────────────────                    ───────────────                                 │
 │   PHASE 1: FOUNDATION                  PHASE 2: OPTIMIZATION                          │
 │   ☑ Core protocol                      ☐ GPU-accelerated execution                    │

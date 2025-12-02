@@ -286,7 +286,7 @@ Operators can run **both** a Validator Node and Compute Provider on the same mac
 |----------|----------------|---------|-----------------|
 | **NVIDIA GPU** | CUDA Toolkit | 12.x | `apt install cuda-toolkit-12-x` |
 | **AMD GPU** | ROCm | 5.7+ | See AMD docs |
-| **Intel GPU** | oneAPI | 2024.x | See Intel docs |
+| **Intel GPU** | oneAPI | 2025.x | See Intel docs |
 | **Google TPU** | TPU Runtime | Latest | Cloud-specific |
 | **Xilinx FPGA** | Vitis | 2023.x | Xilinx installer |
 | **Intel FPGA** | Quartus | 23.x | Intel installer |
