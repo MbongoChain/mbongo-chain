@@ -892,7 +892,7 @@ Not just code! We celebrate:
 
 ## License
 
-By contributing to Mbongo Chain, you agree that your contributions will be licensed under the [MIT License](./LICENSE).
+By contributing to Mbongo Chain, you agree that your contributions will be licensed under the [Apache License 2.0](./LICENSE).
 
 Your contributions will be attributed to you in git history and release notes.
 

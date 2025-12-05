@@ -18,7 +18,7 @@ version = "0.1.0"
 authors = ["Mbongo Chain Contributors"]
 edition = "2021"
 rust-version = "1.75"
-license = "MIT"
+license = "Apache-2.0"
 repository = "https://github.com/mbongo-chain/mbongo-chain"
 homepage = "https://mbongochain.com"
 
