@@ -16,8 +16,7 @@
 #![warn(clippy::all)]
 #![warn(clippy::pedantic)]
 
-// Module structure (to be implemented)
-// pub mod rest;
+pub mod rest;
 // pub mod ws;
 // pub mod rpc;
 // pub mod sdk;
