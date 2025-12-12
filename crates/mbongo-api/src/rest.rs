@@ -9,8 +9,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use thiserror::Error;
 use tower_http::cors::{Any, CorsLayer};
+use async_trait::async_trait;
 
-#[allow(async_fn_in_trait)]
+#[async_trait]
 pub trait ApiBackend: Clone + Send + Sync + 'static {
     async fn list_blocks(&self, limit: u32) -> Result<Vec<BlockSummary>, ApiError>;
     async fn get_block(&self, hash: String) -> Result<BlockDetail, ApiError>;
