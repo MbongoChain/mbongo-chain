@@ -41,13 +41,29 @@ async fn handle_rpc<B: RpcBackend>(State(state): State<AppState<B>>, Json(body):
         for item in body.into_array().unwrap().into_iter() {
             responses.push(process_single(&state.backend, item).await);
         }
-        Json(Value::Array(
-            responses
-                .into_iter()
-                .map(|r| serde_json::to_value(r).unwrap())
-                .collect(),
-        ))
-        .into_response()
+        // Determine if any response is a success (error == None)
+        let any_success = responses.iter().any(|r| r.error.is_none());
+        let status = if any_success {
+            StatusCode::OK
+        } else {
+            // If all failed, pick the most severe error code (first error's code)
+            // Or use 207 Multi-Status if preferred
+            if let Some(first_error) = responses.iter().find_map(|r| r.error.as_ref()) {
+                http_status_for_error(first_error.code)
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+        };
+        (
+            status,
+            Json(Value::Array(
+                responses
+                    .into_iter()
+                    .map(|r| serde_json::to_value(r).unwrap())
+                    .collect(),
+            )),
+        )
+            .into_response()
     } else {
         let resp = process_single(&state.backend, body).await;
         let status = if let Some(err) = &resp.error { http_status_for_error(err.code) } else { StatusCode::OK };
