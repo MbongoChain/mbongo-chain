@@ -44,7 +44,28 @@ async fn handle_rpc<B: RpcBackend>(State(state): State<AppState<B>>, Json(body):
         Json(Value::Array(
             responses
                 .into_iter()
-                .map(|r| serde_json::to_value(r).unwrap())
+                .map(|r| {
+                    serde_json::to_value(&r).unwrap_or_else(|e| {
+                        // Fallback: return a JSON-RPC error object as Value
+                        let fallback = JsonRpcResponse::error(
+                            r.id.clone(),
+                            RpcErrorCode::InternalError,
+                            format!("Internal serialization error: {}", e),
+                            None,
+                        );
+                        // This should never fail, but if it does, return a minimal error object
+                        serde_json::to_value(fallback).unwrap_or_else(|_| {
+                            serde_json::json!({
+                                "jsonrpc": "2.0",
+                                "error": {
+                                    "code": -32603,
+                                    "message": "Internal error: failed to serialize error response"
+                                },
+                                "id": r.id
+                            })
+                        })
+                    })
+                })
                 .collect(),
         ))
         .into_response()
