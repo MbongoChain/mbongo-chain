@@ -3,11 +3,12 @@ use mbongo_network::server::router;
 use mbongo_network::rpc::{BackendError, RpcBackend};
 use serde_json::{json, Value};
 use tower::ServiceExt; // for oneshot()
+use async_trait::async_trait;
 
 #[derive(Clone)]
 struct MockBackend;
 
-#[allow(async_fn_in_trait)]
+#[async_trait]
 impl RpcBackend for MockBackend {
     async fn get_block_height(&self) -> Result<u64, BackendError> {
         Ok(1234)
