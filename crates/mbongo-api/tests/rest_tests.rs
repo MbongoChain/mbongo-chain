@@ -2,11 +2,12 @@ use axum::http::StatusCode;
 use mbongo_api::rest::{self, ApiBackend, ApiError, Account, BlockDetail, BlockSummary, Transaction, Validator};
 use serde_json::json;
 use tower::ServiceExt;
+use async_trait::async_trait;
 
 #[derive(Clone)]
 struct MockBackend;
 
-#[allow(async_fn_in_trait)]
+#[async_trait]
 impl ApiBackend for MockBackend {
     async fn list_blocks(&self, limit: u32) -> Result<Vec<BlockSummary>, ApiError> {
         Ok((0..limit)
