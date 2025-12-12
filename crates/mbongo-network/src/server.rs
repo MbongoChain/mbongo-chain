@@ -92,9 +92,3 @@ async fn process_single<B: RpcBackend>(backend: &B, raw: Value) -> JsonRpcRespon
         ),
     }
 }
-
-pub fn json_error(code: RpcErrorCode, message: impl Into<String>, id: Option<Value>) -> Response {
-    let resp = JsonRpcResponse::error(id, code, message, None);
-    let status = http_status_for_error(resp.error.as_ref().unwrap().code);
-    (status, Json(resp)).into_response()
-}
