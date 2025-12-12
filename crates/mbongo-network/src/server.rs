@@ -58,10 +58,10 @@ async fn handle_rpc<B: RpcBackend>(State(state): State<AppState<B>>, Json(body):
 }
 
 async fn process_single<B: RpcBackend>(backend: &B, raw: Value) -> JsonRpcResponse {
-    let req: JsonRpcRequest = match serde_json::from_value(raw.clone()) {
+    let id = raw.get("id").cloned();
+    let req: JsonRpcRequest = match serde_json::from_value(raw) {
         Ok(r) => r,
         Err(err) => {
-            let id = raw.get("id").cloned();
             return JsonRpcResponse::error(id, RpcErrorCode::ParseError, format!("parse error: {}", err), None);
         }
     };
