@@ -185,7 +185,7 @@ pub fn router<B: ApiBackend>(backend: B) -> Router {
 
     Router::new()
         .route("/blocks", get(get_blocks::<B>))
-        .route("/blocks/:hash", get(get_block::<B>))
+        .route("/blocks/{hash}", get(get_block::<B>))
         .route("/transactions/:hash", get(get_transaction::<B>))
         .route("/accounts/:address", get(get_account::<B>))
         .route("/validators", get(get_validators::<B>))
