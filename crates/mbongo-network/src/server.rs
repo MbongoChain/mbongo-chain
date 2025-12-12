@@ -36,9 +36,9 @@ pub async fn serve_on_addr<B: RpcBackend>(addr: std::net::SocketAddr, backend: B
 }
 
 async fn handle_rpc<B: RpcBackend>(State(state): State<AppState<B>>, Json(body): Json<Value>) -> impl IntoResponse {
-    let response = if body.is_array() {
+    let response = if let Some(arr) = body.as_array() {
         let mut responses = Vec::new();
-        for item in body.as_array().unwrap() {
+        for item in arr {
             responses.push(process_single(&state.backend, item.clone()).await);
         }
         Json(Value::Array(
