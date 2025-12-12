@@ -1,3 +1,13 @@
+//! Mbongo Network - JSON-RPC server
+//!
+//! This crate exposes a minimal JSON-RPC 2.0 HTTP API using Axum.
+//! It is backend-agnostic via the `RpcBackend` trait.
+
+pub mod rpc;
+pub mod server;
+
+pub use crate::rpc::{JsonRpcRequest, JsonRpcResponse, RpcError, RpcErrorCode, RpcBackend, BackendError};
+pub use crate::server::{router, serve_on_addr};
 //! P2P networking layer for Mbongo Chain.
 //!
 //! This crate implements the networking infrastructure using libp2p:

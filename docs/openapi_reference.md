@@ -103,10 +103,16 @@ This document is the canonical API reference for Mbongo Chain. It describes all 
 # JSON-RPC (all operations)
 POST https://rpc.mbongo.io
 
-# REST-like queries (convenience)
-GET  https://rpc.mbongo.io/v1/block/latest
-GET  https://rpc.mbongo.io/v1/block/{height}
-GET  https://rpc.mbongo.io/v1/tx/{hash}
+# REST endpoints (convenience)
+GET  http://localhost:8080/blocks?limit=10
+GET  http://localhost:8080/blocks/{hash}
+GET  http://localhost:8080/transactions/{hash}
+GET  http://localhost:8080/accounts/{address}
+GET  http://localhost:8080/validators
+
+# Swagger UI (development)
+GET  http://localhost:8080/docs
+GET  http://localhost:8080/openapi.json
 
 # WebSocket subscriptions
 WSS  wss://ws.mbongo.io

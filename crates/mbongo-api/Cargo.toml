@@ -22,6 +22,8 @@ tokio = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
+utoipa = { version = "4" }
+utoipa-swagger-ui = { version = "7", features = ["axum"] }
 
 # Serialization
 serde = { workspace = true }
