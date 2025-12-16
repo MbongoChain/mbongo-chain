@@ -111,6 +111,13 @@ rpc:
     port: 8545
 ```
 
+Note: In the current implementation, a minimal HTTP JSON-RPC server is available at `POST /rpc` (CORS enabled). Implemented methods:
+
+- `ping` → returns `"pong"`
+- `get_block_height` → returns `u64` height provided by the node backend
+
+Batch requests are supported by posting a JSON array of request objects. Errors comply with JSON-RPC 2.0 codes.
+
 ### 2.3 WebSocket
 
 Bidirectional communication for subscriptions and real-time updates.
