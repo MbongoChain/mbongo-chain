@@ -158,7 +158,7 @@ pub struct BlockHeader {
     pub parent_hash: Hash,
     /// State root after executing this block.
     pub state_root: Hash,
-    /// Merkle-like commitment to the body transactions.
+    /// Blake3 commitment to the body transactions (see `compute_transactions_root`).
     pub transactions_root: Hash,
     /// Unix timestamp (seconds).
     pub timestamp: u64,
@@ -188,8 +188,8 @@ pub fn compute_transactions_root(txs: &[Transaction]) -> Hash {
     use blake3::Hasher;
     let mut hasher = Hasher::new();
     for tx in txs {
-        let encoded = tx.encode();
-        let len = encoded.len() as u32;
+    let encoded = tx.encode();
+    let len = encoded.len() as u32;
         hasher.update(&len.to_le_bytes());
         hasher.update(&encoded);
     }

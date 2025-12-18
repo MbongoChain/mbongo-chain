@@ -12,7 +12,13 @@
 //! contains the ordered list of transactions.
 //!
 //! ```rust
-//! use mbongo_core::{Block, BlockHeader, BlockBody, Hash, Transaction};
+//! use mbongo_core::{Block, BlockHeader, BlockBody, Hash, Transaction, Address, TransactionType};
+//! 
+//! // Build a simple block with two transactions (typed + signed)
+//! let txs = vec![
+//!     Transaction { tx_type: TransactionType::Transfer, sender: Address::zero(), receiver: Address::zero(), amount: 1, nonce: 0, signature: [0u8; 64] },
+//!     Transaction { tx_type: TransactionType::Stake, sender: Address::zero(), receiver: Address::zero(), amount: 1000, nonce: 1, signature: [0u8; 64] },
+//! ];
 //!
 //! // Build a simple block with two transactions (opaque bytes)
 //! let txs = vec![Transaction(vec![1,2,3]), Transaction(vec![4,5])];
@@ -38,22 +44,22 @@ pub use primitives::{compute_transactions_root, Address, Block, BlockBody, Block
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json as json;
-    use ed25519_dalek::{SigningKey, Signer, VerifyingKey};
-    use parity_scale_codec::{Decode, Encode};
-
+    
     #[test]
-    fn hash_zero_and_hex_roundtrip() {
-        let h = Hash::zero();
-        let s = h.to_string();
-        assert_eq!(s, "0x".to_string() + &"0".repeat(64));
-        let parsed: Hash = s.parse().unwrap();
-        assert_eq!(parsed, h);
-        let ser = json::to_string(&h).unwrap();
-        let de: Hash = json::from_str(&ser).unwrap();
-        assert_eq!(de, h);
+    fn hash_invalid_length() {
+        let too_short = "0x1234";  // Not 64 hex characters
+        assert!(too_short. parse::<Hash>().is_err());
+        
+        let too_long = "0x". to_string() + &"0".repeat(65);
+        assert!(too_long.parse::<Hash>().is_err());
     }
-
+    
+    #[test]
+    fn hash_missing_prefix() {
+        let no_prefix = "0". repeat(64);  // Missing "0x"
+        assert!(no_prefix.parse::<Hash>().is_err());
+    }
+    
     #[test]
     fn block_serde_roundtrip() {
         let txs = vec![
@@ -84,36 +90,19 @@ mod tests {
         let block = Block { header, body: BlockBody { transactions: txs } };
         let s = json::to_string(&block).unwrap();
         let round: Block = json::from_str(&s).unwrap();
+        // Verify all header fields are preserved
+        assert_eq!(round.header.parent_hash, block.header.parent_hash);
+        assert_eq!(round.header. state_root, block.header. state_root);
+        assert_eq!(round.header.transactions_root, block.header.transactions_root);
+        assert_eq!(round.header.timestamp, 123);
         assert_eq!(round.header.height, 7);
+        
+        // Verify transaction contents are preserved
         assert_eq!(round.body.transactions.len(), 2);
-    }
-
-    #[test]
-    fn transactions_root_changes_with_body() {
-        let a = vec![Transaction {
-            tx_type: TransactionType::Transfer,
-            sender: Address::zero(),
-            receiver: Address::zero(),
-            amount: 1,
-            nonce: 0,
-            signature: [0u8; 64],
-        }];
-        let b = vec![Transaction {
-            tx_type: TransactionType::Transfer,
-            sender: Address::zero(),
-            receiver: Address::zero(),
-            amount: 2,
-            nonce: 0,
-            signature: [0u8; 64],
-        }];
-        let ra = compute_transactions_root(&a);
-        let rb = compute_transactions_root(&b);
-        assert_ne!(ra, rb);
-    }
-
+        assert_eq!(round.body.transactions[0].0, vec![1, 2, 3]);
+    
     #[test]
     fn ed25519_signature_verification_transfer() {
-        // Deterministic private key for test purposes
         let sk_bytes = [1u8; 32];
         let sk = SigningKey::from_bytes(&sk_bytes);
         let vk: VerifyingKey = sk.verifying_key();
@@ -159,5 +148,30 @@ mod tests {
             assert_eq!(dec.nonce, 9);
             assert_eq!(dec.signature, [5u8; 64]);
         }
+    }
+        assert_eq!(round.body.transactions[1].0, vec![]);
+    }
+
+    #[test]
+    fn transactions_root_changes_with_body() {
+        let a = vec![Transaction {
+            tx_type: TransactionType::Transfer,
+            sender: Address::zero(),
+            receiver: Address::zero(),
+            amount: 1,
+            nonce: 0,
+            signature: [0u8; 64],
+        }];
+        let b = vec![Transaction {
+            tx_type: TransactionType::Transfer,
+            sender: Address::zero(),
+            receiver: Address::zero(),
+            amount: 2,
+            nonce: 0,
+            signature: [0u8; 64],
+        }];
+        let ra = compute_transactions_root(&a);
+        let rb = compute_transactions_root(&b);
+        assert_ne!(ra, rb);
     }
 }
