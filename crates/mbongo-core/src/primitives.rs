@@ -188,10 +188,10 @@ pub fn compute_transactions_root(txs: &[Transaction]) -> Hash {
     use blake3::Hasher;
     let mut hasher = Hasher::new();
     for tx in txs {
-    let encoded = tx.encode();
-    let len = encoded.len() as u32;
-    hasher.update(&len.to_le_bytes());
-    hasher.update(&encoded);
+        let encoded = tx.encode();
+        let len = encoded.len() as u32;
+        hasher.update(&len.to_le_bytes());
+        hasher.update(&encoded);
     }
     let mut out = [0u8; 32];
     out.copy_from_slice(hasher.finalize().as_bytes());
