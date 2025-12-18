@@ -113,7 +113,6 @@ mod tests {
 
     #[test]
     fn ed25519_signature_verification_transfer() {
-        // Deterministic private key for test purposes
         let sk_bytes = [1u8; 32];
         let sk = SigningKey::from_bytes(&sk_bytes);
         let vk: VerifyingKey = sk.verifying_key();
