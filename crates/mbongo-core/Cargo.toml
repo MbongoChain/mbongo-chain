@@ -30,6 +30,7 @@ anyhow = { workspace = true }
 # Utilities
 hex = { workspace = true }
 bs58 = { workspace = true }
+parity-scale-codec = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

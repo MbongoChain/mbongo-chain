@@ -108,6 +108,10 @@ This index provides a structured, hierarchical view of all Mbongo Chain document
 ```
 ├── execution_engine_overview.md [L3]
 │   └── Transaction execution and state transitions (S' = F(S,T))
+├── transaction_structure.md [L2] [PRIMARY]
+│   └── Fundamental transaction schema, serialization, signatures
+├── block_structure.md [L2]
+│   └── Block header/body schema, roots, and serialization
 ├── compute_engine_overview.md [L3]
 │   └── GPU compute execution runtime
 ├── mempool_overview.md [L3]
