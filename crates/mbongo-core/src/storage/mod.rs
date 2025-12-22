@@ -26,17 +26,6 @@ pub(crate) mod util {
         nibbles
     }
 
-    // Convert a nibble slice back to bytes; if odd, last nibble is low.
-    pub fn nibbles_to_bytes(nibbles: &[u8]) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity((nibbles.len() + 1) / 2);
-        let mut it = nibbles.iter().cloned();
-        while let Some(high) = it.next() {
-            let low = it.next().unwrap_or(0);
-            bytes.push((high << 4) | (low & 0x0f));
-        }
-        bytes
-    }
-
     pub fn common_prefix_len(a: &[u8], b: &[u8]) -> usize {
         let mut i = 0;
         while i < a.len() && i < b.len() && a[i] == b[i] {
