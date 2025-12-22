@@ -30,10 +30,24 @@ fn empty_children() -> [Option<Hash>; 16] {
     [(); 16].map(|_| None)
 }
 
-/// Proof node captured during proof generation
+/// A single node included in a Merkle–Patricia trie proof.
+///
+/// `ProofNode` values are collected when generating proofs and later consumed
+/// during proof verification. Each node carries both its content (as encoded
+/// bytes) and the hash of that content, allowing verifiers to reconstruct the
+/// trie structure and check that all intermediate hashes match the expected
+/// root.
 #[derive(Clone, Debug)]
 pub struct ProofNode {
+    /// The hash of the encoded node bytes.
+    ///
+    /// This is the identifier used to reference the node from its parent and
+    /// to reconstruct the chain of hashes when verifying a proof.
     pub hash: Hash,
+    /// The serialized representation of the trie node.
+    ///
+    /// These are the raw bytes (e.g. SCALE-encoded) of the underlying trie
+    /// node as they are stored and transmitted in proofs.
     pub encoded: Vec<u8>,
 }
 
