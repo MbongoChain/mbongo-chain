@@ -431,9 +431,8 @@ impl MerklePatriciaTrie {
                     path.drain(0..l);
                     cur = child;
                 }
-                Node::Leaf { key, .. } => {
+                Node::Leaf { .. } => {
                     // terminal
-                    let _ = key;
                     return Some(proof);
                 }
             }
