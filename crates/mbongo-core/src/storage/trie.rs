@@ -211,19 +211,17 @@ impl MerklePatriciaTrie {
                     self.store.put(&new_leaf)
                 } else {
                     // split leaf into branch (with optional extension)
-                    let mut branch = Node::Branch { children: empty_children(), value: None };
-                    // existing leaf remainder
-                    if l == key.len() && l < path.len() {
-                        // old leaf at child of branch
+                        // old value becomes the branch value at the split point
+                        if let Node::Branch { value: v, .. } = &mut branch {
+                            *v = Some(old_val);
+                        }
+                        // new value continues as a child under the next nibble of the new path
                         let child_nib = path[l] as usize;
                         let new_leaf = Node::Leaf { key: path[l + 1..].to_vec(), value };
                         let new_leaf_h = self.store.put(&new_leaf);
-                        if let Node::Branch { children, .. } = &mut branch { children[child_nib] = Some(new_leaf_h); }
-
-                        let old_child_nib = key[l] as usize;
-                        let old_leaf = Node::Leaf { key: key[l + 1..].to_vec(), value: old_val };
-                        let old_leaf_h = self.store.put(&old_leaf);
-                        if let Node::Branch { children, .. } = &mut branch { children[old_child_nib] = Some(old_leaf_h); }
+                        if let Node::Branch { children, .. } = &mut branch {
+                            children[child_nib] = Some(new_leaf_h);
+                        }
                     } else if l < key.len() && l == path.len() {
                         // new value becomes branch value at exact match
                         if let Node::Branch { value: v, .. } = &mut branch { *v = Some(value); }
