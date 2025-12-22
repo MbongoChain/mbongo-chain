@@ -26,7 +26,7 @@ In `mbongo-core` crate, module `storage::trie` exposes:
 Criterion benchmarks are provided in `crates/mbongo-core/benches/state_trie_bench.rs`.
 Run:
 
-```pwsh
+```sh
 cargo bench -p mbongo-core --bench state_trie_bench
 ```
 
