@@ -234,8 +234,13 @@ impl MerklePatriciaTrie {
                     // existing child on key remainder
                     let old_nib = key[l] as usize;
                     let old_suffix = if l + 1 <= key.len() { key[l + 1..].to_vec() } else { vec![] };
-                    let old_node = if old_suffix.is_empty() { Node::Extension { key: vec![], child } } else { Node::Extension { key: old_suffix, child } };
-                    let old_h = self.store.put(&old_node);
+                    let old_h = if old_suffix.is_empty() {
+                        // no remaining path segment: use the existing child directly
+                        child
+                    } else {
+                        let old_node = Node::Extension { key: old_suffix, child };
+                        self.store.put(&old_node)
+                    };
                     if let Node::Branch { children, .. } = &mut branch { children[old_nib] = Some(old_h); }
 
                     // new child on path remainder
