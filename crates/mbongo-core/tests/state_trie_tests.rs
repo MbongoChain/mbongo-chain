@@ -25,11 +25,11 @@ fn integration_state_trie_basic() {
 fn test_delete_nonexistent_key() {
     let mut t = MerklePatriciaTrie::with_memory();
     // Deleting from empty trie should return false
-    assert! (!t.delete(&[0u8, 1, 2]));
+    assert!(!t.delete(&[0u8, 1, 2]));
     
     // Insert a key, then try to delete a different key
     t.insert(&[0u8, 1, 2], vec![9]);
-    assert! (!t.delete(&[0u8, 1, 3]));
+    assert!(!t.delete(&[0u8, 1, 3]));
 }
 
 #[test]
