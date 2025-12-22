@@ -165,7 +165,25 @@ impl MerklePatriciaTrie {
     }
 
     fn insert_at(&mut self, node_hash: Hash, path: &[u8], value: Vec<u8>) -> Hash {
-        let node = self.store.get(&node_hash).expect("node must exist");
+        // The `node_hash` passed here must always refer to an existing node in `store`.
+        // Invariants:
+        // - `node_hash` is either the current root hash or a child hash that was previously
+        //   returned by `store.put` and then stored inside another node (Branch/Extension).
+        // - We never fabricate `node_hash` values; they always originate from the same store.
+        //
+        // Therefore, if `store.get(node_hash)` returns `None`, this indicates a severe
+        // internal inconsistency such as:
+        //   * underlying store corruption,
+        //   * unintended concurrent modification of the store, or
+        //   * unexpected eviction of nodes from a cached/memory-backed store.
+        //
+        // In these situations, continuing execution would be unsafe and likely produce
+        // incorrect trie state, so we intentionally panic here rather than attempting to
+        // recover.
+        let node = self
+            .store
+            .get(&node_hash)
+            .expect("MerklePatriciaTrie invariant violated: node must exist in store");
         match node {
             Node::Leaf { key, value: old_val } => {
                 let l = common_prefix_len(&key, path);
