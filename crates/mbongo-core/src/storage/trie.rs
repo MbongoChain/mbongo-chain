@@ -102,15 +102,17 @@ impl NodeStore for RocksStore {
     fn put(&mut self, node: &Node) -> Hash {
         let enc = node.encode();
         let h = Hash(hash_bytes(&enc));
-        if let Err(e) = self.db.put(h.0, &enc) {
-            eprintln!("RocksStore::put failed for key {:?}: {}", h.0, e);
-        }
+        self
+            .db
+            .put(h.0, &enc)
+            .expect("RocksStore::put failed: unable to persist node to RocksDB");
         h
     }
     fn delete(&mut self, h: &Hash) {
-        if let Err(e) = self.db.delete(h.0) {
-            eprintln!("RocksStore::delete failed for key {:?}: {}", h.0, e);
-        }
+        self
+            .db
+            .delete(h.0)
+            .expect("RocksStore::delete failed: unable to delete node from RocksDB");
     }
 }
 
