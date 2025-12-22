@@ -38,8 +38,10 @@
 #![warn(clippy::pedantic)]
 
 mod primitives;
+pub mod storage;
 
 pub use primitives::{compute_transactions_root, Address, Block, BlockBody, BlockHeader, Hash, Transaction, TransactionType};
+pub use storage::trie::{MerklePatriciaTrie, ProofNode};
 
 #[cfg(test)]
 mod tests {

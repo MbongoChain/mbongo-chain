@@ -122,8 +122,10 @@ This index provides a structured, hierarchical view of all Mbongo Chain document
 
 ### 3.3 Data & Validation
 ```
-└── sync_validation.md [L3]
+├── sync_validation.md [L3]
     └── Chain synchronization and validation
+└── state_trie.md [L2] [PRIMARY]
+    └── Merkle Patricia Trie for state storage, proofs, and roots
 ```
 
 ---
