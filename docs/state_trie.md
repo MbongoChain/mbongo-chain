@@ -5,7 +5,7 @@ This document describes the Merkle Patricia Trie (MPT) used for state storage in
 - Hexary Patricia structure with node types: Branch (16-way), Extension, Leaf
 - Node serialization: SCALE-encoded for compactness and speed
 - Hash function: BLAKE3 over node encoding (32 bytes), yielding `Hash`
-- Operations: insert, get, delete in O(length(key)) ~ O(log n) on average
+- Operations: insert, get, delete in O(length(key)) time, where key length (in nibbles) determines the trie path depth
 - Proofs: path proofs are sequences of `(node_hash, node_bytes)` from root to target
 
 ## Interface
