@@ -95,7 +95,7 @@ fn test_empty_values_and_special_keys() {
 
 #[test]
 fn test_prefix_keys() {
-    let mut t = MerklePatriciaTrie:: with_memory();
+    let mut t = MerklePatriciaTrie::with_memory();
     
     // Insert keys where one is a prefix of another
     t.insert(&[0u8, 1], vec![1]);
