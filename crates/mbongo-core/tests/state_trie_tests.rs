@@ -78,7 +78,7 @@ fn test_empty_values_and_special_keys() {
     
     // Insert empty value
     t.insert(&[0u8, 1, 2], vec![]);
-    assert_eq!(t. get(&[0u8, 1, 2]), Some(vec![]));
+    assert_eq!(t.get(&[0u8, 1, 2]), Some(vec![]));
     
     // Insert with all zeros key
     t.insert(&[0u8, 0, 0], vec![1]);
