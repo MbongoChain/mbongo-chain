@@ -220,9 +220,6 @@ impl MerklePatriciaTrie {
                         let new_leaf_h = self.store.put(&new_leaf);
                         if let Node::Branch { children, .. } = &mut branch { children[child_nib] = Some(new_leaf_h); }
 
-                        let old_nib = 16; // sentinel for branch value
-                        drop(old_nib);
-
                         let old_child_nib = key[l] as usize;
                         let old_leaf = Node::Leaf { key: key[l + 1..].to_vec(), value: old_val };
                         let old_leaf_h = self.store.put(&old_leaf);
