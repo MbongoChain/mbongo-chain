@@ -170,7 +170,8 @@ impl MerklePatriciaTrie {
         }
     }
 
-    pub fn insert(&mut self, key: &[u8], value: Vec<u8>) {
+    pub fn insert(&mut self, key:  &[u8], value: Vec<u8>) -> Option<Vec<u8>> {
+        let old_value = self.get(key);
         let nibbles = bytes_to_nibbles(key);
         let new_root = match self.root {
             None => {
@@ -180,6 +181,7 @@ impl MerklePatriciaTrie {
             Some(r) => self.insert_at(r, &nibbles, value),
         };
         self.root = Some(new_root);
+        old_value
     }
 
     fn insert_at(&mut self, node_hash: Hash, path: &[u8], value: Vec<u8>) -> Hash {
