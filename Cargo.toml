@@ -67,6 +67,7 @@ tower-http = { version = "0.5", features = ["cors", "trace"] }
 hex = "0.4"
 bs58 = "0.5"
 lazy_static = "1.4"
+parity-scale-codec = { version = "3.6", features = ["derive"] }
 
 [profile.release]
 opt-level = 3

@@ -1,0 +1,19 @@
+[default]
+extend-ignore-re = []
+
+[default.extend-words]
+# Blockchain and crypto terms
+TGE = "TGE"  # Token Generation Event
+# Zero-knowledge proof systems
+Groth16 = "Groth16"
+groth16 = "groth16"
+# Network protocols
+UPnP = "UPnP"
+# Identifiers and codes
+NCE = "NCE"  # Nonce Check Error codes
+Uiu = "Uiu"  # libp2p peer ID prefix (e.g., 16Uiu2HAm...)
+# Business terms
+SOM = "SOM"  # Serviceable Obtainable Market
+# Common abbreviations in ASCII diagrams
+COMMUN = "COMMUN"  # Community (abbreviated in tables)
+Determin = "Determin"  # Determination (abbreviated in diagrams)
