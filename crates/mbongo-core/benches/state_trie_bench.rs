@@ -9,7 +9,7 @@ fn bench_inserts(c: &mut Criterion) {
                 || MerklePatriciaTrie::with_memory(),
                 |mut trie| {
                     for i in 0..n {
-                        let key = i.to_le_bytes();
+                        let key = (i as u64).to_le_bytes();
                         let val = (i as u64 * 17).to_le_bytes().to_vec();
                         trie.insert(&key, val);
                     }
@@ -28,7 +28,7 @@ fn bench_gets(c: &mut Criterion) {
             let mut trie = MerklePatriciaTrie::with_memory();
             let mut keys = Vec::with_capacity(n);
             for i in 0..n {
-                let key = i.to_le_bytes();
+                let key = (i as u64).to_le_bytes();
                 let val = (i as u64 * 17).to_le_bytes().to_vec();
                 trie.insert(&key, val);
                 keys.push(key);
