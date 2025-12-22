@@ -412,21 +412,24 @@ impl MerklePatriciaTrie {
     pub fn get_proof(&self, key: &[u8]) -> Option<Vec<ProofNode>> {
         let mut proof = Vec::new();
         let mut cur = self.root?;
-        let mut path = bytes_to_nibbles(key);
+        let path = bytes_to_nibbles(key);
+        let mut consumed = 0usize;
         loop {
             let node = self.store.get(&cur)?;
             let enc = node.encode();
             proof.push(ProofNode { hash: node_hash(&node), encoded: enc });
             match node {
                 Node::Branch { children, .. } => {
-                    if path.is_empty() { return Some(proof); }
-                    let nib = path.remove(0) as usize;
+                    if consumed >= path.len() { return Some(proof); }
+                    let nib = path[consumed] as usize;
+                    consumed += 1;
                     if let Some(ch) = children[nib] { cur = ch; } else { return Some(proof); }
                 }
                 Node::Extension { key, child } => {
-                    let l = common_prefix_len(&key, &path);
+                    let remaining = &path[consumed..];
+                    let l = common_prefix_len(&key, remaining);
                     if l != key.len() { return Some(proof); }
-                    path.drain(0..l);
+                    consumed += l;
                     cur = child;
                 }
                 Node::Leaf { .. } => {
