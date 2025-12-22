@@ -79,7 +79,7 @@ impl NodeStore for MemoryStore {
     }
 }
 
-#[cfg(feature = "rocksdb")] // not enabled by default, but code compiles without feature gates
+#[cfg(feature = "rocksdb")] // optional RocksDB backend; requires the "rocksdb" feature (crate compiles without it)
 struct RocksStore {
     db: rocksdb::DB,
 }
