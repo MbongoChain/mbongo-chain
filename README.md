@@ -533,6 +533,72 @@ mbongo-cli compute run \
 
 ---
 
+## Who Can Contribute?
+
+Rust is required **only** for core protocol development. We encourage contributors using a wide range of technologies and skill sets.
+
+### Supported Languages and Tools
+
+Contributions are welcome using:
+- **Python**: SDK development, AI/ML tooling, testing automation
+- **Go**: Infrastructure tools, monitoring, auxiliary services
+- **JavaScript/TypeScript**: Web interfaces, client SDKs, tooling
+- **C++**: Performance-critical components, GPU compute integration
+- **CUDA**: GPU computation, performance optimization
+- **Bash/PowerShell**: Scripts, automation, deployment tooling
+
+### Contribution Areas
+
+You can contribute in the following areas:
+
+**Testing & QA:**
+- Integration testing frameworks
+- End-to-end test scenarios
+- Performance benchmarking
+- Security testing and fuzzing
+
+**Tooling:**
+- Developer utilities and CLI improvements
+- Monitoring dashboards and observability tools
+- Local development environment setup
+- Debugging and diagnostic tools
+
+**AI / GPU Compute:**
+- Compute task verification strategies
+- Model optimization for blockchain execution
+- GPU resource management
+- ZK-ML proof research and implementation
+
+**Infrastructure:**
+- CI/CD pipeline configuration
+- Cloud deployment automation
+- Container orchestration
+- Network infrastructure setup
+
+**Documentation:**
+- Technical documentation
+- API reference guides
+- Tutorials and how-to guides
+- Translation and localization
+
+### Getting Started
+
+Phase 2 development happens on the `dev` branch. All pull requests for Phase 2 work must target `dev`.
+
+GitHub issues are labeled to help you find areas that match your skills:
+- `phase-2`: Active Phase 2 development work
+- `testing`: Testing and QA opportunities
+- `tooling`: Developer tooling and utilities
+- `ai-compute`: AI and GPU compute work
+- `infrastructure`: Infrastructure and DevOps
+- `documentation`: Documentation improvements
+
+See [Contributing Guide](./CONTRIBUTING.md) for detailed contribution guidelines and [Contributing Roles](./docs/recruitment.md) for role definitions.
+
+**If you want to help build Mbongo Chain, there is a place for you.**
+
+---
+
 ## Contributing
 
 We welcome contributions from the community! Mbongo Chain is open-source and community-driven.
