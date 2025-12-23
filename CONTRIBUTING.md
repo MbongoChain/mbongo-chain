@@ -65,6 +65,36 @@ cargo test --all
 
 ---
 
+## Active Development Phase
+
+**Phase 1 (Foundation) is CLOSED and READ-ONLY.**
+
+- Phase 1 was completed in December 2025
+- No new contributions to Phase 1 will be accepted
+- Pull requests targeting Phase 1 will be closed
+- Phase 1 work is frozen in `main` branch
+
+**Phase 2 is ACTIVE.**
+
+- Phase 2 development began January 2026
+- All Phase 2 contributions MUST:
+  - Target the `dev` branch (not `main`)
+  - Be labeled with `phase-2` tag
+- Phase 2 scope includes: TEE integration, networking, API, tooling, and higher-layer features
+
+**Branch Policy:**
+
+- `main`: Protected branch. Reserved for audited, stable milestones only. Not a development branch.
+- `dev`: Active development branch for Phase 2 work. All pull requests must target `dev`.
+
+**Bounty Policy:**
+
+- No bounties are paid for work merged outside the active development phase
+- Only Phase 2 contributions targeting `dev` branch are eligible for bounties
+- Phase 1 contributions are no longer eligible (phase closed)
+
+---
+
 ## Areas Needing Contribution
 
 We welcome contributions in multiple areas. Choose what aligns with your skills and interests!
