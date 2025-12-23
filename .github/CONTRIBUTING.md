@@ -3,6 +3,19 @@
 Thank you for considering contributing to Mbongo Chain!
 
 This document describes the development process, how to propose changes, and how to work within the codebase.
+## Development Status — Phase 1 (Locked)
+
+Mbongo Chain is currently locked to **Phase 1: Foundation**.
+
+Only protocol-definition work is accepted.
+
+❌ Runtime execution  
+❌ State machines  
+❌ Storage engines  
+❌ Networking / APIs  
+❌ Tooling / CLI  
+
+PRs outside Phase 1 scope will be closed without review.
 
 ---
 
@@ -74,7 +87,14 @@ By contributing, you agree your code is released under:
 
 ---
 
-## 6. Security
+### 6. Bounty Policy
+
+No bounties are paid on Phase N+1
+until Phase N is merged and locked.
+
+## 7. Security
 
 For vulnerabilities, do NOT open a public issue.  
 Use: security@mbongo.money (placeholder)
+
+
