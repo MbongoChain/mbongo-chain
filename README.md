@@ -23,6 +23,28 @@ The AI revolution is bottlenecked by expensive, centralized compute infrastructu
 
 ---
 
+## Development Status — Phase 1 Complete, Phase 2 Active
+
+**Phase 1 (Foundation) is COMPLETE and FROZEN.**
+
+- **Phase 1 completion date**: December 2025
+- **Status**: No new Phase 1 changes will be accepted
+- **Scope**: Block structure, Transaction model (Transfer-only), Account model, Cryptography, State storage
+
+**Phase 2 is now ACTIVE.**
+
+- **Phase 2 start date**: January 2026
+- **Status**: Active development
+- **Branch**: All Phase 2 development MUST target the `dev` branch
+- **Scope**: TEE integration, networking, API, tooling, and higher-layer features
+
+**Branch Policy:**
+
+- `main`: Reserved for audited, stable milestones only. Protected branch.
+- `dev`: Active development branch for Phase 2 work. All pull requests must target `dev`.
+
+---
+
 ## Key Features
 
 ### 🔗 Proof of X (PoX) Consensus
@@ -58,12 +80,12 @@ Mbongo Chain ensures compute correctness through a progressive verification stra
 - 2/3 majority consensus required
 - Optimistic fraud proofs with 100-block challenge period
 
-**Phase 2 (Q2 2025)**: Trusted Execution Environments (TEE)
+**Phase 2 (January 2026+)**: Trusted Execution Environments (TEE)
 - Intel SGX / AMD SEV support
 - Reduced redundancy (1 TEE + 2 standard validators)
 - Remote attestation verification
 
-**Phase 3 (Q4 2025)**: Zero-Knowledge Machine Learning (ZK-ML)
+**Phase 3 (2026+)**: Zero-Knowledge Machine Learning (ZK-ML)
 - Cryptographic proofs of correct computation
 - O(1) verification time
 - Privacy-preserving AI execution
@@ -363,29 +385,29 @@ For detailed tokenomics, see [Economic Model](./docs/economic_model.md) (coming 
 
 ## Roadmap
 
-### Phase 1: Foundation (Q1-Q2 2025) ✅
+### Phase 1: Foundation — Completed December 2025 ✅
 
-**Status**: In Development
+**Status**: COMPLETE and FROZEN
 
 - [x] Core blockchain implementation (Rust)
-- [x] PoX consensus engine
-- [x] AIDA regulator (basic)
-- [x] Redundant execution verification
-- [x] Optimistic fraud proofs
-- [ ] Testnet launch
-- [ ] Validator onboarding (50+ validators)
+- [x] Block structure
+- [x] Transaction model (Transfer-only with chain_id)
+- [x] Account model
+- [x] State storage
+- [x] Cryptographic primitives (Ed25519 signing/verification)
 
-**Deliverables**:
-- Testnet with 50+ validators
-- Redundant verification (3 validators per task)
-- Basic compute marketplace
-- CLI tools and documentation
+**Deliverables Completed**:
+- Core blockchain primitives in `mbongo-core`
+- Transaction structure with mandatory chain_id for replay protection
+- SCALE encoding for transactions
+- State management with in-memory storage
+- Account operations (credit, debit, nonce)
 
 ---
 
-### Phase 2: Scaling (Q3-Q4 2025)
+### Phase 2: Scaling — Active January 2026
 
-**Status**: Planned
+**Status**: ACTIVE (development on `dev` branch)
 
 - [ ] TEE integration (Intel SGX, AMD SEV)
 - [ ] Hybrid verification (1 TEE + 2 standard)
@@ -402,9 +424,9 @@ For detailed tokenomics, see [Economic Model](./docs/economic_model.md) (coming 
 
 ---
 
-### Phase 3: Innovation (2026)
+### Phase 3: Innovation — Planned 2026+
 
-**Status**: Research
+**Status**: Planned (not yet active)
 
 - [ ] ZK-ML proof generation and verification
 - [ ] Privacy-preserving compute
@@ -562,8 +584,8 @@ If you discover a security vulnerability, please email security@mbongochain.com.
 
 ### Audits
 
-- **Phase 1**: Internal security review (Q1 2025)
-- **Phase 2**: External audit by Certik (Q2 2025, planned)
+- **Phase 1**: Internal security review (Completed — December 2025)
+- **Phase 2**: External audit by Certik (Planned — 2026)
 - **Phase 3**: Ongoing bug bounty program (Mainnet launch)
 
 ---
