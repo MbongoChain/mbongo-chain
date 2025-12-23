@@ -53,17 +53,37 @@ Where `C_SR` and `C_NL` are dynamically adjusted by AIDA to maintain network bal
 
 Mbongo Chain ensures compute correctness through a progressive verification strategy:
 
-**Phase 1 (Current)**: Redundant Execution
-- 3 randomly selected validators verify each task
-- 2/3 majority consensus required
-- Optimistic fraud proofs with 100-block challenge period
+**## Development Status — Phase 1 (Foundation)
 
-**Phase 2 (Q2 2025)**: Trusted Execution Environments (TEE)
+Mbongo Chain is currently in **Phase 1: Foundation (Protocol Definition)**.
+
+Phase 1 is now **LOCKED**.
+
+Accepted scope:
+- Block structure
+- Transaction model (chain_id mandatory)
+- Cryptographic primitives
+- Protocol-level data structures
+- Specification and documentation
+
+Out of scope until Phase 2:
+- State execution
+- Account balance logic
+- Merkle tries / storage engines
+- Networking (P2P, RPC)
+- APIs, wallets, compute, tooling
+- Tests depending on runtime execution
+
+Pull requests targeting out-of-scope areas will be closed.
+No bounties are paid outside the active phase.
+
+
+**Phase 2 (Q1 2026)**: Trusted Execution Environments (TEE)
 - Intel SGX / AMD SEV support
 - Reduced redundancy (1 TEE + 2 standard validators)
 - Remote attestation verification
 
-**Phase 3 (Q4 2025)**: Zero-Knowledge Machine Learning (ZK-ML)
+**Phase 3 (Q2 2026)**: Zero-Knowledge Machine Learning (ZK-ML)
 - Cryptographic proofs of correct computation
 - O(1) verification time
 - Privacy-preserving AI execution
@@ -363,7 +383,7 @@ For detailed tokenomics, see [Economic Model](./docs/economic_model.md) (coming 
 
 ## Roadmap
 
-### Phase 1: Foundation (Q1-Q2 2025) ✅
+### Phase 1: Foundation (Q1-Q2 2026) ✅
 
 **Status**: In Development
 
@@ -383,7 +403,7 @@ For detailed tokenomics, see [Economic Model](./docs/economic_model.md) (coming 
 
 ---
 
-### Phase 2: Scaling (Q3-Q4 2025)
+### Phase 2: Scaling (Q3-Q4 2026)
 
 **Status**: Planned
 
@@ -402,7 +422,7 @@ For detailed tokenomics, see [Economic Model](./docs/economic_model.md) (coming 
 
 ---
 
-### Phase 3: Innovation (2026)
+### Phase 3: Innovation (2027)
 
 **Status**: Research
 
@@ -562,8 +582,8 @@ If you discover a security vulnerability, please email security@mbongochain.com.
 
 ### Audits
 
-- **Phase 1**: Internal security review (Q1 2025)
-- **Phase 2**: External audit by Certik (Q2 2025, planned)
+- **Phase 1**: Internal security review (Q1 2026)
+- **Phase 2**: External audit by Certik (Q2 2026, planned)
 - **Phase 3**: Ongoing bug bounty program (Mainnet launch)
 
 ---
@@ -573,7 +593,7 @@ If you discover a security vulnerability, please email security@mbongochain.com.
 This project is licensed under the **Apache License 2.0** - see the [LICENSE](./LICENSE) file for details.
 
 ```
-Copyright 2025 Mbongo Chain Contributors
+Copyright 2026 Mbongo Chain Contributors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
