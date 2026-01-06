@@ -110,6 +110,7 @@ pub struct Transaction {
     /// Nonce to prevent replay.
     pub nonce: u64,
     /// ed25519 signature over the signing payload.
+    #[serde(with = "serde_arr64")]
     pub signature: [u8; 64],
 }
 
@@ -141,13 +142,8 @@ impl Transaction {
             Ok(k) => k,
             Err(_) => return false,
         };
-        let sig = match Signature::from_bytes(&self.signature) {
-            Ok(s) => s,
-            Err(_) => return false,
-        };
+        let sig = Signature::from_bytes(&self.signature);
         pk.verify(&self.signing_payload(), &sig).is_ok()
-    }
-}
     }
 }
 
@@ -188,12 +184,31 @@ pub fn compute_transactions_root(txs: &[Transaction]) -> Hash {
     use blake3::Hasher;
     let mut hasher = Hasher::new();
     for tx in txs {
-    let encoded = tx.encode();
-    let len = encoded.len() as u32;
+        let encoded = tx.encode();
+        let len = encoded.len() as u32;
         hasher.update(&len.to_le_bytes());
         hasher.update(&encoded);
     }
     let mut out = [0u8; 32];
     out.copy_from_slice(hasher.finalize().as_bytes());
     Hash(out)
+}
+
+// Serde helpers for fixed-size 64-byte arrays as hex strings
+mod serde_arr64 {
+    use serde::{Deserializer, Serializer, Deserialize};
+    pub fn serialize<S: Serializer>(v: &[u8; 64], s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&format!("0x{}", hex::encode(v)))
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 64], D::Error> {
+        let s = String::deserialize(d)?;
+        let s = s.strip_prefix("0x").unwrap_or(&s);
+        let bytes = hex::decode(s).map_err(serde::de::Error::custom)?;
+        if bytes.len() != 64 {
+            return Err(serde::de::Error::custom("expected 64 bytes"));
+        }
+        let mut arr = [0u8; 64];
+        arr.copy_from_slice(&bytes);
+        Ok(arr)
+    }
 }

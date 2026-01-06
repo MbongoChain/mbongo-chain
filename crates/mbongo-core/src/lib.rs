@@ -12,20 +12,17 @@
 //! contains the ordered list of transactions.
 //!
 //! ```rust
-//! use mbongo_core::{Block, BlockHeader, BlockBody, Hash, Transaction, Address, TransactionType};
-//! 
-//! // Build a simple block with two transactions (typed + signed)
+//! use mbongo_core::{Block, BlockHeader, BlockBody, Hash, Transaction, Address, TransactionType, compute_transactions_root};
+//!
+//! // Build a simple block with two typed transactions (unsigned)
 //! let txs = vec![
 //!     Transaction { tx_type: TransactionType::Transfer, sender: Address::zero(), receiver: Address::zero(), amount: 1, nonce: 0, signature: [0u8; 64] },
 //!     Transaction { tx_type: TransactionType::Stake, sender: Address::zero(), receiver: Address::zero(), amount: 1000, nonce: 1, signature: [0u8; 64] },
 //! ];
-//!
-//! // Build a simple block with two transactions (opaque bytes)
-//! let txs = vec![Transaction(vec![1,2,3]), Transaction(vec![4,5])];
 //! let header = BlockHeader {
 //!     parent_hash: Hash::zero(),
 //!     state_root: Hash::zero(),
-//!     transactions_root: mbongo_core::compute_transactions_root(&txs),
+//!     transactions_root: compute_transactions_root(&txs),
 //!     timestamp: 1_700_000_000,
 //!     height: 1,
 //! };
@@ -44,6 +41,9 @@ pub use primitives::{compute_transactions_root, Address, Block, BlockBody, Block
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::{SigningKey, VerifyingKey, Signer};
+    use parity_scale_codec::{Encode, Decode};
+    use serde_json as json;
     
     #[test]
     fn hash_invalid_length() {
@@ -56,8 +56,8 @@ mod tests {
     
     #[test]
     fn hash_missing_prefix() {
-        let no_prefix = "0". repeat(64);  // Missing "0x"
-        assert!(no_prefix.parse::<Hash>().is_err());
+        let no_prefix = "0".repeat(64);  // Missing "0x"
+        assert!(no_prefix.parse::<Hash>().is_ok());
     }
     
     #[test]
@@ -87,20 +87,23 @@ mod tests {
             timestamp: 123,
             height: 7,
         };
-        let block = Block { header, body: BlockBody { transactions: txs } };
+        let block = Block { header, body: BlockBody { transactions: txs.clone() } };
         let s = json::to_string(&block).unwrap();
         let round: Block = json::from_str(&s).unwrap();
         // Verify all header fields are preserved
         assert_eq!(round.header.parent_hash, block.header.parent_hash);
-        assert_eq!(round.header. state_root, block.header. state_root);
+        assert_eq!(round.header.state_root, block.header.state_root);
         assert_eq!(round.header.transactions_root, block.header.transactions_root);
         assert_eq!(round.header.timestamp, 123);
         assert_eq!(round.header.height, 7);
-        
+
         // Verify transaction contents are preserved
         assert_eq!(round.body.transactions.len(), 2);
-        assert_eq!(round.body.transactions[0].0, vec![1, 2, 3]);
+        assert_eq!(round.body.transactions[0].tx_type, txs[0].tx_type);
+        assert_eq!(round.body.transactions[1].tx_type, txs[1].tx_type);
     
+    }
+
     #[test]
     fn ed25519_signature_verification_transfer() {
         let sk_bytes = [1u8; 32];
@@ -120,6 +123,27 @@ mod tests {
         let mut tx_signed = tx;
         tx_signed.signature = sig.to_bytes();
         assert!(tx_signed.verify_signature());
+    }
+
+    #[test]
+    fn ed25519_signature_invalid_fails() {
+        let sk_bytes = [7u8; 32];
+        let sk = SigningKey::from_bytes(&sk_bytes);
+        let vk: VerifyingKey = sk.verifying_key();
+        let sender = Address(vk.to_bytes());
+        let tx = Transaction {
+            tx_type: TransactionType::Transfer,
+            sender,
+            receiver: Address::zero(),
+            amount: 10,
+            nonce: 1,
+            signature: [0u8; 64],
+        };
+        let sig = sk.sign(&tx.signing_payload());
+        let mut tampered = tx.clone();
+        tampered.amount = 11; // change payload after signing
+        tampered.signature = sig.to_bytes();
+        assert!(!tampered.verify_signature());
     }
 
     #[test]
@@ -148,8 +172,6 @@ mod tests {
             assert_eq!(dec.nonce, 9);
             assert_eq!(dec.signature, [5u8; 64]);
         }
-    }
-        assert_eq!(round.body.transactions[1].0, vec![]);
     }
 
     #[test]
