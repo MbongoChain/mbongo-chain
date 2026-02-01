@@ -34,6 +34,7 @@
 #![warn(clippy::all)]
 #![warn(clippy::pedantic)]
 
+pub mod crypto;
 mod primitives;
 
 pub use primitives::{compute_transactions_root, Address, Block, BlockBody, BlockHeader, Hash, Transaction, TransactionType};
