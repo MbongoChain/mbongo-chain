@@ -34,9 +34,11 @@
 #![warn(clippy::all)]
 #![warn(clippy::pedantic)]
 
+mod account;
 pub mod crypto;
 mod primitives;
 
+pub use account::{Account, AccountError, ValidatorData};
 pub use primitives::{compute_transactions_root, Address, Block, BlockBody, BlockHeader, Hash, Transaction, TransactionType};
 
 #[cfg(test)]
