@@ -20,9 +20,6 @@ ed25519-dalek = { workspace = true }
 blake3 = { workspace = true }
 sha2 = { workspace = true }
 
-# Storage
-rocksdb = { workspace = true }
-
 # Error handling
 thiserror = { workspace = true }
 anyhow = { workspace = true }
@@ -34,3 +31,4 @@ parity-scale-codec = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+proptest = "1.4"
