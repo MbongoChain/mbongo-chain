@@ -25,6 +25,9 @@ tower-http = { workspace = true }
 utoipa = { version = "4" }
 utoipa-swagger-ui = { version = "7", features = ["axum"] }
 
+# Async
+async-trait = "0.1"
+
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -38,3 +41,4 @@ log = { workspace = true }
 
 [dev-dependencies]
 env_logger = { workspace = true }
+tower = { version = "0.4", features = ["util"] }

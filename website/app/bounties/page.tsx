@@ -208,14 +208,39 @@ export default function BountiesPage() {
           </Link>
         </div>
 
+        {/* Governance guardrails */}
+        <div>
+          <h2 className="text-2xl font-semibold text-slate-900 dark:text-slate-100 mb-4">
+            Governance
+          </h2>
+          <ul className="space-y-2 text-sm text-slate-600 dark:text-slate-400">
+            <li className="flex items-start gap-2">
+              <span className="mt-0.5 text-slate-400 dark:text-slate-600 shrink-0">&bull;</span>
+              Ledger updates occur only after a PR is merged. Open PRs, drafts, and claimed issues do not generate entries.
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="mt-0.5 text-slate-400 dark:text-slate-600 shrink-0">&bull;</span>
+              No private balances, no DM confirmations. The ledger file is the only valid record.
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="mt-0.5 text-slate-400 dark:text-slate-600 shrink-0">&bull;</span>
+              Disputes are resolved via GitHub Issues or Discussions, referencing the ledger row in question.
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="mt-0.5 text-slate-400 dark:text-slate-600 shrink-0">&bull;</span>
+              No retroactive changes to bounty amounts after a PR is merged.
+            </li>
+          </ul>
+        </div>
+
         {/* Disclaimer */}
         <div className="rounded-lg border border-slate-200 dark:border-slate-800 p-6 bg-slate-50 dark:bg-slate-900/50">
           <p className="text-sm text-slate-500 dark:text-slate-500">
             This page explains the bounty system. It does not constitute a
             promise of payment. Settlement occurs at TGE according to the
             contributor compensation framework documented in the repository.
-            Only MBO-denominated work is covered. Only Phase 2 contributions
-            to the <code>dev</code> branch are eligible.
+            Only MBO-denominated work is covered. Contributions must target
+            the <code>dev</code> branch.
           </p>
         </div>
       </section>

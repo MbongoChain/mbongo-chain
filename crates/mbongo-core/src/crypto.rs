@@ -175,9 +175,9 @@ impl MerkleTree {
             };
         }
 
-        // Pad to next power of 2
+        // Pad to next power of 2 (minimum 2 so a single leaf is paired with zero)
         let leaf_count = leaves.len();
-        let padded_count = leaf_count.next_power_of_two();
+        let padded_count = leaf_count.next_power_of_two().max(2);
         
         let mut nodes = Vec::with_capacity(2 * padded_count - 1);
         
@@ -333,12 +333,8 @@ pub fn compute_merkle_root(leaves: &[HashOutput]) -> HashOutput {
         return [0u8; HASH_SIZE];
     }
     
-    if leaves.len() == 1 {
-        return leaves[0];
-    }
-    
-    // Pad to next power of 2
-    let padded_count = leaves.len().next_power_of_two();
+    // Pad to next power of 2 (minimum 2 so a single leaf is paired with zero)
+    let padded_count = leaves.len().next_power_of_two().max(2);
     let mut level: Vec<HashOutput> = leaves.to_vec();
     level.resize(padded_count, [0u8; HASH_SIZE]);
     

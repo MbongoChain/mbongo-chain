@@ -45,7 +45,7 @@ async fn test_get_blocks_default_limit() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert!(v.is_array());
     assert_eq!(v.as_array().unwrap().len(), 10);
@@ -65,7 +65,7 @@ async fn test_get_block_by_hash() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["hash"], json!("0xabc"));
 }
@@ -116,7 +116,7 @@ async fn test_validators_list() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert!(v.is_array());
     assert_eq!(v.as_array().unwrap().len(), 1);

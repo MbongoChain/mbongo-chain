@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh issue view:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo tree:*)",
+      "Bash(grep:*)",
+      "Bash(choco:*)",
+      "Bash(winget:*)",
+      "Bash(LIBCLANG_PATH=\"C:/Program Files/LLVM/bin\" cargo check:*)",
+      "Bash(LIBCLANG_PATH=\"C:/Program Files/LLVM/bin\" cargo test:*)",
+      "Bash(echo:*)"
+    ]
+  }
+}

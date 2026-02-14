@@ -7,6 +7,7 @@ Mbongo Chain is a Rust-native, compute-first blockchain that combines Proof of S
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Rust Version](https://img.shields.io/badge/rust-1.75%2B-blue.svg)](https://www.rust-lang.org)
 [![Documentation](https://img.shields.io/badge/docs-latest-brightgreen.svg)](./docs)
+[![Website](https://img.shields.io/badge/website-mbongochain.org-green.svg)](https://mbongochain.org)
 
 ---
 
@@ -629,10 +630,19 @@ We welcome contributions from the community! Mbongo Chain is open-source and com
 
 ### Community
 
-- **Discord**: [discord.gg/mbongo-chain](https://discord.gg/mbongo-chain) (coming soon)
-- **Twitter**: [@mbongo_chain](https://twitter.com/mbongo_chain) (coming soon)
-- **Forum**: [forum.mbongochain.com](https://forum.mbongochain.com) (coming soon)
-- **GitHub Discussions**: [Discussions](https://github.com/mbongo-chain/mbongo-chain/discussions)
+- **GitHub Discussions**: [Discussions](https://github.com/MbongoChain/mbongo-chain/discussions)
+
+---
+
+## Bounty Transparency
+
+Mbongo Chain operates a public bounty system for contributors.
+
+- **PR merged = bounty earned.** No bounty is recorded until the PR is merged.
+- **All earned bounties are recorded publicly** in [`docs/BOUNTY_LEDGER_PUBLIC.md`](./docs/BOUNTY_LEDGER_PUBLIC.md). The ledger is append-only.
+- **Settlement occurs at TGE.** No payments are made before the MBO token is live.
+
+This is not a promise of payment. It is a transparent record of earned contributions. See the [bounty page on the website](https://mbongochain.org/bounties/) and the [contributor compensation framework](./docs/contributor_compensation.md) for details.
 
 ---
 
@@ -695,10 +705,10 @@ Special thanks to the Rust blockchain community for tooling and support.
 
 ## Links
 
-- **Website**: [mbongochain.com](https://mbongochain.com) (coming soon)
-- **Documentation**: [docs.mbongochain.com](https://docs.mbongochain.com) (coming soon)
-- **Block Explorer**: [explorer.mbongochain.com](https://explorer.mbongochain.com) (coming soon)
-- **GitHub**: [github.com/mbongo-chain/mbongo-chain](https://github.com/mbongo-chain/mbongo-chain)
+- **Website**: [mbongochain.org](https://mbongochain.org)
+- **GitHub**: [github.com/MbongoChain/mbongo-chain](https://github.com/MbongoChain/mbongo-chain)
+- **Documentation**: [`docs/`](./docs) (repository)
+- **Block Explorer**: Not yet available
 
 ---
 

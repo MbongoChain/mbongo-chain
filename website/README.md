@@ -4,6 +4,15 @@ Developer-first website for [Mbongo Chain](https://github.com/MbongoChain/mbongo
 
 No hype. No fundraising language. Content aligns with the repository.
 
+## Production
+
+- **Official URL**: [https://mbongochain.org](https://mbongochain.org)
+- **Hosting**: Cloudflare Workers (static export served via Workers)
+- **DNS**: Managed via Cloudflare
+- **Namecheap/cPanel**: Not used for website hosting. Domain registrar only.
+
+The production deployment is the `out/` directory served by Cloudflare Workers. No server-side rendering, no backend, no API routes.
+
 ## Tech Stack
 
 - **Next.js 14** — React framework with App Router
@@ -48,20 +57,23 @@ npx serve out
 
 ## Deploy
 
-### Vercel
+### Cloudflare Workers (Production)
+
+The official site at [mbongochain.org](https://mbongochain.org) is deployed via Cloudflare Workers serving the static `out/` directory.
+
+```bash
+cd website
+npm install
+npm run build
+# Deploy out/ via Cloudflare Workers dashboard or wrangler CLI
+```
+
+### Vercel (Alternative)
 
 1. Push the repo to GitHub.
 2. Import the project in [Vercel](https://vercel.com).
 3. Set **Root Directory** to `website`.
 4. Deploy. No environment variables required.
-
-### Cloudflare Pages
-
-1. Push the repo to GitHub.
-2. Create a new Pages project in Cloudflare.
-3. Set **Build command**: `cd website && npm install && npm run build`
-4. Set **Build output directory**: `website/out`
-5. Deploy.
 
 ### Manual
 
@@ -69,7 +81,7 @@ npx serve out
 cd website
 npm install
 npm run build
-# Upload contents of out/ to your host
+# Upload contents of out/ to any static host
 ```
 
 ## Pages

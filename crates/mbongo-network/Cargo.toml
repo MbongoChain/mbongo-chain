@@ -35,5 +35,4 @@ log = { workspace = true }
 
 [dev-dependencies]
 env_logger = { workspace = true }
-tower = { workspace = true }
-hyper = "1"
+tower = { version = "0.4", features = ["util"] }

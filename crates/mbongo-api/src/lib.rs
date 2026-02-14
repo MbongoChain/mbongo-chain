@@ -16,6 +16,7 @@
 #![warn(clippy::all)]
 #![warn(clippy::pedantic)]
 
+/// REST API handlers, types, and router.
 pub mod rest;
 // pub mod ws;
 // pub mod rpc;

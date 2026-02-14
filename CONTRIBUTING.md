@@ -18,6 +18,7 @@ Whether you're a Rust developer, blockchain expert, documentation writer, or com
 6. [Communication Channels](#communication-channels)
 7. [Code of Conduct](#code-of-conduct)
 8. [Recognition](#recognition)
+9. [AI Coding Assistants & Security Guidelines](#ai-coding-assistants--security-guidelines)
 
 ---
 
@@ -917,6 +918,59 @@ Not just code! We celebrate:
 4. **Open Discussion**: https://github.com/mbongo-chain/mbongo-chain/discussions
 
 **Maintainers are here to help!** Don't hesitate to ask questions.
+
+---
+
+## AI Coding Assistants & Security Guidelines
+
+AI coding assistants (Claude, GPT, Copilot, etc.) are permitted for this project.
+
+However, contributors are fully responsible for the correctness, safety, and security of any code they submit — regardless of how it was generated.
+
+### Allowed Use
+
+AI tools may be used for:
+- Boilerplate generation
+- Refactoring
+- Test writing
+- Documentation
+- CLI and tooling code
+- Infrastructure scripts
+
+### Security-Sensitive Areas
+
+The following areas require extra care and strict review:
+
+- Consensus logic
+- State transitions
+- Transaction validation
+- Cryptographic primitives
+- Signature verification
+- Merkle structures
+- Persistent storage logic
+- Economic or staking rules
+
+For changes affecting these areas, contributors must:
+
+- Clearly explain the design rationale in the PR description
+- Include unit tests
+- Include property tests or invariants where applicable
+- Avoid "blind AI-generated code" without understanding it
+- Be prepared to revise based on review feedback
+
+### Review Policy
+
+- All PRs must target the `dev` branch.
+- No direct commits to `main`.
+- Maintainers may request additional tests or refactors before merge.
+- Security-sensitive changes may require extended review time.
+
+### Responsibility Principle
+
+If you submit code, you are responsible for understanding it.
+
+AI assistance is allowed.
+Unreviewed or misunderstood code is not.
 
 ---
 

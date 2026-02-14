@@ -1,14 +1,13 @@
+use axum::body::to_bytes;
 use axum::http::StatusCode;
-use mbongo_network::server::router;
 use mbongo_network::rpc::{BackendError, RpcBackend};
+use mbongo_network::server::router;
 use serde_json::{json, Value};
 use tower::ServiceExt; // for oneshot()
-use async_trait::async_trait;
 
 #[derive(Clone)]
 struct MockBackend;
 
-#[async_trait]
 impl RpcBackend for MockBackend {
     async fn get_block_height(&self) -> Result<u64, BackendError> {
         Ok(1234)
@@ -32,7 +31,7 @@ async fn test_ping() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let v: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["result"], json!("pong"));
     assert_eq!(v["jsonrpc"], json!("2.0"));
@@ -56,7 +55,7 @@ async fn test_get_block_height() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let v: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["result"], json!(1234));
     assert_eq!(v["id"], json!("h"));
@@ -79,7 +78,7 @@ async fn test_method_not_found() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let v: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["error"]["code"], json!(-32601));
     assert_eq!(v["id"], json!(2));
@@ -102,7 +101,7 @@ async fn test_invalid_request_version() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let v: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["error"]["code"], json!(-32600));
 }
@@ -128,7 +127,7 @@ async fn test_batch_requests() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let v: Value = serde_json::from_slice(&bytes).unwrap();
     assert!(v.is_array());
     assert_eq!(v.as_array().unwrap()[0]["result"], json!("pong"));

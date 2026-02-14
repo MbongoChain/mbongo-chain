@@ -3,6 +3,7 @@ resolver = "2"
 
 members = [
     "crates/mbongo-core",
+    "crates/mbongo-storage",
     "crates/mbongo-consensus",
     "crates/mbongo-verification",
     "crates/mbongo-compute",

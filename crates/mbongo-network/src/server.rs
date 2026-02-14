@@ -1,7 +1,7 @@
 use axum::{
     extract::State,
     http::{Method, StatusCode},
-    response::{IntoResponse, Response},
+    response::IntoResponse,
     routing::post,
     Json, Router,
 };
@@ -10,11 +10,13 @@ use tower_http::cors::{Any, CorsLayer};
 
 use crate::rpc::{http_status_for_error, JsonRpcRequest, JsonRpcResponse, RpcBackend, RpcErrorCode};
 
+/// Shared application state holding the backend implementation.
 #[derive(Clone)]
 pub struct AppState<B: RpcBackend> {
     backend: B,
 }
 
+/// Builds an Axum [`Router`] with the JSON-RPC endpoint and CORS middleware.
 pub fn router<B: RpcBackend>(backend: B) -> Router {
     let cors = CorsLayer::new()
         .allow_methods([Method::POST])
@@ -27,12 +29,12 @@ pub fn router<B: RpcBackend>(backend: B) -> Router {
         .layer(cors)
 }
 
+/// Binds a TCP listener on `addr` and serves the JSON-RPC router until shutdown.
 pub async fn serve_on_addr<B: RpcBackend>(addr: std::net::SocketAddr, backend: B) -> anyhow::Result<()> {
     let app = router(backend);
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service())
-        .await
-        .map_err(|e| anyhow::anyhow!(e))
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
+    Ok(())
 }
 
 async fn handle_rpc<B: RpcBackend>(State(state): State<AppState<B>>, Json(body): Json<Value>) -> impl IntoResponse {

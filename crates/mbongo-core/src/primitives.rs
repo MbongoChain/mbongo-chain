@@ -7,6 +7,7 @@ pub struct Hash(pub [u8; 32]);
 
 impl Hash {
     /// Returns the zero hash (all bytes zero).
+    #[must_use]
     pub const fn zero() -> Self { Self([0u8; 32]) }
 }
 
@@ -49,6 +50,7 @@ pub struct Address(pub [u8; 32]);
 
 impl Address {
     /// Returns the zero address.
+    #[must_use]
     pub const fn zero() -> Self { Self([0u8; 32]) }
 }
 
@@ -116,6 +118,7 @@ pub struct Transaction {
 
 impl Transaction {
     /// Returns SCALE-encoded signing payload (all fields except signature).
+    #[must_use]
     pub fn signing_payload(&self) -> Vec<u8> {
         #[derive(Encode)]
         struct Payload {
@@ -136,11 +139,12 @@ impl Transaction {
     }
 
     /// Verifies signature using ed25519 and sender's public key.
+    #[must_use]
     pub fn verify_signature(&self) -> bool {
         use ed25519_dalek::{Signature, Verifier};
-        let pk = match ed25519_dalek::VerifyingKey::from_bytes(&self.sender.0) {
-            Ok(k) => k,
-            Err(_) => return false,
+        let Ok(pk) = ed25519_dalek::VerifyingKey::from_bytes(&self.sender.0)
+        else {
+            return false;
         };
         let sig = Signature::from_bytes(&self.signature);
         pk.verify(&self.signing_payload(), &sig).is_ok()
@@ -180,11 +184,14 @@ pub struct Block {
 
 /// Compute a deterministic commitment over transactions.
 /// This is a simple Blake3 hash over SCALE-encoded, length-prefixed transactions.
+#[must_use]
 pub fn compute_transactions_root(txs: &[Transaction]) -> Hash {
     use blake3::Hasher;
     let mut hasher = Hasher::new();
     for tx in txs {
         let encoded = tx.encode();
+        // SCALE-encoded transactions are bounded well below u32::MAX bytes.
+        #[allow(clippy::cast_possible_truncation)]
         let len = encoded.len() as u32;
         hasher.update(&len.to_le_bytes());
         hasher.update(&encoded);
