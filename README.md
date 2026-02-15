@@ -32,17 +32,36 @@ The AI revolution is bottlenecked by expensive, centralized compute infrastructu
 - **Status**: No new Phase 1 changes will be accepted
 - **Scope**: Block structure, Transaction model (Transfer-only), Account model, Cryptography, State storage
 
-**Phase 2 is now ACTIVE.**
+**Phase 2 Devnet is STABLE and FROZEN at v0.2-devnet-stable.**
 
 - **Phase 2 start date**: January 2026
-- **Status**: Active development
+- **Tag**: `v0.2-devnet-stable`
+- **Status**: Devnet frozen — multi-node devnet operational with single producer model
 - **Branch**: All Phase 2 development MUST target the `dev` branch
-- **Scope**: TEE integration, networking, API, tooling, and higher-layer features
+- **Scope**: libp2p networking, block sync, block announcement, timed production, producer role enforcement, deterministic replay
+
+**Devnet Stable (v0.2) Resources:**
+
+- [Devnet Stability Report](./docs/DEVNET_STABILITY_REPORT.md) — Freeze documentation, test matrix, and frozen components
+- [Developer Onboarding](./docs/DEV_ONBOARDING.md) — Quick start guide, CLI reference, devnet commands
+- [Architecture Overview](./docs/ARCHITECTURE_OVERVIEW_FOR_NEW_DEVS.md) — Layer separation and block flow for new developers
+- [Protocol Definition v0.1](./docs/specs/PROTOCOL_DEFINITION_v0.1.md) — Canonical protocol specification
 
 **Branch Policy:**
 
 - `main`: Reserved for audited, stable milestones only. Protected branch.
 - `dev`: Active development branch for Phase 2 work. All pull requests must target `dev`.
+
+---
+
+## Development Governance
+
+- [CONTRIBUTING.md](./CONTRIBUTING.md) — How to contribute
+- [docs/CONTRIBUTING.md](./docs/CONTRIBUTING.md) — Phase 2 governance (branching, PR, RPC freeze, storage invariants)
+- [docs/CODE_STYLE.md](./docs/CODE_STYLE.md) — Rust formatting, clippy, documentation rules
+- [docs/ARCHITECTURE_GUARDRAILS.md](./docs/ARCHITECTURE_GUARDRAILS.md) — Layer rules, invariant protections
+- [docs/PHASE_1_COMPLETE.md](./docs/PHASE_1_COMPLETE.md) — Phase 1 scope and closure
+- [docs/PHASE_2_PLAN.md](./docs/PHASE_2_PLAN.md) — Phase 2 roadmap
 
 ---
 
