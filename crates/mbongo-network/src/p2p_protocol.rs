@@ -283,7 +283,7 @@ mod tests {
                 assert_eq!(start_height, 10);
                 assert_eq!(end_height, 20);
             }
-            _ => panic!("expected GetBlocks"),
+            SyncRequest::GetHeight => panic!("expected GetBlocks"),
         }
     }
 
@@ -328,7 +328,7 @@ mod tests {
                 assert_eq!(blocks[0].1.body.transactions.len(), 1);
                 assert_eq!(blocks[0].1.body.transactions[0].amount, 100);
             }
-            _ => panic!("expected Blocks"),
+            SyncResponse::Height(_) | SyncResponse::Error(_) => panic!("expected Blocks"),
         }
     }
 
@@ -339,7 +339,7 @@ mod tests {
         let decoded = SyncResponse::decode(&mut &encoded[..]).unwrap();
         match decoded {
             SyncResponse::Error(msg) => assert_eq!(msg, "something went wrong"),
-            _ => panic!("expected Error"),
+            SyncResponse::Height(_) | SyncResponse::Blocks(_) => panic!("expected Error"),
         }
     }
 
