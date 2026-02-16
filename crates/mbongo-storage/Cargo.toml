@@ -15,7 +15,6 @@ mbongo-core = { path = "../mbongo-core" }
 rocksdb = { workspace = true }
 thiserror = { workspace = true }
 parity-scale-codec = { workspace = true }
-serde_json = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

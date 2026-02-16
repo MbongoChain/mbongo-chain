@@ -55,10 +55,7 @@ impl Account {
     ///
     /// Returns [`AccountError::BalanceOverflow`] if the addition overflows `u128`.
     pub fn credit(&mut self, amount: u128) -> Result<(), AccountError> {
-        self.balance = self
-            .balance
-            .checked_add(amount)
-            .ok_or(AccountError::BalanceOverflow)?;
+        self.balance = self.balance.checked_add(amount).ok_or(AccountError::BalanceOverflow)?;
         Ok(())
     }
 
@@ -97,7 +94,11 @@ impl Account {
     ///
     /// Returns [`AccountError::InsufficientBalance`] if the sender cannot cover `amount`.
     /// Returns [`AccountError::BalanceOverflow`] if the receiver's balance would overflow.
-    pub fn transfer(from: &mut Account, to: &mut Account, amount: u128) -> Result<(), AccountError> {
+    pub fn transfer(
+        from: &mut Account,
+        to: &mut Account,
+        amount: u128,
+    ) -> Result<(), AccountError> {
         from.debit(amount)?;
         if let Err(e) = to.credit(amount) {
             from.balance += amount;

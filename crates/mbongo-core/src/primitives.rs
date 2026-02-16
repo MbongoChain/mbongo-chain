@@ -8,7 +8,9 @@ pub struct Hash(pub [u8; 32]);
 impl Hash {
     /// Returns the zero hash (all bytes zero).
     #[must_use]
-    pub const fn zero() -> Self { Self([0u8; 32]) }
+    pub const fn zero() -> Self {
+        Self([0u8; 32])
+    }
 }
 
 impl std::fmt::Display for Hash {
@@ -51,7 +53,9 @@ pub struct Address(pub [u8; 32]);
 impl Address {
     /// Returns the zero address.
     #[must_use]
-    pub const fn zero() -> Self { Self([0u8; 32]) }
+    pub const fn zero() -> Self {
+        Self([0u8; 32])
+    }
 }
 
 impl std::fmt::Display for Address {
@@ -142,8 +146,7 @@ impl Transaction {
     #[must_use]
     pub fn verify_signature(&self) -> bool {
         use ed25519_dalek::{Signature, Verifier};
-        let Ok(pk) = ed25519_dalek::VerifyingKey::from_bytes(&self.sender.0)
-        else {
+        let Ok(pk) = ed25519_dalek::VerifyingKey::from_bytes(&self.sender.0) else {
             return false;
         };
         let sig = Signature::from_bytes(&self.signature);
@@ -152,7 +155,7 @@ impl Transaction {
 }
 
 /// Block header containing chain linkage and commitments.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 pub struct BlockHeader {
     /// Hash of the parent block.
     pub parent_hash: Hash,
@@ -167,14 +170,14 @@ pub struct BlockHeader {
 }
 
 /// Block body containing ordered transactions.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, Encode, Decode)]
 pub struct BlockBody {
     /// Ordered list of transactions included in the block.
     pub transactions: Vec<Transaction>,
 }
 
 /// Full block with header and body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 pub struct Block {
     /// Header with metadata and commitments.
     pub header: BlockHeader,
@@ -203,7 +206,7 @@ pub fn compute_transactions_root(txs: &[Transaction]) -> Hash {
 
 // Serde helpers for fixed-size 64-byte arrays as hex strings
 mod serde_arr64 {
-    use serde::{Deserializer, Serializer, Deserialize};
+    use serde::{Deserialize, Deserializer, Serializer};
     pub fn serialize<S: Serializer>(v: &[u8; 64], s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(&format!("0x{}", hex::encode(v)))
     }

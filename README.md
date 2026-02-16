@@ -65,6 +65,22 @@ The AI revolution is bottlenecked by expensive, centralized compute infrastructu
 
 ---
 
+## Protocol Freeze / Governance
+
+The `v0.2-devnet-stable` tag locks all protocol-critical surfaces. Changes to locked surfaces require an RFC and version bump.
+
+| Document | Purpose |
+|----------|---------|
+| [Protocol Definition v0.1](./docs/specs/PROTOCOL_DEFINITION_v0.1.md) | Canonical protocol specification (block format, validity rules, sync model) |
+| [Protocol Lock v0.2](./docs/specs/PROTOCOL_LOCK_v0.2.md) | Frozen surfaces, forbidden changes, versioning rules |
+| [RPC Specification v0.1](./docs/specs/rpc_v0.1.md) | Frozen RPC method names, params, and return types |
+| [RFC Process](./docs/RFC_PROCESS.md) | How to propose changes to locked surfaces |
+| [Contribution Tiers](./docs/CONTRIBUTION_TIERS.md) | Tier 0/1/2 change rules, PR approval requirements |
+| [Devnet Stability Report](./docs/DEVNET_STABILITY_REPORT.md) | Freeze documentation, test matrix, frozen components |
+| [Developer Onboarding](./docs/DEV_ONBOARDING.md) | Build, test, run instructions for new contributors |
+
+---
+
 ## Key Features
 
 ### 🔗 Proof of X (PoX) Consensus

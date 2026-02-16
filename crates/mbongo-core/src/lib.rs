@@ -39,30 +39,33 @@ pub mod crypto;
 mod primitives;
 
 pub use account::{Account, AccountError};
-pub use primitives::{compute_transactions_root, Address, Block, BlockBody, BlockHeader, Hash, Transaction, TransactionType};
+pub use primitives::{
+    compute_transactions_root, Address, Block, BlockBody, BlockHeader, Hash, Transaction,
+    TransactionType,
+};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::{SigningKey, VerifyingKey, Signer};
-    use parity_scale_codec::{Encode, Decode};
+    use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+    use parity_scale_codec::{Decode, Encode};
     use serde_json as json;
-    
+
     #[test]
     fn hash_invalid_length() {
-        let too_short = "0x1234";  // Not 64 hex characters
-        assert!(too_short. parse::<Hash>().is_err());
-        
-        let too_long = "0x". to_string() + &"0".repeat(65);
+        let too_short = "0x1234"; // Not 64 hex characters
+        assert!(too_short.parse::<Hash>().is_err());
+
+        let too_long = "0x".to_string() + &"0".repeat(65);
         assert!(too_long.parse::<Hash>().is_err());
     }
-    
+
     #[test]
     fn hash_missing_prefix() {
-        let no_prefix = "0".repeat(64);  // Missing "0x"
+        let no_prefix = "0".repeat(64); // Missing "0x"
         assert!(no_prefix.parse::<Hash>().is_ok());
     }
-    
+
     #[test]
     fn block_serde_roundtrip() {
         let txs = vec![
@@ -90,13 +93,21 @@ mod tests {
             timestamp: 123,
             height: 7,
         };
-        let block = Block { header, body: BlockBody { transactions: txs.clone() } };
+        let block = Block {
+            header,
+            body: BlockBody {
+                transactions: txs.clone(),
+            },
+        };
         let s = json::to_string(&block).unwrap();
         let round: Block = json::from_str(&s).unwrap();
         // Verify all header fields are preserved
         assert_eq!(round.header.parent_hash, block.header.parent_hash);
         assert_eq!(round.header.state_root, block.header.state_root);
-        assert_eq!(round.header.transactions_root, block.header.transactions_root);
+        assert_eq!(
+            round.header.transactions_root,
+            block.header.transactions_root
+        );
         assert_eq!(round.header.timestamp, 123);
         assert_eq!(round.header.height, 7);
 
@@ -104,7 +115,6 @@ mod tests {
         assert_eq!(round.body.transactions.len(), 2);
         assert_eq!(round.body.transactions[0].tx_type, txs[0].tx_type);
         assert_eq!(round.body.transactions[1].tx_type, txs[1].tx_type);
-    
     }
 
     #[test]

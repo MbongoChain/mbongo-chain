@@ -1,6 +1,7 @@
 use std::future::Future;
 
 use axum::http::StatusCode;
+use mbongo_core::Transaction;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -12,6 +13,26 @@ pub trait RpcBackend: Clone + Send + Sync + 'static {
     fn ping(&self) -> impl Future<Output = Result<&'static str, BackendError>> + Send {
         std::future::ready(Ok("pong"))
     }
+    /// Validates and persists a signed transaction. Returns the hex-encoded transaction hash.
+    fn submit_transaction(
+        &self,
+        tx: Transaction,
+    ) -> impl Future<Output = Result<String, BackendError>> + Send;
+
+    /// Produces a new block containing all pending transactions.
+    /// Returns the hex-encoded block hash.
+    fn produce_block(&self) -> impl Future<Output = Result<String, BackendError>> + Send;
+
+    /// Returns the hex-encoded hash of the block at the current chain tip.
+    /// Read-only; does not modify state.
+    fn get_latest_block_hash(&self) -> impl Future<Output = Result<String, BackendError>> + Send;
+
+    /// Returns the full block at the given height as a JSON-serialisable value.
+    /// Read-only; does not modify state.
+    fn get_block_by_height(
+        &self,
+        height: u64,
+    ) -> impl Future<Output = Result<serde_json::Value, BackendError>> + Send;
 }
 
 /// Errors returned by [`RpcBackend`] implementations.
@@ -83,6 +104,7 @@ pub enum RpcErrorCode {
 
 impl RpcErrorCode {
     /// Returns the numeric code for this error category.
+    #[must_use]
     pub fn code(self) -> i32 {
         match self {
             RpcErrorCode::ParseError => -32700,
@@ -96,6 +118,7 @@ impl RpcErrorCode {
 
 impl JsonRpcResponse {
     /// Builds a success response with the given result payload.
+    #[must_use]
     pub fn success(id: Option<serde_json::Value>, result: serde_json::Value) -> Self {
         JsonRpcResponse {
             jsonrpc: "2.0",
@@ -106,6 +129,7 @@ impl JsonRpcResponse {
     }
 
     /// Builds an error response with the given code, message, and optional data.
+    #[must_use]
     pub fn error(
         id: Option<serde_json::Value>,
         code: RpcErrorCode,
@@ -126,13 +150,11 @@ impl JsonRpcResponse {
 }
 
 /// Maps a JSON-RPC error code to the appropriate HTTP status code.
+#[must_use]
 pub fn http_status_for_error(code: i32) -> StatusCode {
     match code {
-        -32700 => StatusCode::BAD_REQUEST,
-        -32600 => StatusCode::BAD_REQUEST,
+        -32700 | -32600 | -32602 => StatusCode::BAD_REQUEST,
         -32601 => StatusCode::NOT_FOUND,
-        -32602 => StatusCode::BAD_REQUEST,
-        -32603 => StatusCode::INTERNAL_SERVER_ERROR,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

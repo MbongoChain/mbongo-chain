@@ -21,14 +21,22 @@ tokio = { workspace = true }
 libp2p = { workspace = true }
 axum = { workspace = true }
 tower-http = { workspace = true }
+futures = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+parity-scale-codec = { workspace = true }
+
+# Crypto
+blake3 = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
 anyhow = { workspace = true }
+
+# Async
+async-trait = "0.1"
 
 # Logging
 log = { workspace = true }

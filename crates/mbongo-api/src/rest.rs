@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use axum::{
     extract::{Path, Query, State},
     http::Method,
@@ -9,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use thiserror::Error;
 use tower_http::cors::{Any, CorsLayer};
-use async_trait::async_trait;
 use utoipa::OpenApi;
 
 /// Backend trait that REST handlers delegate to for chain data access.
@@ -114,7 +114,9 @@ pub struct BlocksQuery {
 }
 
 #[derive(Clone)]
-struct AppState<B: ApiBackend> { backend: B }
+struct AppState<B: ApiBackend> {
+    backend: B,
+}
 
 #[utoipa::path(
     get,
@@ -124,13 +126,28 @@ struct AppState<B: ApiBackend> { backend: B }
         (status = 200, description = "Recent blocks", body = [BlockSummary])
     )
 )]
-async fn get_blocks<B: ApiBackend>(State(state): State<AppState<B>>, Query(q): Query<BlocksQuery>) -> impl IntoResponse {
+async fn get_blocks<B: ApiBackend>(
+    State(state): State<AppState<B>>,
+    Query(q): Query<BlocksQuery>,
+) -> impl IntoResponse {
     let limit = q.limit.unwrap_or(10).min(1000);
     match state.backend.list_blocks(limit).await {
         Ok(list) => (axum::http::StatusCode::OK, Json(list)).into_response(),
-        Err(ApiError::Invalid(msg)) => (axum::http::StatusCode::BAD_REQUEST, Json(json!({"error": msg}))).into_response(),
-        Err(ApiError::NotFound) => (axum::http::StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response(),
-        Err(ApiError::Internal(msg)) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": msg}))).into_response(),
+        Err(ApiError::Invalid(msg)) => (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(json!({"error": msg})),
+        )
+            .into_response(),
+        Err(ApiError::NotFound) => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(json!({"error": "not found"})),
+        )
+            .into_response(),
+        Err(ApiError::Internal(msg)) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": msg})),
+        )
+            .into_response(),
     }
 }
 
@@ -143,12 +160,27 @@ async fn get_blocks<B: ApiBackend>(State(state): State<AppState<B>>, Query(q): Q
         (status = 404, description = "Block not found")
     )
 )]
-async fn get_block<B: ApiBackend>(State(state): State<AppState<B>>, Path(hash): Path<String>) -> impl IntoResponse {
+async fn get_block<B: ApiBackend>(
+    State(state): State<AppState<B>>,
+    Path(hash): Path<String>,
+) -> impl IntoResponse {
     match state.backend.get_block(hash).await {
         Ok(block) => (axum::http::StatusCode::OK, Json(block)).into_response(),
-        Err(ApiError::NotFound) => (axum::http::StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response(),
-        Err(ApiError::Invalid(msg)) => (axum::http::StatusCode::BAD_REQUEST, Json(json!({"error": msg}))).into_response(),
-        Err(ApiError::Internal(msg)) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": msg}))).into_response(),
+        Err(ApiError::NotFound) => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(json!({"error": "not found"})),
+        )
+            .into_response(),
+        Err(ApiError::Invalid(msg)) => (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(json!({"error": msg})),
+        )
+            .into_response(),
+        Err(ApiError::Internal(msg)) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": msg})),
+        )
+            .into_response(),
     }
 }
 
@@ -161,12 +193,27 @@ async fn get_block<B: ApiBackend>(State(state): State<AppState<B>>, Path(hash): 
         (status = 404, description = "Not found")
     )
 )]
-async fn get_transaction<B: ApiBackend>(State(state): State<AppState<B>>, Path(hash): Path<String>) -> impl IntoResponse {
+async fn get_transaction<B: ApiBackend>(
+    State(state): State<AppState<B>>,
+    Path(hash): Path<String>,
+) -> impl IntoResponse {
     match state.backend.get_transaction(hash).await {
         Ok(tx) => (axum::http::StatusCode::OK, Json(tx)).into_response(),
-        Err(ApiError::NotFound) => (axum::http::StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response(),
-        Err(ApiError::Invalid(msg)) => (axum::http::StatusCode::BAD_REQUEST, Json(json!({"error": msg}))).into_response(),
-        Err(ApiError::Internal(msg)) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": msg}))).into_response(),
+        Err(ApiError::NotFound) => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(json!({"error": "not found"})),
+        )
+            .into_response(),
+        Err(ApiError::Invalid(msg)) => (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(json!({"error": msg})),
+        )
+            .into_response(),
+        Err(ApiError::Internal(msg)) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": msg})),
+        )
+            .into_response(),
     }
 }
 
@@ -179,12 +226,27 @@ async fn get_transaction<B: ApiBackend>(State(state): State<AppState<B>>, Path(h
         (status = 404, description = "Not found")
     )
 )]
-async fn get_account<B: ApiBackend>(State(state): State<AppState<B>>, Path(address): Path<String>) -> impl IntoResponse {
+async fn get_account<B: ApiBackend>(
+    State(state): State<AppState<B>>,
+    Path(address): Path<String>,
+) -> impl IntoResponse {
     match state.backend.get_account(address).await {
         Ok(acc) => (axum::http::StatusCode::OK, Json(acc)).into_response(),
-        Err(ApiError::NotFound) => (axum::http::StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response(),
-        Err(ApiError::Invalid(msg)) => (axum::http::StatusCode::BAD_REQUEST, Json(json!({"error": msg}))).into_response(),
-        Err(ApiError::Internal(msg)) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": msg}))).into_response(),
+        Err(ApiError::NotFound) => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(json!({"error": "not found"})),
+        )
+            .into_response(),
+        Err(ApiError::Invalid(msg)) => (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(json!({"error": msg})),
+        )
+            .into_response(),
+        Err(ApiError::Internal(msg)) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": msg})),
+        )
+            .into_response(),
     }
 }
 
@@ -198,9 +260,21 @@ async fn get_account<B: ApiBackend>(State(state): State<AppState<B>>, Path(addre
 async fn get_validators<B: ApiBackend>(State(state): State<AppState<B>>) -> impl IntoResponse {
     match state.backend.list_validators().await {
         Ok(list) => (axum::http::StatusCode::OK, Json(list)).into_response(),
-        Err(ApiError::Internal(msg)) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": msg}))).into_response(),
-        Err(ApiError::Invalid(msg)) => (axum::http::StatusCode::BAD_REQUEST, Json(json!({"error": msg}))).into_response(),
-        Err(ApiError::NotFound) => (axum::http::StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response(),
+        Err(ApiError::Internal(msg)) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": msg})),
+        )
+            .into_response(),
+        Err(ApiError::Invalid(msg)) => (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(json!({"error": msg})),
+        )
+            .into_response(),
+        Err(ApiError::NotFound) => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(json!({"error": "not found"})),
+        )
+            .into_response(),
     }
 }
 
@@ -236,7 +310,14 @@ pub fn router<B: ApiBackend>(backend: B) -> Router {
 }
 
 /// Binds a TCP listener on `addr` and serves the REST router until shutdown.
-pub async fn serve_on_addr<B: ApiBackend>(addr: std::net::SocketAddr, backend: B) -> anyhow::Result<()> {
+///
+/// # Errors
+///
+/// Returns an error if the TCP listener cannot bind or if the server fails.
+pub async fn serve_on_addr<B: ApiBackend>(
+    addr: std::net::SocketAddr,
+    backend: B,
+) -> anyhow::Result<()> {
     let app = router(backend);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await.map_err(anyhow::Error::from)

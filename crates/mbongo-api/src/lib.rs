@@ -15,6 +15,7 @@
 #![warn(missing_docs)]
 #![warn(clippy::all)]
 #![warn(clippy::pedantic)]
+#![allow(clippy::needless_for_each)] // false positive from utoipa::OpenApi derive macro
 
 /// REST API handlers, types, and router.
 pub mod rest;

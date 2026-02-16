@@ -30,7 +30,7 @@
 //! let root = tree.root();
 //! ```
 
-use sha2::{Sha256, Digest as Sha256Digest};
+use sha2::{Digest as Sha256Digest, Sha256};
 
 /// Hash output size in bytes (32 bytes = 256 bits)
 pub const HASH_SIZE: usize = 32;
@@ -178,21 +178,21 @@ impl MerkleTree {
         // Pad to next power of 2 (minimum 2 so a single leaf is paired with zero)
         let leaf_count = leaves.len();
         let padded_count = leaf_count.next_power_of_two().max(2);
-        
+
         let mut nodes = Vec::with_capacity(2 * padded_count - 1);
-        
+
         // Add leaves
         nodes.extend_from_slice(leaves);
-        
+
         // Pad with zero hashes if necessary
         for _ in leaf_count..padded_count {
             nodes.push([0u8; HASH_SIZE]);
         }
-        
+
         // Build tree bottom-up
         let mut level_start = 0;
         let mut level_size = padded_count;
-        
+
         while level_size > 1 {
             let level_end = level_start + level_size;
             for i in (level_start..level_end).step_by(2) {
@@ -204,7 +204,7 @@ impl MerkleTree {
             level_start = level_end;
             level_size /= 2;
         }
-        
+
         Self { nodes, leaf_count }
     }
 
@@ -248,7 +248,7 @@ impl MerkleTree {
             let sibling_idx = if idx % 2 == 0 { idx + 1 } else { idx - 1 };
             siblings.push(self.nodes[level_start + sibling_idx]);
             indices.push(idx % 2 == 0); // true if leaf is on left
-            
+
             level_start += level_size;
             level_size /= 2;
             idx /= 2;
@@ -298,7 +298,7 @@ pub struct MerkleProof {
 #[must_use]
 pub fn verify_proof(leaf: &HashOutput, proof: &MerkleProof, root: &HashOutput) -> bool {
     let mut current = *leaf;
-    
+
     for (sibling, is_left) in proof.siblings.iter().zip(&proof.indices) {
         current = if *is_left {
             hash_pair(&current, sibling)
@@ -306,7 +306,7 @@ pub fn verify_proof(leaf: &HashOutput, proof: &MerkleProof, root: &HashOutput) -
             hash_pair(sibling, &current)
         };
     }
-    
+
     current == *root
 }
 
@@ -332,12 +332,12 @@ pub fn compute_merkle_root(leaves: &[HashOutput]) -> HashOutput {
     if leaves.is_empty() {
         return [0u8; HASH_SIZE];
     }
-    
+
     // Pad to next power of 2 (minimum 2 so a single leaf is paired with zero)
     let padded_count = leaves.len().next_power_of_two().max(2);
     let mut level: Vec<HashOutput> = leaves.to_vec();
     level.resize(padded_count, [0u8; HASH_SIZE]);
-    
+
     while level.len() > 1 {
         let mut next_level = Vec::with_capacity(level.len() / 2);
         for chunk in level.chunks(2) {
@@ -345,7 +345,7 @@ pub fn compute_merkle_root(leaves: &[HashOutput]) -> HashOutput {
         }
         level = next_level;
     }
-    
+
     level[0]
 }
 
@@ -416,10 +416,10 @@ mod tests {
         let data1 = b"hello ";
         let data2 = b"world";
         let concat = b"hello world";
-        
+
         let hash_multi = blake3_hash_multi(&[data1, data2]);
         let hash_concat = blake3_hash(concat);
-        
+
         assert_eq!(hash_multi, hash_concat);
     }
 
@@ -453,10 +453,10 @@ mod tests {
         let data1 = b"hello ";
         let data2 = b"world";
         let concat = b"hello world";
-        
+
         let hash_multi = sha256_hash_multi(&[data1, data2]);
         let hash_concat = sha256_hash(concat);
-        
+
         assert_eq!(hash_multi, hash_concat);
     }
 
@@ -492,7 +492,7 @@ mod tests {
         let leaf1 = blake3_hash(b"tx1");
         let leaf2 = blake3_hash(b"tx2");
         let tree = MerkleTree::new(&[leaf1, leaf2]);
-        
+
         assert_eq!(tree.leaf_count(), 2);
         let expected_root = hash_pair(&leaf1, &leaf2);
         assert_eq!(tree.root(), expected_root);
@@ -500,59 +500,58 @@ mod tests {
 
     #[test]
     fn merkle_four_leaves() {
-        let leaves: Vec<HashOutput> = (0..4)
-            .map(|i| blake3_hash(format!("tx{i}").as_bytes()))
-            .collect();
-        
+        let leaves: Vec<HashOutput> =
+            (0..4).map(|i| blake3_hash(format!("tx{i}").as_bytes())).collect();
+
         let tree = MerkleTree::new(&leaves);
         assert_eq!(tree.leaf_count(), 4);
-        
+
         // Manual calculation
         let h01 = hash_pair(&leaves[0], &leaves[1]);
         let h23 = hash_pair(&leaves[2], &leaves[3]);
         let expected_root = hash_pair(&h01, &h23);
-        
+
         assert_eq!(tree.root(), expected_root);
     }
 
     #[test]
     fn merkle_three_leaves_padded() {
-        let leaves: Vec<HashOutput> = (0..3)
-            .map(|i| blake3_hash(format!("tx{i}").as_bytes()))
-            .collect();
-        
+        let leaves: Vec<HashOutput> =
+            (0..3).map(|i| blake3_hash(format!("tx{i}").as_bytes())).collect();
+
         let tree = MerkleTree::new(&leaves);
         assert_eq!(tree.leaf_count(), 3);
-        
+
         // Should be padded to 4 leaves
         let zero = [0u8; HASH_SIZE];
         let h01 = hash_pair(&leaves[0], &leaves[1]);
         let h23 = hash_pair(&leaves[2], &zero);
         let expected_root = hash_pair(&h01, &h23);
-        
+
         assert_eq!(tree.root(), expected_root);
     }
 
     #[test]
     fn merkle_proof_and_verify() {
-        let leaves: Vec<HashOutput> = (0..4)
-            .map(|i| blake3_hash(format!("tx{i}").as_bytes()))
-            .collect();
-        
+        let leaves: Vec<HashOutput> =
+            (0..4).map(|i| blake3_hash(format!("tx{i}").as_bytes())).collect();
+
         let tree = MerkleTree::new(&leaves);
-        
+
         for (i, leaf) in leaves.iter().enumerate() {
             let proof = tree.proof(i).expect("proof should exist");
-            assert!(tree.verify(leaf, &proof), "proof for leaf {i} should verify");
+            assert!(
+                tree.verify(leaf, &proof),
+                "proof for leaf {i} should verify"
+            );
         }
     }
 
     #[test]
     fn merkle_proof_invalid_index() {
-        let leaves: Vec<HashOutput> = (0..4)
-            .map(|i| blake3_hash(format!("tx{i}").as_bytes()))
-            .collect();
-        
+        let leaves: Vec<HashOutput> =
+            (0..4).map(|i| blake3_hash(format!("tx{i}").as_bytes())).collect();
+
         let tree = MerkleTree::new(&leaves);
         assert!(tree.proof(4).is_none());
         assert!(tree.proof(100).is_none());
@@ -560,13 +559,12 @@ mod tests {
 
     #[test]
     fn merkle_proof_tampered_fails() {
-        let leaves: Vec<HashOutput> = (0..4)
-            .map(|i| blake3_hash(format!("tx{i}").as_bytes()))
-            .collect();
-        
+        let leaves: Vec<HashOutput> =
+            (0..4).map(|i| blake3_hash(format!("tx{i}").as_bytes())).collect();
+
         let tree = MerkleTree::new(&leaves);
         let proof = tree.proof(0).unwrap();
-        
+
         // Try to verify with a different leaf
         let fake_leaf = blake3_hash(b"fake");
         assert!(!tree.verify(&fake_leaf, &proof));
@@ -574,13 +572,12 @@ mod tests {
 
     #[test]
     fn compute_merkle_root_matches_tree() {
-        let leaves: Vec<HashOutput> = (0..7)
-            .map(|i| blake3_hash(format!("tx{i}").as_bytes()))
-            .collect();
-        
+        let leaves: Vec<HashOutput> =
+            (0..7).map(|i| blake3_hash(format!("tx{i}").as_bytes())).collect();
+
         let tree = MerkleTree::new(&leaves);
         let root = compute_merkle_root(&leaves);
-        
+
         assert_eq!(tree.root(), root);
     }
 
@@ -611,9 +608,6 @@ mod tests {
     #[test]
     fn hex_invalid_chars() {
         let invalid = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
-        assert!(matches!(
-            hex_to_hash(invalid),
-            Err(HexError::InvalidHex)
-        ));
+        assert!(matches!(hex_to_hash(invalid), Err(HexError::InvalidHex)));
     }
 }
