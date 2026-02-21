@@ -1,750 +1,129 @@
 # Mbongo Chain
 
-**A compute-native Layer 1 blockchain powered by Proof of X (PoX) consensus**
+**A deterministic verification layer for off-chain AI inference receipts.**
 
-Mbongo Chain is a Rust-native, compute-first blockchain that combines Proof of Stake (PoS) with Proof of Useful Work (PoUW) to create a decentralized GPU compute network. By rewarding validators for both staking tokens and performing verifiable AI/ML computations, Mbongo Chain enables affordable, trustless compute while maintaining strong economic security.
+Mbongo Chain verifies cryptographic receipts from off-chain AI inference. It does not execute AI models on-chain. Validators verify receipts deterministically and settle economic outcomes. Execution is off-chain; the chain provides trust and settlement.
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Rust Version](https://img.shields.io/badge/rust-1.75%2B-blue.svg)](https://www.rust-lang.org)
-[![Documentation](https://img.shields.io/badge/docs-latest-brightgreen.svg)](./docs)
-[![Website](https://img.shields.io/badge/website-mbongochain.org-green.svg)](https://mbongochain.org)
 
 ---
 
-## Vision
+## Current Status
 
-**Democratize access to GPU compute through decentralized, verifiable infrastructure.**
+**Tag:** `v0.2-devnet-stable`  
+**Branch:** All development targets `dev`. PRs must target `dev`.
 
-The AI revolution is bottlenecked by expensive, centralized compute infrastructure. Mbongo Chain solves this by:
+### Implemented Now
 
-- **Reducing costs** by 30-50% compared to AWS/GCP through decentralized GPU markets
-- **Ensuring trust** via cryptographic verification of compute results
-- **Preventing centralization** through diminishing returns and adaptive economics
-- **Enabling Web3-native AI** with on-chain verification and DAO-friendly governance
+- Block and transaction data structures (SCALE-encoded, BLAKE3 hashing)
+- Account model (balance, nonce)
+- Transfer execution and validation (signature, nonce, balance, replay protection)
+- Persistent storage (RocksDB, atomic `WriteBatch`)
+- Multi-node devnet: 1 producer + N followers over libp2p
+- Block sync: bootstrap from genesis, height-based request/response, block announcement
+- Timed block production (`--producer`, `--block-time`)
+- JSON-RPC 2.0 and REST API
+- Deterministic replay harness and devnet convergence harness
 
----
+### Explicitly NOT in Scope for v0.2 / v1
 
-## Development Status — Phase 1 Complete, Phase 2 Active
+- Proof of Stake, Proof of Useful Work, PoX consensus
+- AIDA regulator
+- GPU marketplace, compute provider runtime, Docker/WASM execution
+- TEE attestation, ZK-ML proofs
+- On-chain AI model execution
+- Block rewards (no economics in v0.2)
+- Smart contracts, gas metering
+- REST compute job submission
 
-**Phase 1 (Foundation) is COMPLETE and FROZEN.**
-
-- **Phase 1 completion date**: December 2025
-- **Status**: No new Phase 1 changes will be accepted
-- **Scope**: Block structure, Transaction model (Transfer-only), Account model, Cryptography, State storage
-
-**Phase 2 Devnet is STABLE and FROZEN at v0.2-devnet-stable.**
-
-- **Phase 2 start date**: January 2026
-- **Tag**: `v0.2-devnet-stable`
-- **Status**: Devnet frozen — multi-node devnet operational with single producer model
-- **Branch**: All Phase 2 development MUST target the `dev` branch
-- **Scope**: libp2p networking, block sync, block announcement, timed production, producer role enforcement, deterministic replay
-
-**Devnet Stable (v0.2) Resources:**
-
-- [Devnet Stability Report](./docs/DEVNET_STABILITY_REPORT.md) — Freeze documentation, test matrix, and frozen components
-- [Developer Onboarding](./docs/DEV_ONBOARDING.md) — Quick start guide, CLI reference, devnet commands
-- [Architecture Overview](./docs/ARCHITECTURE_OVERVIEW_FOR_NEW_DEVS.md) — Layer separation and block flow for new developers
-- [Protocol Definition v0.1](./docs/specs/PROTOCOL_DEFINITION_v0.1.md) — Canonical protocol specification
-
-**Branch Policy:**
-
-- `main`: Reserved for audited, stable milestones only. Protected branch.
-- `dev`: Active development branch for Phase 2 work. All pull requests must target `dev`.
+See [VISION_v1.md](./docs/VISION_v1.md) and [tokenomics.md](./docs/tokenomics.md).
 
 ---
 
-## Development Governance
-
-- [CONTRIBUTING.md](./CONTRIBUTING.md) — How to contribute
-- [docs/CONTRIBUTING.md](./docs/CONTRIBUTING.md) — Phase 2 governance (branching, PR, RPC freeze, storage invariants)
-- [docs/CODE_STYLE.md](./docs/CODE_STYLE.md) — Rust formatting, clippy, documentation rules
-- [docs/ARCHITECTURE_GUARDRAILS.md](./docs/ARCHITECTURE_GUARDRAILS.md) — Layer rules, invariant protections
-- [docs/PHASE_1_COMPLETE.md](./docs/PHASE_1_COMPLETE.md) — Phase 1 scope and closure
-- [docs/PHASE_2_PLAN.md](./docs/PHASE_2_PLAN.md) — Phase 2 roadmap
-
----
-
-## Protocol Freeze / Governance
-
-The `v0.2-devnet-stable` tag locks all protocol-critical surfaces. Changes to locked surfaces require an RFC and version bump.
-
-| Document | Purpose |
-|----------|---------|
-| [Protocol Definition v0.1](./docs/specs/PROTOCOL_DEFINITION_v0.1.md) | Canonical protocol specification (block format, validity rules, sync model) |
-| [Protocol Lock v0.2](./docs/specs/PROTOCOL_LOCK_v0.2.md) | Frozen surfaces, forbidden changes, versioning rules |
-| [RPC Specification v0.1](./docs/specs/rpc_v0.1.md) | Frozen RPC method names, params, and return types |
-| [RFC Process](./docs/RFC_PROCESS.md) | How to propose changes to locked surfaces |
-| [Contribution Tiers](./docs/CONTRIBUTION_TIERS.md) | Tier 0/1/2 change rules, PR approval requirements |
-| [Devnet Stability Report](./docs/DEVNET_STABILITY_REPORT.md) | Freeze documentation, test matrix, frozen components |
-| [Developer Onboarding](./docs/DEV_ONBOARDING.md) | Build, test, run instructions for new contributors |
-
----
-
-## Key Features
-
-### 🔗 Proof of X (PoX) Consensus
-
-Mbongo Chain introduces **PoX consensus**, a novel hybrid mechanism that combines:
-
-- **Proof of Stake (PoS)**: Economic security through token staking (MBO)
-- **Proof of Useful Work (PoUW)**: Validators earn rewards by executing real AI/ML workloads
-- **Proof of Compute (PoC)**: Scoring system for computational contributions
-
-**Formula:**
-```
-total_weight = (stake_weight × C_SR) + (√(poc_score) × C_NL)
-```
-
-Where `C_SR` and `C_NL` are dynamically adjusted by AIDA to maintain network balance.
-
-### 🤖 AIDA Regulator
-
-**Adaptive Intelligence for Dynamic Adjustment** (AIDA) is an on-chain regulator that:
-
-- Monitors stake-to-work ratio in real-time
-- Dynamically adjusts consensus coefficients (C_SR, C_NL) to maintain 50/50 balance
-- Prevents stake or compute dominance through automatic rebalancing
-- Ensures long-term decentralization and economic sustainability
-
-### ✅ Multi-Layer Verification
-
-Mbongo Chain ensures compute correctness through a progressive verification strategy:
-
-**Phase 1 (Current)**: Redundant Execution
-- 3 randomly selected validators verify each task
-- 2/3 majority consensus required
-- Optimistic fraud proofs with 100-block challenge period
-
-**Phase 2 (January 2026+)**: Trusted Execution Environments (TEE)
-- Intel SGX / AMD SEV support
-- Reduced redundancy (1 TEE + 2 standard validators)
-- Remote attestation verification
-
-**Phase 3 (2026+)**: Zero-Knowledge Machine Learning (ZK-ML)
-- Cryptographic proofs of correct computation
-- O(1) verification time
-- Privacy-preserving AI execution
-
-### 🎯 Anti-Centralization Design
-
-- **Square root function** on PoC scores creates diminishing returns
-- Large providers earn 3.16× more by splitting into 10 nodes vs 1 large node
-- AIDA automatically adjusts incentives if centralization is detected
-- No whale dominance: built-in economic pressure for decentralization
-
-### 💰 Dual Token Economy
-
-- **MBO**: Native utility token for staking, compute payments, and governance
-- **Compute Credits**: Off-chain credits for seamless developer experience (optional)
-- Flexible payment: MBO, stablecoins (USDC/DAI), or fiat conversion
-
----
-
-## Architecture Overview
-
-Mbongo Chain is built entirely in **Rust** for performance, safety, and WebAssembly compatibility.
-
-### System Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      Mbongo Chain                            │
-├─────────────────────────────────────────────────────────────┤
-│  Application Layer                                          │
-│  ├─ Compute Marketplace (task submission/matching)          │
-│  ├─ Staking Interface (validator registration)              │
-│  └─ Governance (DAO voting, parameter updates)              │
-├─────────────────────────────────────────────────────────────┤
-│  Consensus Layer                                            │
-│  ├─ PoX Engine (stake + work weight calculation)            │
-│  ├─ AIDA Regulator (coefficient adjustment)                 │
-│  ├─ Block Production (weighted validator selection)         │
-│  └─ Finality Gadget (BFT finalization)                      │
-├─────────────────────────────────────────────────────────────┤
-│  Verification Layer                                         │
-│  ├─ Redundant Execution (Phase 1)                           │
-│  ├─ Fraud Proof System (challenge/arbitration)              │
-│  ├─ TEE Attestation (Phase 2)                               │
-│  └─ ZK Proof Verification (Phase 3)                         │
-├─────────────────────────────────────────────────────────────┤
-│  Execution Layer                                            │
-│  ├─ Compute Runtime (Docker/WASM isolation)                 │
-│  ├─ Resource Metering (CPU/GPU/RAM tracking)                │
-│  └─ Result Storage (IPFS/Arweave integration)               │
-├─────────────────────────────────────────────────────────────┤
-│  Network Layer                                              │
-│  ├─ P2P Networking (libp2p)                                 │
-│  ├─ Block Propagation                                       │
-│  └─ Validator Discovery                                     │
-├─────────────────────────────────────────────────────────────┤
-│  Storage Layer                                              │
-│  ├─ State Database (RocksDB)                                │
-│  ├─ Block Storage                                           │
-│  └─ Merkle Tree (state commitments)                         │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Rust Crates Structure
-
-```
-mbongo-chain/
-├── crates/
-│   ├── mbongo-core/              # Core blockchain primitives
-│   │   ├── types/                # Block, transaction, account types
-│   │   ├── crypto/               # Cryptographic functions (hashing, signing)
-│   │   └── storage/              # State management and persistence
-│   │
-│   ├── mbongo-consensus/         # PoX consensus implementation
-│   │   ├── pox/                  # PoX engine (stake + work weight)
-│   │   ├── aida/                 # AIDA regulator logic
-│   │   ├── selection/            # Validator selection algorithm
-│   │   └── finality/             # BFT finality gadget
-│   │
-│   ├── mbongo-verification/      # Compute verification layer
-│   │   ├── redundant/            # Redundant execution (Phase 1)
-│   │   ├── fraud_proofs/         # Optimistic fraud proof system
-│   │   ├── tee/                  # TEE attestation (Phase 2)
-│   │   └── zk/                   # ZK-ML proof verification (Phase 3)
-│   │
-│   ├── mbongo-compute/           # Compute execution runtime
-│   │   ├── executor/             # Task execution engine
-│   │   ├── metering/             # Resource usage tracking
-│   │   ├── scheduler/            # Task scheduling and prioritization
-│   │   └── isolation/            # Sandbox (Docker/WASM)
-│   │
-│   ├── mbongo-network/           # P2P networking
-│   │   ├── p2p/                  # libp2p integration
-│   │   ├── rpc/                  # JSON-RPC API server
-│   │   └── sync/                 # Block synchronization
-│   │
-│   ├── mbongo-runtime/           # Smart contract execution
-│   │   ├── wasm/                 # WebAssembly VM
-│   │   ├── precompiles/          # Native precompiled contracts
-│   │   └── gas/                  # Gas metering
-│   │
-│   ├── mbongo-api/               # External APIs
-│   │   ├── rest/                 # REST API for compute jobs
-│   │   ├── ws/                   # WebSocket subscriptions
-│   │   └── sdk/                  # Client libraries (Rust, JS, Python)
-│   │
-│   ├── mbongo-wallet/            # Wallet and key management
-│   │   ├── keystore/             # Encrypted key storage
-│   │   ├── signing/              # Transaction signing
-│   │   └── cli/                  # CLI wallet interface
-│   │
-│   └── mbongo-node/              # Full node binary
-│       ├── config/               # Node configuration
-│       ├── telemetry/            # Metrics and monitoring
-│       └── main.rs               # Node entry point
-│
-├── docs/                         # Documentation
-├── scripts/                      # Build and deployment scripts
-├── tests/                        # Integration tests
-└── Cargo.toml                    # Workspace manifest
-```
-
-**Key Dependencies:**
-- **substrate-primitives**: Core blockchain types (adapted)
-- **libp2p**: P2P networking
-- **tokio**: Async runtime
-- **serde**: Serialization/deserialization
-- **rocksdb**: Database backend
-- **ed25519-dalek**: Cryptographic signing
-- **blake3**: Fast hashing
-- **wasmtime**: WebAssembly runtime
-
----
-
-## Quick Start
+## Quick Start (Windows PowerShell)
 
 ### Prerequisites
 
-- **Rust** 1.75 or higher ([install via rustup](https://rustup.rs/))
+- **Rust** 1.75+ ([install via rustup](https://rustup.rs/))
 - **Git**
-- **Docker** (optional, for compute execution)
-- **16GB+ RAM** recommended for full node
 
-### Installation
+### Clone, Build, Test
 
-```bash
-# Clone the repository
-git clone https://github.com/mbongo-chain/mbongo-chain.git
+```powershell
+git clone https://github.com/MbongoChain/mbongo-chain.git
 cd mbongo-chain
+git checkout dev
 
-# Build the project (release mode)
-cargo build --release
-
-# Run tests
-cargo test --all
-
-# Build documentation
-cargo doc --no-deps --open
+cargo build --workspace
+cargo test --workspace
 ```
 
-### Running a Full Node
+### Run Producer + Follower (Two Terminals)
 
-```bash
-# Run a development node (single validator, instant finality)
-./target/release/mbongo-node --dev
+**Terminal 1 — Producer:**
 
-# Run a node connected to testnet
-./target/release/mbongo-node \
-  --chain testnet \
-  --bootnodes /ip4/35.123.45.67/tcp/30333/p2p/12D3KooWExample
-
-# Run a validator node
-./target/release/mbongo-node \
-  --chain mainnet \
-  --validator \
-  --name "My Validator" \
-  --rpc-port 9933 \
-  --ws-port 9944
+```powershell
+cargo run --bin mbongo-node -- --producer --block-time 5 --rpc-port 9944 --rest-port 8080 --p2p-port 30333 --data-dir data_producer
 ```
 
-### Running a Compute Provider
+**Terminal 2 — Follower:**
 
-```bash
-# Register as a compute provider
-mbongo-cli provider register \
-  --gpu nvidia-rtx-4090 \
-  --stake 10000 \
-  --commission 5
-
-# Start providing compute
-./target/release/mbongo-node \
-  --chain mainnet \
-  --provider \
-  --compute-threads 4 \
-  --max-gpu-memory 24GB
+```powershell
+cargo run --bin mbongo-node -- --bootnodes /ip4/127.0.0.1/tcp/30333 --rpc-port 9945 --rest-port 8081 --p2p-port 30334 --data-dir data_follower
 ```
 
-### Submitting a Compute Job (API Example)
+### Run Validation Harnesses
 
-```bash
-# Using the REST API
-curl -X POST http://localhost:9933/compute/submit \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "meta-llama/Llama-2-70b-chat-hf",
-    "input": "Explain quantum computing in simple terms",
-    "max_tokens": 500,
-    "payment": {
-      "amount": "100",
-      "currency": "MBO"
-    }
-  }'
-
-# Response
-{
-  "job_id": "0x1234...5678",
-  "status": "pending",
-  "estimated_completion": "30s",
-  "cost": "100 MBO"
-}
+```powershell
+cargo run -p mbongo-node --bin devnet_harness
+cargo run -p mbongo-node --bin replay_harness
 ```
 
-For detailed setup instructions, see:
-- [Full Node Setup Guide](./docs/full_node_setup.md)
-- [Validator Setup Guide](./docs/validator_setup.md)
-- [Compute Provider Setup Guide](./docs/compute_provider_setup.md)
+Or: `.\scripts\devnet_test.ps1` and `.\scripts\replay_test.ps1`
+
+See [DEV_ONBOARDING.md](./docs/DEV_ONBOARDING.md) for full CLI reference.
 
 ---
 
 ## Documentation
 
-Comprehensive documentation is available in the [`docs/`](./docs) directory:
-
-### Core Documentation
-- **[Consensus Mechanics](./docs/consensus_mechanics.md)**: Complete PoUW consensus specification
-- **[PoX Formula](./docs/pox_formula.md)**: Mathematical formula for validator weight calculation
-- **[Verification Strategy](./docs/verification_strategy.md)**: Multi-layer compute verification approach
-- **[AIDA Specification](./docs/aida_specification.md)**: Adaptive regulator design (coming soon)
-- **[Economic Model](./docs/economic_model.md)**: Tokenomics and incentive structure (coming soon)
-
-### Setup Guides
-- **[Full Node Setup](./docs/full_node_setup.md)**: Running a full node
-- **[Validator Setup](./docs/validator_setup.md)**: Becoming a validator
-- **[Compute Provider Setup](./docs/compute_provider_setup.md)**: Providing GPU compute
-
-### Business & Strategy
-- **[Target Market Analysis](./docs/target_market.md)**: Customer segments and competitive positioning
-- **[Roadmap](./docs/roadmap.md)**: Development phases and milestones (coming soon)
-
-### API & Development
-- **[API Reference](./docs/api_reference.md)**: REST and WebSocket API documentation (coming soon)
-- **[SDK Documentation](./docs/sdk.md)**: Client library usage (coming soon)
-
----
-
-## Tokenomics Summary
-
-### MBO Token
-
-**Symbol**: MBO (Mbongo)
-**Max Supply**: 31,536,000 MBO (one token per second per year)
-**Decimals**: 18
-
-### Distribution
-
-| Allocation | Amount | Percentage | Vesting |
-|------------|--------|------------|---------|
-| **Validators & Compute Providers** | 15,768,000 MBO | 50% | Ongoing emissions (10 years) |
-| **Community & Ecosystem** | 6,307,200 MBO | 20% | 4 years linear |
-| **Team & Advisors** | 4,730,400 MBO | 15% | 4 years, 1-year cliff |
-| **Investors** | 3,153,600 MBO | 10% | 3 years, 6-month cliff |
-| **Treasury & DAO** | 1,576,800 MBO | 5% | Governance-controlled |
-
-### Emission Schedule
-
-```
-Year 1:  3,153,600 MBO (10% of max supply)
-Year 2:  2,522,880 MBO (20% reduction)
-Year 3:  2,018,304 MBO (20% reduction)
-...
-Year 10: ~315,360 MBO (final emissions)
-```
-
-**Block Rewards** (decreasing over time):
-- Year 1: ~6 MBO per block (6-second blocks)
-- Year 5: ~2.5 MBO per block
-- Year 10: ~0.6 MBO per block
-
-**Reward Split**:
-- 70% to validators (stake + compute)
-- 20% to compute providers (pure compute)
-- 10% to treasury (governance + development)
-
-For detailed tokenomics, see [Economic Model](./docs/economic_model.md) (coming soon).
-
----
-
-## Roadmap
-
-### Phase 1: Foundation — Completed December 2025 ✅
-
-**Status**: COMPLETE and FROZEN
-
-- [x] Core blockchain implementation (Rust)
-- [x] Block structure
-- [x] Transaction model (Transfer-only with chain_id)
-- [x] Account model
-- [x] State storage
-- [x] Cryptographic primitives (Ed25519 signing/verification)
-
-**Deliverables Completed**:
-- Core blockchain primitives in `mbongo-core`
-- Transaction structure with mandatory chain_id for replay protection
-- SCALE encoding for transactions
-- State management with in-memory storage
-- Account operations (credit, debit, nonce)
-
----
-
-### Phase 2: Scaling — Active January 2026
-
-**Status**: ACTIVE (development on `dev` branch)
-
-- [ ] TEE integration (Intel SGX, AMD SEV)
-- [ ] Hybrid verification (1 TEE + 2 standard)
-- [ ] Compute provider SDK (Rust, JavaScript, Python)
-- [ ] REST API and WebSocket support
-- [ ] Mainnet candidate launch
-- [ ] DAO governance activation
-
-**Deliverables**:
-- Mainnet launch with TEE support
-- 200+ validators, 100+ compute providers
-- Public API for developers
-- On-chain governance
-
----
-
-### Phase 3: Innovation — Planned 2026+
-
-**Status**: Planned (not yet active)
-
-- [ ] ZK-ML proof generation and verification
-- [ ] Privacy-preserving compute
-- [ ] Cross-chain bridges (Ethereum, Cosmos, Polkadot)
-- [ ] Enterprise-grade SLAs
-- [ ] Advanced fraud detection (ML-based)
-
-**Deliverables**:
-- Full ZK-ML verification
-- Multi-chain compute orchestration
-- Enterprise partnerships
-- 1,000+ validators globally
-
----
-
-## Use Cases
-
-### 1. AI Inference as a Service
-
-**Target**: AI startups, SaaS companies
-
-**Problem**: High LLM inference costs ($0.50+/1M tokens on AWS)
-
-**Solution**:
-- Run Llama 2 70B for $0.25/1M tokens (50% savings)
-- OpenAI-compatible API
-- Pay in MBO or stablecoins
-
-**Example**:
-```python
-import mbongo
-
-client = mbongo.Client(api_key="your_key")
-
-response = client.inference(
-    model="meta-llama/Llama-2-70b-chat-hf",
-    messages=[
-        {"role": "user", "content": "Explain PoX consensus"}
-    ],
-    max_tokens=500
-)
-
-print(response.text)
-# Cost: ~0.05 MBO (~$0.10)
-```
-
----
-
-### 2. DAO Governance with Verifiable AI
-
-**Target**: Decentralized Autonomous Organizations
-
-**Problem**: Can't trust centralized AI for governance decisions
-
-**Solution**:
-- Cryptographically verified AI analysis
-- On-chain result verification
-- Fraud-proof guarantees
-
-**Example**:
-```solidity
-// Smart contract integration
-contract ProposalAnalyzer {
-    function analyzeProposal(string memory proposalText)
-        external returns (bytes32 jobId)
-    {
-        // Submit to Mbongo Chain
-        jobId = mbongoCompute.submit(
-            "proposal-analysis",
-            proposalText,
-            100 * 1e18 // 100 MBO payment
-        );
-
-        // Result verified via fraud proofs
-        // DAO trusts the analysis
-    }
-}
-```
-
----
-
-### 3. Indie Developer GPU Access
-
-**Target**: Solo developers, students, hobbyists
-
-**Problem**: Can't afford $1,500+ GPUs or $2+/hour cloud costs
-
-**Solution**:
-- Pay-per-use GPU access at $0.50-1/hour
-- No upfront investment
-- Generous free tier (5 hours/month)
-
-**Example**:
-```bash
-# Fine-tune a model without owning a GPU
-mbongo-cli compute run \
-  --image pytorch/pytorch:latest \
-  --gpu nvidia-rtx-4090 \
-  --script train.py \
-  --budget 10 MBO
-
-# Total cost: ~$5 for 10 hours of RTX 4090 time
-```
-
----
-
-## Who Can Contribute?
-
-Rust is required **only** for core protocol development. We encourage contributors using a wide range of technologies and skill sets.
-
-### Supported Languages and Tools
-
-Contributions are welcome using:
-- **Python**: SDK development, AI/ML tooling, testing automation
-- **Go**: Infrastructure tools, monitoring, auxiliary services
-- **JavaScript/TypeScript**: Web interfaces, client SDKs, tooling
-- **C++**: Performance-critical components, GPU compute integration
-- **CUDA**: GPU computation, performance optimization
-- **Bash/PowerShell**: Scripts, automation, deployment tooling
-
-### Contribution Areas
-
-You can contribute in the following areas:
-
-**Testing & QA:**
-- Integration testing frameworks
-- End-to-end test scenarios
-- Performance benchmarking
-- Security testing and fuzzing
-
-**Tooling:**
-- Developer utilities and CLI improvements
-- Monitoring dashboards and observability tools
-- Local development environment setup
-- Debugging and diagnostic tools
-
-**AI / GPU Compute:**
-- Compute task verification strategies
-- Model optimization for blockchain execution
-- GPU resource management
-- ZK-ML proof research and implementation
-
-**Infrastructure:**
-- CI/CD pipeline configuration
-- Cloud deployment automation
-- Container orchestration
-- Network infrastructure setup
-
-**Documentation:**
-- Technical documentation
-- API reference guides
-- Tutorials and how-to guides
-- Translation and localization
-
-### Getting Started
-
-Phase 2 development happens on the `dev` branch. All pull requests for Phase 2 work must target `dev`.
-
-GitHub issues are labeled to help you find areas that match your skills:
-- `phase-2`: Active Phase 2 development work
-- `testing`: Testing and QA opportunities
-- `tooling`: Developer tooling and utilities
-- `ai-compute`: AI and GPU compute work
-- `infrastructure`: Infrastructure and DevOps
-- `documentation`: Documentation improvements
-
-See [Contributing Guide](./CONTRIBUTING.md) for detailed contribution guidelines and [Contributing Roles](./docs/recruitment.md) for role definitions.
-
-**If you want to help build Mbongo Chain, there is a place for you.**
+| Document | Purpose |
+|----------|---------|
+| [DEVNET_STABILITY_REPORT.md](./docs/DEVNET_STABILITY_REPORT.md) | Freeze documentation, test matrix |
+| [DEV_ONBOARDING.md](./docs/DEV_ONBOARDING.md) | Quick start, CLI reference, devnet commands |
+| [ARCHITECTURE_OVERVIEW_FOR_NEW_DEVS.md](./docs/ARCHITECTURE_OVERVIEW_FOR_NEW_DEVS.md) | Layer separation and block flow |
+| [PROTOCOL_LOCK_v0.2.md](./docs/specs/PROTOCOL_LOCK_v0.2.md) | Frozen surfaces, versioning rules |
+| [COMPUTE_INTERFACE_v0.1.md](./docs/specs/COMPUTE_INTERFACE_v0.1.md) | Future receipt spec (no implementation in v0.2) |
+| [VISION_v1.md](./docs/VISION_v1.md) | Verification layer scope |
+| [tokenomics.md](./docs/tokenomics.md) | v1 vs v2+ economics |
+| [CONTRIBUTION_TIERS.md](./docs/CONTRIBUTION_TIERS.md) | Tier 0/1/2 change rules |
+| [RFC_PROCESS.md](./docs/RFC_PROCESS.md) | How to propose changes to locked surfaces |
 
 ---
 
 ## Contributing
 
-We welcome contributions from the community! Mbongo Chain is open-source and community-driven.
+- **PRs target the `dev` branch.** `main` is reserved for audited milestones.
+- **Tier labels:** Changes to locked surfaces (block format, RPC, P2P, storage) require an RFC and version bump. See [CONTRIBUTION_TIERS.md](./docs/CONTRIBUTION_TIERS.md) and [PROTOCOL_LOCK_v0.2.md](./docs/specs/PROTOCOL_LOCK_v0.2.md).
+- **Good first issues:** GitHub Issues with labels `tier-2` or `good-first-issue`.
 
-### How to Contribute
-
-1. **Fork the repository**
-2. **Create a feature branch** (`git checkout -b feature/amazing-feature`)
-3. **Commit your changes** (`git commit -m 'Add amazing feature'`)
-4. **Push to the branch** (`git push origin feature/amazing-feature`)
-5. **Open a Pull Request**
-
-### Development Guidelines
-
-- **Code Style**: Follow Rust standard style (`cargo fmt`)
-- **Testing**: Add tests for new features (`cargo test`)
-- **Documentation**: Document public APIs with Rustdoc comments
-- **Commit Messages**: Use conventional commits (e.g., `feat:`, `fix:`, `docs:`)
-
-### Areas for Contribution
-
-- **Core Development**: Consensus, networking, storage
-- **Verification**: TEE integration, ZK proof research
-- **Compute Runtime**: GPU scheduling, isolation, metering
-- **Tooling**: CLI improvements, monitoring dashboards
-- **Documentation**: Tutorials, guides, translations
-- **Testing**: Integration tests, fuzzing, benchmarks
-
-### Community
-
-- **GitHub Discussions**: [Discussions](https://github.com/MbongoChain/mbongo-chain/discussions)
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ---
 
-## Bounty Transparency
+## Roadmap
 
-Mbongo Chain operates a public bounty system for contributors.
-
-- **PR merged = bounty earned.** No bounty is recorded until the PR is merged.
-- **All earned bounties are recorded publicly** in [`docs/BOUNTY_LEDGER_PUBLIC.md`](./docs/BOUNTY_LEDGER_PUBLIC.md). The ledger is append-only.
-- **Settlement occurs at TGE.** No payments are made before the MBO token is live.
-
-This is not a promise of payment. It is a transparent record of earned contributions. See the [bounty page on the website](https://mbongochain.org/bounties/) and the [contributor compensation framework](./docs/contributor_compensation.md) for details.
-
----
-
-## Security
-
-### Responsible Disclosure
-
-If you discover a security vulnerability, please email security@mbongochain.com. Do not open public issues for security vulnerabilities.
-
-**We offer bug bounties for critical vulnerabilities:**
-- Critical: Up to 50,000 MBO
-- High: Up to 20,000 MBO
-- Medium: Up to 5,000 MBO
-- Low: Up to 1,000 MBO
-
-### Audits
-
-- **Phase 1**: Internal security review (Completed — December 2025)
-- **Phase 2**: External audit by Certik (Planned — 2026)
-- **Phase 3**: Ongoing bug bounty program (Mainnet launch)
+| Version | Milestone | Scope |
+|---------|-----------|-------|
+| **v0.2** | Devnet stable | Multi-node devnet, single producer, block sync. **FROZEN.** |
+| **v0.3** | PoS minimal + receipt prototype | Stake-weighted validator set. Reserved RPC stubs. Receipt verification prototype. |
+| **v0.4+** | Compute verification expansion | Canonical receipt format, challenge mechanism, SDK. |
+| **v1.0** | Verified inference primitive | Receipt verification live. No on-chain AI execution. |
+| **v2+** | Optional PoUW | On-chain execution as opt-in extension. PoUW, TEE, ZK-ML are **future** — not current. |
 
 ---
 
 ## License
 
-This project is licensed under the **Apache License 2.0** - see the [LICENSE](./LICENSE) file for details.
-
-```
-Copyright 2025 Mbongo Chain Contributors
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-```
-
----
-
-## Acknowledgments
-
-Mbongo Chain is inspired by and builds upon the work of:
-
-- **Substrate** (Parity Technologies) - Blockchain framework architecture
-- **Ethereum** - Smart contract design and EVM compatibility goals
-- **Filecoin** - Proof of useful work concepts
-- **Cosmos** - Inter-blockchain communication
-- **Gensyn** - ML verification research
-- **Akash Network** - Decentralized compute marketplace
-
-Special thanks to the Rust blockchain community for tooling and support.
-
----
-
-## Links
-
-- **Website**: [mbongochain.org](https://mbongochain.org)
-- **GitHub**: [github.com/MbongoChain/mbongo-chain](https://github.com/MbongoChain/mbongo-chain)
-- **Documentation**: [`docs/`](./docs) (repository)
-- **Block Explorer**: Not yet available
-
----
-
-**Built with ❤️ in Rust for a decentralized AI future.**
+Apache License 2.0 — see [LICENSE](./LICENSE).
