@@ -9,3 +9,5 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: crate-ci/typos@master
+        with:
+          args: crates sdk scripts --config typos.toml
