@@ -1,0 +1,33 @@
+# ==============================
+# Mbongo Chain — CODEOWNERS
+# ==============================
+
+# ------------------------------
+# Tier-0 — Core Protocol (Locked Surfaces)
+# ------------------------------
+/crates/mbongo-core/                @Mutshipayi91
+/crates/mbongo-consensus/           @Mutshipayi91
+/crates/mbongo-storage/             @Mutshipayi91
+/crates/mbongo-node/src/backend.rs  @Mutshipayi91
+/docs/specs/                        @Mutshipayi91
+
+# ------------------------------
+# Tier-1 — Network & RPC
+# ------------------------------
+/crates/mbongo-network/             @Mutshipayi91
+
+# ------------------------------
+# Tier-2 — SDK & Tooling
+# ------------------------------
+/sdk/                               @Mutshipayi91
+/scripts/                           @Mutshipayi91
+
+# ------------------------------
+# CI / GitHub Workflows
+# ------------------------------
+/.github/                           @Mutshipayi91
+
+# ------------------------------
+# Documentation (non-spec)
+# ------------------------------
+/docs/*.md                          @Mutshipayi91
