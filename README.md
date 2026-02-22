@@ -41,6 +41,35 @@ See [VISION_v1.md](./docs/VISION_v1.md) and [tokenomics.md](./docs/tokenomics.md
 
 ---
 
+## Technology Stack (v0.2-devnet-stable)
+
+Core Language:
+- Rust (stable toolchain)
+
+Networking:
+- libp2p (gossipsub, request/response)
+
+Storage:
+- RocksDB (persistent state)
+- Atomic WriteBatch
+
+Serialization:
+- SCALE encoding
+
+Cryptography:
+- Ed25519 signatures
+- BLAKE3 hashing
+
+APIs:
+- JSON-RPC 2.0
+- REST API
+
+Testing:
+- Deterministic replay harness
+- Devnet convergence harness
+
+---
+
 ## Quick Start (Windows PowerShell)
 
 ### Prerequisites
