@@ -8,4 +8,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: crate-ci/typos@master
+      - name: Spelling Check
+        uses: crate-ci/typos@master
+        with:
+          files: |
+            crates
+            sdk
+            scripts
+          config: typos.toml

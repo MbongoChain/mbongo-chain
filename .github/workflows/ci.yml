@@ -1,35 +1,67 @@
-name: CI
+name: Mbongo CI
 
 on:
-  push:
-    branches: [dev]
   pull_request:
     branches: [dev]
+  push:
+    branches: [dev]
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  check:
+  # ---------------------------------------------------------
+  # Fast Checks (run on PR + push)
+  # ---------------------------------------------------------
+  checks:
+    name: Rust Checks (fmt, clippy, test, replay)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang libclang-dev libc6-dev
-
-      - name: Install Rust
+      - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
 
-      - name: Cache cargo
+      - name: Cache cargo registry + build
         uses: Swatinem/rust-cache@v2
 
-      - name: Format check
+      - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Clippy (deny warnings)
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Test
-        run: cargo test --workspace
+      - name: Run unit tests
+        run: cargo test --workspace --all-features --locked
+
+      - name: Run replay harness
+        run: cargo run -p mbongo-node --bin replay_harness
+
+  # ---------------------------------------------------------
+  # Devnet Convergence (run only on push to dev)
+  # ---------------------------------------------------------
+  devnet:
+    name: Devnet Convergence Harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: checks
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build workspace
+        run: cargo build --workspace --locked
+
+      - name: Run devnet harness
+        run: cargo run -p mbongo-node --bin devnet_harness
