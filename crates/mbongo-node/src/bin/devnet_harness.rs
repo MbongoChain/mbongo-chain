@@ -609,12 +609,26 @@ async fn run_harness(client: &Client, data_dirs: &[PathBuf]) -> Result<(), Strin
     wait_for_rpc(client, &mut producer).await?;
     println!("  Producer restarted, RPC ready on port {PRODUCER_RPC}");
 
-    println!("Waiting 10 seconds for network re-sync...");
-    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+    println!("Phase 3: Waiting for network convergence (max 30s)...");
 
-    println!("Phase 3: Checking convergence...");
-    let conv = check_convergence(client, &nodes).await?;
-    validate_convergence(&conv, MIN_HEIGHT)?;
+    let mut converged = false;
+    for _ in 0..30 {
+        match check_convergence(client, &nodes).await {
+            Ok(conv) => {
+                if validate_convergence(&conv, MIN_HEIGHT).is_ok() {
+                    converged = true;
+                    println!("  Network converged.");
+                    break;
+                }
+            }
+            Err(_) => {}
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+
+    if !converged {
+        return Err("network failed to converge after restart".to_string());
+    }
     println!("  Phase 3: PASS\n");
 
     // ── Phase 4: Restart follower ───────────────────────────────────────
