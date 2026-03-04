@@ -59,11 +59,12 @@ export default function HomePage() {
             What is Mbongo Chain
           </h2>
           <p className="text-slate-600 dark:text-slate-400 leading-relaxed max-w-3xl">
-            Mbongo Chain is a Rust-native Layer-1 blockchain built for verifiable
-            compute. It combines Proof of Stake with Proof of Useful Work (PoUW)
-            to enable decentralized GPU compute while maintaining economic
-            security. The protocol prioritizes deterministic execution, open
-            contribution, and correctness over speed.
+            Mbongo Chain is a Rust-native Layer-1 blockchain designed for
+            verifiable compute. Instead of executing heavy workloads directly
+            on-chain, Mbongo verifies off-chain computation through deterministic
+            receipts and replay validation. The protocol combines Proof of Stake
+            with Proof of Useful Work concepts to secure verification of AI
+            inference and other compute workloads.
           </p>
         </section>
 
@@ -106,7 +107,7 @@ export default function HomePage() {
                 </h3>
               </div>
               <p className="text-sm text-slate-600 dark:text-slate-400">
-                Tooling, testing, infrastructure, and AI/GPU compute. All
+                Tooling, testing, infrastructure, and verifiable compute. All
                 contributions target the <code>dev</code> branch.
               </p>
             </div>
@@ -122,7 +123,7 @@ export default function HomePage() {
             {[
               {
                 title: "Compute",
-                desc: "GPU capacity is scarce and centralized. Decentralized compute enables open access and verifiable execution for AI inference, rendering, and scientific simulation.",
+                desc: "AI inference and scientific compute are increasingly performed off-chain. Mbongo enables verifiable results by allowing independent nodes to verify computation receipts deterministically.",
                 icon: (
                   <svg
                     className="h-5 w-5"
@@ -163,7 +164,7 @@ export default function HomePage() {
               },
               {
                 title: "Correctness",
-                desc: "Deterministic execution, no floating-point arithmetic, and redundant verification ensure that compute results are trustworthy.",
+                desc: "Deterministic execution and receipt verification ensure that off-chain compute results can be independently validated.",
                 icon: (
                   <svg
                     className="h-5 w-5"
@@ -196,6 +197,56 @@ export default function HomePage() {
           </div>
         </section>
 
+        {/* How Verification Works */}
+        <section className="mb-16">
+          <h2 className="text-2xl font-semibold text-slate-900 dark:text-slate-100 mb-4">
+            How Verification Works
+          </h2>
+          <p className="text-slate-600 dark:text-slate-400 leading-relaxed max-w-3xl mb-6">
+            Mbongo Chain verifies off-chain computation using deterministic
+            receipts and validator verification.
+          </p>
+          <div className="grid sm:grid-cols-2 gap-6">
+            {[
+              {
+                step: "1",
+                title: "Off-chain compute",
+                desc: "AI inference or other compute workloads run off-chain. These workloads may include machine learning inference, simulations, or other deterministic compute tasks.",
+              },
+              {
+                step: "2",
+                title: "Compute receipt",
+                desc: "The compute node generates a deterministic receipt describing the execution and its result.",
+              },
+              {
+                step: "3",
+                title: "Validator verification",
+                desc: "Independent validators verify the receipt using deterministic replay or equivalent verification methods.",
+              },
+              {
+                step: "4",
+                title: "Settlement on-chain",
+                desc: "Once verification succeeds, the result can be finalized and recorded on Mbongo Chain.",
+              },
+            ].map((item) => (
+              <div
+                key={item.step}
+                className="rounded-lg border border-slate-200 dark:border-slate-800 p-5"
+              >
+                <div className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-mbongo-100 dark:bg-mbongo-950/40 text-mbongo-700 dark:text-mbongo-400 text-sm font-semibold mb-3">
+                  {item.step}
+                </div>
+                <h3 className="font-semibold text-slate-900 dark:text-slate-100 mb-2">
+                  {item.title}
+                </h3>
+                <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+                  {item.desc}
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
+
         {/* Tech summary */}
         <section>
           <h2 className="text-2xl font-semibold text-slate-900 dark:text-slate-100 mb-4">
@@ -204,10 +255,10 @@ export default function HomePage() {
           <div className="rounded-lg border border-slate-200 dark:border-slate-800 p-6 bg-slate-50 dark:bg-slate-900/50">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 text-center">
               {[
-                { label: "Language", value: "Rust" },
-                { label: "Hashing", value: "BLAKE3" },
-                { label: "Signatures", value: "Ed25519" },
-                { label: "Consensus", value: "PoS + PoUW" },
+                { label: "core protocol implementation", value: "Rust" },
+                { label: "hashing", value: "BLAKE3" },
+                { label: "signatures", value: "Ed25519" },
+                { label: "consensus and verification model", value: "PoS + Verifiable Compute" },
               ].map((item) => (
                 <div key={item.label}>
                   <p className="text-lg font-semibold font-mono text-mbongo-600 dark:text-mbongo-400">
