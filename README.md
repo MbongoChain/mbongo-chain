@@ -2,9 +2,16 @@
 
 [![CI](https://github.com/MbongoChain/mbongo-chain/actions/workflows/ci.yml/badge.svg)](https://github.com/MbongoChain/mbongo-chain/actions/workflows/ci.yml)
 
-**A deterministic verification layer for off-chain AI inference receipts.**
+Mbongo Chain is a deterministic Layer-1 blockchain designed to verify off-chain AI inference.
+AI models execute off-chain, produce cryptographic receipts, and Mbongo verifies them on-chain for trustless settlement.
 
-Mbongo Chain verifies cryptographic receipts from off-chain AI inference. It does not execute AI models on-chain. Validators verify receipts deterministically and settle economic outcomes. Execution is off-chain; the chain provides trust and settlement.
+This architecture enables verifiable AI-driven systems such as:
+
+* decentralized finance risk engines
+* insurance decision systems
+* credit scoring models
+* DAO decision models
+* decentralized compute marketplaces
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Rust Version](https://img.shields.io/badge/rust-1.75%2B-blue.svg)](https://www.rust-lang.org)
