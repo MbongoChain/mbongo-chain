@@ -39,10 +39,9 @@ const circles = [
     description:
       "AI/ML, security, economics, DevOps, documentation. No Rust knowledge required.",
     areas: [
-      "AI inference and compute verification (CUDA, Python)",
-      "Security audits and threat modeling",
-      "CI/CD pipelines and infrastructure automation",
-      "Technical documentation and guides",
+      "AI inference pipelines",
+      "Compute receipt generation",
+      "Verification tooling for AI workloads",
     ],
   },
 ];

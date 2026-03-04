@@ -1,7 +1,7 @@
 export const SITE = {
   name: "Mbongo Chain",
   description:
-    "A Rust-native, compute-first Layer-1 blockchain focused on deterministic execution and open contribution.",
+    "A Rust-native Layer-1 focused on deterministic verification of off-chain compute. Mbongo Chain verifies AI inference and other off-chain computation using cryptographic receipts and deterministic replay. No hype. Just verifiable compute.",
   domain: "mbongochain.org",
 };
 

@@ -38,8 +38,8 @@ export default function BountiesPage() {
               },
               {
                 step: "3",
-                title: "Settlement at TGE",
-                desc: "No payments before TGE. All earned bounties are committed for settlement when MBO is live.",
+                title: "Settlement when the Mbongo token is introduced on-chain.",
+                desc: "No payments before the token is live. All earned bounties are committed for settlement when MBO is introduced on-chain.",
               },
             ].map((item) => (
               <div
@@ -160,7 +160,7 @@ export default function BountiesPage() {
                     </span>
                   </td>
                   <td className="py-3">
-                    PR merged. Bounty recorded. Awaiting TGE for settlement.
+                    PR merged. Bounty recorded. Awaiting token introduction for settlement.
                   </td>
                 </tr>
                 <tr>
@@ -237,7 +237,7 @@ export default function BountiesPage() {
         <div className="rounded-lg border border-slate-200 dark:border-slate-800 p-6 bg-slate-50 dark:bg-slate-900/50">
           <p className="text-sm text-slate-500 dark:text-slate-500">
             This page explains the bounty system. It does not constitute a
-            promise of payment. Settlement occurs at TGE according to the
+            promise of payment. Settlement occurs when the Mbongo token is introduced on-chain according to the
             contributor compensation framework documented in the repository.
             Only MBO-denominated work is covered. Contributions must target
             the <code>dev</code> branch.

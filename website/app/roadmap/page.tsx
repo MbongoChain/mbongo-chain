@@ -31,7 +31,9 @@ const phases = [
       "Testing framework and QA pipeline",
       "CI/CD and infrastructure automation",
       "Testnet deployment and orchestration",
-      "AI / GPU compute exploration and PoUW prototyping",
+      "Verification receipts for off-chain compute",
+      "Deterministic replay harness",
+      "Explorer for verification inspection",
       "SDK scaffolding (TypeScript, Python)",
     ],
   },
@@ -42,11 +44,9 @@ const phases = [
     description:
       "Consensus mechanism implementation and security hardening.",
     items: [
-      "PoUW (Proof of Useful Work) consensus finalization",
-      "Validator set management and rotation",
-      "Fork choice rule and finality gadget",
-      "TEE integration for compute attestation",
-      "Security audits and formal verification",
+      "Receipt verification protocol",
+      "Validator verification incentives",
+      "Fraud detection for compute claims",
     ],
   },
   {
