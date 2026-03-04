@@ -1,5 +1,7 @@
 # Mbongo Chain
 
+[![CI](https://github.com/MbongoChain/mbongo-chain/actions/workflows/ci.yml/badge.svg)](https://github.com/MbongoChain/mbongo-chain/actions/workflows/ci.yml)
+
 **A deterministic verification layer for off-chain AI inference receipts.**
 
 Mbongo Chain verifies cryptographic receipts from off-chain AI inference. It does not execute AI models on-chain. Validators verify receipts deterministically and settle economic outcomes. Execution is off-chain; the chain provides trust and settlement.

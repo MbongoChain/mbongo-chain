@@ -609,7 +609,9 @@ async fn run_harness(client: &Client, data_dirs: &[PathBuf]) -> Result<(), Strin
     wait_for_rpc(client, &mut producer).await?;
     println!("  Producer restarted, RPC ready on port {PRODUCER_RPC}");
 
-    sleep(Duration::from_secs(WAIT_RESTART_SECS)).await;
+    println!("Waiting 10 seconds for network re-sync...");
+    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+
     println!("Phase 3: Checking convergence...");
     let conv = check_convergence(client, &nodes).await?;
     validate_convergence(&conv, MIN_HEIGHT)?;
