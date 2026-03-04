@@ -7,7 +7,10 @@ pub struct Hash(pub [u8; 32]);
 
 impl Hash {
     /// Returns the zero hash (all bytes zero).
-    pub const fn zero() -> Self { Self([0u8; 32]) }
+    #[must_use]
+    pub const fn zero() -> Self {
+        Self([0u8; 32])
+    }
 }
 
 impl std::fmt::Display for Hash {
@@ -49,7 +52,10 @@ pub struct Address(pub [u8; 32]);
 
 impl Address {
     /// Returns the zero address.
-    pub const fn zero() -> Self { Self([0u8; 32]) }
+    #[must_use]
+    pub const fn zero() -> Self {
+        Self([0u8; 32])
+    }
 }
 
 impl std::fmt::Display for Address {
@@ -110,11 +116,13 @@ pub struct Transaction {
     /// Nonce to prevent replay.
     pub nonce: u64,
     /// ed25519 signature over the signing payload.
+    #[serde(with = "serde_arr64")]
     pub signature: [u8; 64],
 }
 
 impl Transaction {
     /// Returns SCALE-encoded signing payload (all fields except signature).
+    #[must_use]
     pub fn signing_payload(&self) -> Vec<u8> {
         #[derive(Encode)]
         struct Payload {
@@ -135,24 +143,19 @@ impl Transaction {
     }
 
     /// Verifies signature using ed25519 and sender's public key.
+    #[must_use]
     pub fn verify_signature(&self) -> bool {
         use ed25519_dalek::{Signature, Verifier};
-        let pk = match ed25519_dalek::VerifyingKey::from_bytes(&self.sender.0) {
-            Ok(k) => k,
-            Err(_) => return false,
+        let Ok(pk) = ed25519_dalek::VerifyingKey::from_bytes(&self.sender.0) else {
+            return false;
         };
-        let sig = match Signature::from_bytes(&self.signature) {
-            Ok(s) => s,
-            Err(_) => return false,
-        };
+        let sig = Signature::from_bytes(&self.signature);
         pk.verify(&self.signing_payload(), &sig).is_ok()
-    }
-}
     }
 }
 
 /// Block header containing chain linkage and commitments.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 pub struct BlockHeader {
     /// Hash of the parent block.
     pub parent_hash: Hash,
@@ -167,14 +170,14 @@ pub struct BlockHeader {
 }
 
 /// Block body containing ordered transactions.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, Encode, Decode)]
 pub struct BlockBody {
     /// Ordered list of transactions included in the block.
     pub transactions: Vec<Transaction>,
 }
 
 /// Full block with header and body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 pub struct Block {
     /// Header with metadata and commitments.
     pub header: BlockHeader,
@@ -184,16 +187,38 @@ pub struct Block {
 
 /// Compute a deterministic commitment over transactions.
 /// This is a simple Blake3 hash over SCALE-encoded, length-prefixed transactions.
+#[must_use]
 pub fn compute_transactions_root(txs: &[Transaction]) -> Hash {
     use blake3::Hasher;
     let mut hasher = Hasher::new();
     for tx in txs {
-    let encoded = tx.encode();
-    let len = encoded.len() as u32;
+        let encoded = tx.encode();
+        // SCALE-encoded transactions are bounded well below u32::MAX bytes.
+        #[allow(clippy::cast_possible_truncation)]
+        let len = encoded.len() as u32;
         hasher.update(&len.to_le_bytes());
         hasher.update(&encoded);
     }
     let mut out = [0u8; 32];
     out.copy_from_slice(hasher.finalize().as_bytes());
     Hash(out)
+}
+
+// Serde helpers for fixed-size 64-byte arrays as hex strings
+mod serde_arr64 {
+    use serde::{Deserialize, Deserializer, Serializer};
+    pub fn serialize<S: Serializer>(v: &[u8; 64], s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&format!("0x{}", hex::encode(v)))
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 64], D::Error> {
+        let s = String::deserialize(d)?;
+        let s = s.strip_prefix("0x").unwrap_or(&s);
+        let bytes = hex::decode(s).map_err(serde::de::Error::custom)?;
+        if bytes.len() != 64 {
+            return Err(serde::de::Error::custom("expected 64 bytes"));
+        }
+        let mut arr = [0u8; 64];
+        arr.copy_from_slice(&bytes);
+        Ok(arr)
+    }
 }

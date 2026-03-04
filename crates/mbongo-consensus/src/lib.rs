@@ -1,8 +1,8 @@
-//! PoX consensus engine for Mbongo Chain.
+//! `PoX` consensus engine for Mbongo Chain.
 //!
-//! This crate implements the Proof of X (PoX) consensus mechanism, which combines:
-//! - Proof of Stake (PoS) for economic security
-//! - Proof of Useful Work (PoUW) for computational contributions
+//! This crate implements the Proof of X (`PoX`) consensus mechanism, which combines:
+//! - Proof of Stake (`PoS`) for economic security
+//! - Proof of Useful Work (`PoUW`) for computational contributions
 //! - AIDA (Adaptive Intelligence for Dynamic Adjustment) regulator
 //!
 //! # Core Formula

@@ -1,0 +1,20 @@
+[package]
+name = "mbongo-storage"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+description = "Storage backends for Mbongo Chain (RocksDB + in-memory)"
+
+[dependencies]
+mbongo-core = { path = "../mbongo-core" }
+rocksdb = { workspace = true }
+thiserror = { workspace = true }
+parity-scale-codec = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

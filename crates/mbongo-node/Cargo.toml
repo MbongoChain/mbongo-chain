@@ -23,12 +23,24 @@ mbongo-compute = { path = "../mbongo-compute" }
 mbongo-network = { path = "../mbongo-network" }
 mbongo-runtime = { path = "../mbongo-runtime" }
 mbongo-api = { path = "../mbongo-api" }
+mbongo-storage = { path = "../mbongo-storage" }
 
 # Async runtime
 tokio = { workspace = true }
 
+# Networking
+libp2p = { workspace = true }
+
 # CLI
 clap = { workspace = true }
+
+# Async
+async-trait = "0.1"
+
+# Crypto
+blake3 = { workspace = true }
+parity-scale-codec = { workspace = true }
+ed25519-dalek = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
@@ -42,4 +54,17 @@ anyhow = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }
 
+# HTTP client (for devnet harness)
+reqwest = { workspace = true }
+
+[[bin]]
+name = "devnet_harness"
+path = "src/bin/devnet_harness.rs"
+
+[[bin]]
+name = "replay_harness"
+path = "src/bin/replay_harness.rs"
+
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+reqwest = { workspace = true }

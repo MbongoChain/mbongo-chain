@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --foreground: #0f172a;
+    --background: #ffffff;
+    --muted: #f8fafc;
+    --border: #e2e8f0;
+  }
+
+  .dark {
+    --foreground: #f1f5f9;
+    --background: #0b1120;
+    --muted: #111827;
+    --border: #1e293b;
+  }
+
+  body {
+    color: var(--foreground);
+    background: var(--background);
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  ::selection {
+    background-color: #22c55e;
+    color: #052e16;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* Phase badge pulse */
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.animate-pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Code inline style */
+code {
+  @apply text-sm bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded font-mono;
+}

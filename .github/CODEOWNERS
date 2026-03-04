@@ -1,0 +1,9 @@
+# Core protocol ownership
+/crates/ @Mutshipayi91
+/runtime/ @Mutshipayi91
+
+# CI and repository governance
+/.github/ @Mutshipayi91
+
+# Default owner
+* @Mutshipayi91
