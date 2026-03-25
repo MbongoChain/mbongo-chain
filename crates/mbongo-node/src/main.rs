@@ -406,6 +406,11 @@ async fn run_sync_orchestrator<S: mbongo_storage::Storage + Send + Sync + 'stati
                                         );
                                     }
                                 }
+
+                                // Update remote height after applying blocks.
+                                if let Some(peer) = state.peer {
+                                    let _ = cmd_tx.send(SyncCommand::GetHeight { peer_id: peer });
+                                }
                             }
                             SyncResponse::Error(e) => {
                                 state.in_flight = false;
