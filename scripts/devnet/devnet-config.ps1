@@ -49,6 +49,63 @@ $DevnetNodes = @(
 
 $BackupRoot = Join-Path $DevnetRoot 'backups'
 $ReceiptRecordDir = Join-Path $DevnetRoot 'receipts'
+$SoakRoot = Join-Path $DevnetRoot 'soak'
+
+# --- Soak thresholds ----------------------------------------------------
+# Conservative devnet values (not SLA claims). Snapshotted immutably
+# into each soak session's session.json at start; the report evaluates
+# against the snapshot, so changing these mid-soak has no effect.
+$SoakThresholds = @{
+    ConvergenceSkewBlocks     = 1     # allowed moving-tip height spread
+    StalledFailMinutes        = 10    # producer no-progress streak -> FAIL
+    RpcOutageWarnMinutes      = 5     # node RPC outage streak -> warning
+    RpcOutageFailMinutes      = 15    # node RPC outage streak -> FAIL
+    RssWarnMb                 = 500   # per-process working set -> warning
+    RssFailMb                 = 1500  # per-process working set -> FAIL
+    DataGrowthWarnMbPerHour   = 50    # sustained growth rate -> warning
+    WarningsPerIntervalWarn   = 10    # log warnings in one interval -> warning
+    ErrorsPerIntervalFail     = 25    # log errors in one interval -> FAIL
+    MissingSampleWarnPercent  = 5     # missing samples -> warning
+    MissingSampleFailPercent  = 20    # missing samples -> FAIL
+}
+
+# --- Convergence classification (pure function, unit-testable) ----------
+# Classifies one sample using only data available from existing RPCs.
+# Priority: unreachable > divergent > stalled > temporarily-skewed >
+# converged.
+#
+#   AllReachable   - every node answered RPC this sample
+#   HeightSpread   - max height minus min height across nodes
+#   TipsConsistent - equal heights: all tip hashes identical;
+#                    skewed heights: the full block JSON at the common
+#                    minimum height is identical on every node (an
+#                    ancestry check that needs no local hashing)
+#   ProducerDelta  - producer height minus previous sample's, or $null
+#                    on the first sample
+function Get-ConvergenceClassification {
+    param(
+        [bool]$AllReachable,
+        [long]$HeightSpread,
+        [bool]$TipsConsistent,
+        $ProducerDelta,
+        [int]$SkewAllowance
+    )
+    if (-not $AllReachable) { return 'unreachable' }
+    if (-not $TipsConsistent) { return 'divergent' }
+    if ($HeightSpread -gt $SkewAllowance) { return 'divergent' }
+    if (($null -ne $ProducerDelta) -and ([long]$ProducerDelta -le 0)) { return 'stalled' }
+    if ($HeightSpread -gt 0) { return 'temporarily-skewed' }
+    return 'converged'
+}
+
+# Returns the directory size in MB (2 decimals) or 0 when absent.
+function Get-DirectorySizeMb([string]$Path) {
+    if (-not (Test-Path $Path)) { return 0 }
+    $sum = (Get-ChildItem $Path -Recurse -File -ErrorAction SilentlyContinue |
+        Measure-Object -Property Length -Sum).Sum
+    if ($null -eq $sum) { return 0 }
+    [math]::Round($sum / 1MB, 2)
+}
 
 # ── Path safety ─────────────────────────────────────────────────────────
 

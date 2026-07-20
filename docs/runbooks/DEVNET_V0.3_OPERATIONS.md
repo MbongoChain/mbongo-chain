@@ -261,6 +261,80 @@ A backup is valid **only for the same protocol and storage version**
 
 ---
 
+## Soak observability
+
+Long-running observation of a healthy devnet. Read-only: the soak
+tooling never mutates chain data and never starts, stops, or restarts
+node processes.
+
+```powershell
+# Start sampling (devnet must already be running and manifest-valid)
+.\start-soak.ps1 -IntervalMinutes 5 [-PlannedHours 48] [-Label mysoak]
+
+# One-shot sample outside a session loop (diagnostic)
+.\soak-check.ps1 -SessionPath <session dir>
+
+# Stop the sampler and generate the final report
+.\stop-soak.ps1 -SessionPath <session dir>
+
+# (Re)generate the report at any time
+.\soak-report.ps1 -SessionPath <session dir>
+```
+
+Session layout under `<DevnetRoot>\soak\<session-id>\`:
+
+| File | Contents |
+|------|----------|
+| `session.json` | immutable session metadata + threshold snapshot |
+| `samples.csv` | one long-format CSV (3 `node` rows + 1 `session` row per sample) |
+| `state.json` | previous-sample state (external, survives sampler restart) |
+| `events.log` | noteworthy transitions (restart, RPC change, convergence change) |
+| `soak.pid.json` | sampler PID + exe path + sampler script + session path |
+| `sampler.out.log` / `sampler.err.log` | sampler process output |
+| `final-report.json` / `final-report.txt` | summary + PASS/WARN/FAIL |
+
+**Cadence:** default 5 min, minimum 1 min. Every RPC/REST probe has a
+5-second timeout; individual node/probe failures are recorded as
+values, never fatal — the sampler stops only on invalid session
+metadata, an unsafe path, the planned duration, or `stop-soak.ps1`.
+
+**Convergence classification** (per sample, from existing RPCs only):
+
+- `converged` — all nodes reachable, equal heights, identical tip hashes.
+- `temporarily-skewed` — heights differ by at most the allowance
+  (default 1 block) and the block at the common minimum height is
+  identical on every node (an ancestry check needing no local hashing).
+- `stalled` — reachable and consistent, but the producer height did not
+  advance since the previous sample.
+- `divergent` — inconsistent tips (equal heights with differing hashes,
+  or differing block JSON at the common minimum height) or a spread
+  above the allowance.
+- `unreachable` — one or more nodes did not answer RPC this sample.
+
+Priority when several apply: unreachable > divergent > stalled >
+temporarily-skewed > converged. Peer count is **not** observable (no
+peer-count RPC exists); convergence is judged purely from height and
+block data.
+
+**Result criteria** (evaluated against the thresholds snapshotted into
+`session.json` at start, so mid-soak edits have no effect):
+
+- **FAIL** — any divergent sample; producer stalled streak ≥ 10 min;
+  node RPC outage streak ≥ 15 min; max RSS ≥ 1500 MB; missing samples
+  > 20%; log errors ≥ 25 in one interval.
+- **PASS WITH WARNINGS** — no FAIL, but any stalled/unreachable sample,
+  RPC outage ≥ 5 min, RSS ≥ 500 MB, data growth ≥ 50 MB/h, any log
+  errors, ≥ 10 warnings/interval, missing samples > 5%, detected node
+  restarts, or sampler interruptions.
+- **PASS** — none of the above.
+
+Thresholds are conservative devnet defaults (not SLA claims) and live
+in `$SoakThresholds` in `devnet-config.ps1`. The report also lists what
+is **not** observable this phase: peer count, receipt-index bytes, and
+Prometheus counters.
+
+---
+
 ## Known limitations (this phase)
 
 - **Ephemeral P2P identity:** the node generates a fresh PeerId every
@@ -274,14 +348,15 @@ A backup is valid **only for the same protocol and storage version**
 - **No dedicated receipt RPC:** `submit_receipt`/`get_receipt` are
   reserved and return `-32601`. Receipts are submitted through
   `submit_transaction` (tooling arrives with the smoke-test step).
-- **No metrics endpoint:** no Prometheus/telemetry; observability is
-  logs + RPC polling until the soak tooling lands.
+- **No metrics endpoint:** no Prometheus/telemetry; soak observability
+  is logs + RPC/REST polling (see the Soak section above).
 - **Windows process stop is forceful** (no graceful shutdown signal);
   RocksDB's write-ahead log makes this safe, and the devnet harness
   exercises exactly this restart path.
 
 ## Future steps (not yet implemented)
 
-1. 48–72 h soak test with resource/error monitoring
+1. Run the 48–72 h soak itself (tooling above is ready; the long run
+   has not yet been executed)
 2. Dedicated receipt RPC (`get_receipt`) enabling byte-level receipt
    verification from scripts
