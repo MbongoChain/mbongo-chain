@@ -34,10 +34,67 @@ $SessionPath = Assert-PathInsideRoot -Path $SessionPath -ResolvedRoot $resolvedR
 $session = Get-Content (Join-Path $SessionPath 'session.json') -Raw | ConvertFrom-Json
 $csvPath = Join-Path $SessionPath 'samples.csv'
 if (-not (Test-Path $csvPath)) { throw "No samples.csv in $SessionPath; nothing to report." }
+
+# --- Schema/data validation (fail closed on malformed CSV) -------------
+# A malformed CSV (e.g. the locale decimal-comma corruption) must NEVER
+# produce PASS or PASS WITH WARNINGS. Import-Csv silently normalizes
+# shifted rows to 29 columns with garbage values, so validation checks
+# the exact header, per-record column count, and semantic sanity of the
+# convergence column. On failure it writes a FAIL report and exits 1.
+function Write-InvalidCsvReport([string]$Reason) {
+    $jsonPath = Join-Path $SessionPath 'final-report.json'
+    $txtPath = Join-Path $SessionPath 'final-report.txt'
+    [ordered]@{
+        sessionId   = $session.sessionId
+        result      = 'FAIL'
+        failReasons = @("invalid CSV schema/data: $Reason")
+        csvPath     = $csvPath
+    } | ConvertTo-Json -Depth 4 | Out-File -FilePath $jsonPath -Encoding utf8
+    @(
+        "=== Soak Report: $($session.sessionId) ===",
+        'RESULT: FAIL',
+        "  FAIL: invalid CSV schema/data: $Reason",
+        '',
+        'This session produced malformed sample data and cannot be summarized.',
+        'It must be treated as invalid; start a new soak session.'
+    ) -join "`r`n" | Out-File -FilePath $txtPath -Encoding utf8
+    Write-Host "RESULT: FAIL - invalid CSV schema/data: $Reason"
+    Write-Host "JSON: $jsonPath"
+}
+
+$csvLines = @(Get-Content $csvPath)
+if ($csvLines.Count -eq 0) { Write-InvalidCsvReport 'samples.csv is empty'; exit 1 }
+if ($csvLines[0] -ne $SoakCanonicalHeader) {
+    Write-InvalidCsvReport 'header does not match the expected 29-column schema'
+    exit 1
+}
 $rows = @(Import-Csv $csvPath)
+# Every record must expose exactly the 29 schema columns, in order.
+foreach ($r in $rows) {
+    $names = @($r.PSObject.Properties.Name)
+    if ($names.Count -ne $SoakSchema.Count) {
+        Write-InvalidCsvReport "a record has $($names.Count) columns (expected $($SoakSchema.Count))"
+        exit 1
+    }
+}
 $sessionRows = @($rows | Where-Object { $_.scope -eq 'session' })
 $nodeRows = @($rows | Where-Object { $_.scope -eq 'node' })
-if ($sessionRows.Count -eq 0) { throw 'samples.csv contains no session rows.' }
+if ($sessionRows.Count -eq 0) { Write-InvalidCsvReport 'no session rows'; exit 1 }
+# Semantic check: every session row's convergence must be a known state.
+# This catches shifted data even if the column count happens to line up.
+foreach ($sr in $sessionRows) {
+    if ($SoakConvergenceStates -notcontains $sr.convergence) {
+        Write-InvalidCsvReport "session row has invalid convergence value '$($sr.convergence)' (shifted data)"
+        exit 1
+    }
+}
+# Every scope must be exactly 'node' or 'session' (catches column shift).
+foreach ($r in $rows) {
+    if (($r.scope -ne 'node') -and ($r.scope -ne 'session')) {
+        Write-InvalidCsvReport "row has invalid scope '$($r.scope)' (shifted data)"
+        exit 1
+    }
+}
 
 # Wrap the whole if-expression in @() so a single-line events.log does
 # not unwrap to a scalar string (which lacks .Count under StrictMode).

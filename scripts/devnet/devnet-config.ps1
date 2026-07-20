@@ -69,6 +69,57 @@ $SoakThresholds = @{
     MissingSampleFailPercent  = 20    # missing samples -> FAIL
 }
 
+# --- Soak CSV schema (single source of truth) ---------------------------
+# The 29 columns in fixed order. Rows are built as ordered PSCustomObjects
+# with exactly these properties and serialized through ConvertTo-Csv, so
+# commas, quotes, newlines, and locale-specific decimal formatting cannot
+# alter the field count. Shared by soak-check (writer) and soak-report
+# (validator/reader).
+$SoakSchema = @(
+    'timestampUtc', 'scope', 'node', 'role', 'pid', 'processAlive', 'exeValid',
+    'rpcReachable', 'restReachable', 'height', 'tipHash', 'heightDelta', 'rssMb',
+    'cpuTotalSec', 'cpuDeltaSec', 'dataSizeMb', 'dataGrowthMb', 'outLogSizeKb',
+    'errLogSizeKb', 'newWarnings', 'newErrors', 'allReachable', 'heightSpread',
+    'convergence', 'producerDelta', 'totalDataMb', 'totalNewWarnings',
+    'totalNewErrors', 'sessionUptimeSec'
+)
+$SoakNumericColumns = @(
+    'pid', 'height', 'heightDelta', 'rssMb', 'cpuTotalSec', 'cpuDeltaSec',
+    'dataSizeMb', 'dataGrowthMb', 'outLogSizeKb', 'errLogSizeKb', 'newWarnings',
+    'newErrors', 'heightSpread', 'producerDelta', 'totalDataMb',
+    'totalNewWarnings', 'totalNewErrors', 'sessionUptimeSec'
+)
+# The full set of convergence classifications a session row may contain.
+# soak-report uses this to detect shifted data (e.g. a numeric value
+# landing in the convergence column).
+$SoakConvergenceStates = @(
+    'converged', 'temporarily-skewed', 'stalled', 'divergent', 'unreachable'
+)
+
+# Formats a numeric value as an InvariantCulture string ('' passes
+# through). Guarantees a '.' decimal separator regardless of host locale
+# (e.g. fr-CA would otherwise emit "18,5", adding a spurious CSV comma).
+function Format-SoakNum($v) {
+    if ($null -eq $v -or "$v" -eq '') { return '' }
+    return ([double]$v).ToString([System.Globalization.CultureInfo]::InvariantCulture)
+}
+
+# Builds an ordered PSCustomObject with exactly the 29 schema properties,
+# filling any not supplied with ''. Numeric columns are invariant-formatted.
+function New-SoakRow([hashtable]$Fields) {
+    $o = [ordered]@{}
+    foreach ($col in $SoakSchema) {
+        $val = if ($Fields.ContainsKey($col)) { $Fields[$col] } else { '' }
+        if ($SoakNumericColumns -contains $col) { $val = Format-SoakNum $val }
+        $o[$col] = $val
+    }
+    return [PSCustomObject]$o
+}
+
+# The canonical header line exactly as ConvertTo-Csv emits it for the
+# schema. Used to validate existing CSVs.
+$SoakCanonicalHeader = ((New-SoakRow @{}) | ConvertTo-Csv -NoTypeInformation)[0]
+
 # --- Convergence classification (pure function, unit-testable) ----------
 # Classifies one sample using only data available from existing RPCs.
 # Priority: unreachable > divergent > stalled > temporarily-skewed >

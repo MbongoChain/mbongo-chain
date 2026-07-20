@@ -333,6 +333,24 @@ in `$SoakThresholds` in `devnet-config.ps1`. The report also lists what
 is **not** observable this phase: peer count, receipt-index bytes, and
 Prometheus counters.
 
+**CSV integrity.** Sample rows are built as ordered `PSCustomObject`s
+against the 29-column `$SoakSchema` and serialized with
+`ConvertTo-Csv`; numeric fields are pre-formatted with
+`InvariantCulture`, so a locale decimal comma (e.g. fr-CA `18,5`) can
+never split a field. The sampler validates each serialized sample before
+appending and refuses to resume a session whose `samples.csv` header or
+row shape does not match the schema. `soak-report.ps1` validates the
+header, per-record column count, and the convergence column, and returns
+**FAIL** ("invalid CSV schema/data") on any malformed input rather than a
+misleading PASS.
+
+> **Invalid session (do not use).** The first attempted real soak,
+> `soak-20260720-212722-v03-72h-baseline`, was written before this CSV
+> fix on a French-locale host and is corrupted (decimal commas shifted
+> columns). It is invalid test data and must be discarded. Runtime
+> session data is never committed to Git; the next real soak begins in a
+> **new** session directory created by `start-soak.ps1` after the fix.
+
 ---
 
 ## Known limitations (this phase)

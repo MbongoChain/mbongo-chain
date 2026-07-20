@@ -39,15 +39,33 @@ $eventsPath = Join-Path $SessionPath 'events.log'
 $intervalMinutes = [double]$session.intervalMinutes
 if ($intervalMinutes -lt 1) { throw "Session interval $intervalMinutes < 1 minute minimum." }
 
-$CsvHeader = 'timestampUtc,scope,node,role,pid,processAlive,exeValid,rpcReachable,' +
-    'restReachable,height,tipHash,heightDelta,rssMb,cpuTotalSec,cpuDeltaSec,dataSizeMb,' +
-    'dataGrowthMb,outLogSizeKb,errLogSizeKb,newWarnings,newErrors,allReachable,' +
-    'heightSpread,convergence,producerDelta,totalDataMb,totalNewWarnings,totalNewErrors,' +
-    'sessionUptimeSec'
+# The CSV schema, invariant numeric formatting, row builder, and canonical
+# header are defined once in devnet-config.ps1 ($SoakSchema, New-SoakRow,
+# $SoakCanonicalHeader) and shared with soak-report.
 
 function Write-SoakEvent([string]$Message) {
     $line = "$((Get-Date).ToUniversalTime().ToString('o')) $Message"
     Add-Content -Path $eventsPath -Value $line -Encoding utf8
+}
+
+# Startup guard: if samples.csv already exists, its header must exactly
+# match the schema and every record must parse into the 29-column schema.
+# Refuses to resume a malformed session (e.g. one written before this CSV
+# fix); never appends to a corrupted CSV.
+function Assert-ExistingCsvValid {
+    if (-not (Test-Path $csvPath)) { return }
+    $lines = @(Get-Content $csvPath)
+    if ($lines.Count -eq 0) { return }
+    if ($lines[0] -ne $SoakCanonicalHeader) {
+        throw "samples.csv header does not match the expected schema; refusing to resume a malformed session ($csvPath). Start a NEW soak session."
+    }
+    $parsed = @(Import-Csv $csvPath)
+    foreach ($r in $parsed) {
+        $names = @($r.PSObject.Properties.Name)
+        if ($names.Count -ne $SoakSchema.Count) {
+            throw "samples.csv has a record with $($names.Count) columns (expected $($SoakSchema.Count)); refusing to resume a malformed session."
+        }
+    }
 }
 
 # Counts warning/error pattern matches in a log file (0 when absent).
@@ -186,10 +204,16 @@ function Invoke-SoakSample {
             outLog = $outLog; warnCount = $warnNow; errCount = $errNow
         }
 
-        $nodeRows += ($ts, 'node', $name, $node.Role, $procId, $alive, $exeValid, $rpcOk,
-            $restOk, $height, $tip, $heightDelta, $rssMb, $cpuTotal, $cpuDelta, $dataMb,
-            $dataGrowth, $outKb, $errKb, $newWarn, $newErr,
-            '', '', '', '', '', '', '', '') -join ','
+        $nodeRows += New-SoakRow @{
+            timestampUtc = $ts; scope = 'node'; node = $name; role = $node.Role
+            pid = $procId; processAlive = $alive; exeValid = $exeValid
+            rpcReachable = $rpcOk; restReachable = $restOk
+            height = $height; tipHash = $tip; heightDelta = $heightDelta
+            rssMb = $rssMb; cpuTotalSec = $cpuTotal; cpuDeltaSec = $cpuDelta
+            dataSizeMb = $dataMb; dataGrowthMb = $dataGrowth
+            outLogSizeKb = $outKb; errLogSizeKb = $errKb
+            newWarnings = $newWarn; newErrors = $newErr
+        }
     }
 
     # --- Session-wide row ---
@@ -229,16 +253,49 @@ function Invoke-SoakSample {
     }
 
     $uptimeSec = [math]::Round(($now - [datetime]$session.startedAtUtc).TotalSeconds)
-    $sessionRow = ($ts, 'session', '', '', '', '', '', '', '', '', '', '', '', '', '', '',
-        '', '', '', '', '', $allReachable, $spread, $classification,
-        $(if ($null -ne $producerDelta) { $producerDelta } else { '' }),
-        [math]::Round($totalData, 2), $totalWarn, $totalErr, $uptimeSec) -join ','
-
-    # Atomic-enough append: header once, then all rows in one write.
-    if (-not (Test-Path $csvPath)) {
-        Set-Content -Path $csvPath -Value $CsvHeader -Encoding utf8
+    $sessionRow = New-SoakRow @{
+        timestampUtc = $ts; scope = 'session'
+        allReachable = $allReachable; heightSpread = $spread
+        convergence = $classification
+        producerDelta = $(if ($null -ne $producerDelta) { $producerDelta } else { '' })
+        totalDataMb = [math]::Round($totalData, 2)
+        totalNewWarnings = $totalWarn; totalNewErrors = $totalErr
+        sessionUptimeSec = $uptimeSec
     }
-    Add-Content -Path $csvPath -Value (($nodeRows + $sessionRow) -join "`r`n") -Encoding utf8
+
+    # Serialize the whole sample (3 node rows + 1 session row) through a
+    # real CSV serializer: correct quoting/escaping and invariant numerics.
+    $sampleRows = @($nodeRows) + @($sessionRow)
+    $csvLines = @($sampleRows | ConvertTo-Csv -NoTypeInformation)
+    $dataLines = @($csvLines | Select-Object -Skip 1)
+
+    # Strict post-serialization validation: parse the generated lines back
+    # and require exactly 29 named properties in order, and 3 node + 1
+    # session rows. Refuse the append (record a fatal event) on mismatch.
+    $parsed = @($csvLines | ConvertFrom-Csv)
+    $schemaOk = ($parsed.Count -eq 4)
+    if ($schemaOk) {
+        foreach ($p in $parsed) {
+            $names = @($p.PSObject.Properties.Name)
+            if ($names.Count -ne $SoakSchema.Count) { $schemaOk = $false; break }
+            for ($c = 0; $c -lt $SoakSchema.Count; $c++) {
+                if ($names[$c] -ne $SoakSchema[$c]) { $schemaOk = $false; break }
+            }
+            if (-not $schemaOk) { break }
+        }
+    }
+    $nodeCount = @($parsed | Where-Object { $_.scope -eq 'node' }).Count
+    $sessCount = @($parsed | Where-Object { $_.scope -eq 'session' }).Count
+    if ((-not $schemaOk) -or ($nodeCount -ne 3) -or ($sessCount -ne 1)) {
+        Write-SoakEvent "FATAL: serialized sample failed schema validation (rows=$($parsed.Count), node=$nodeCount, session=$sessCount); refusing to append"
+        throw 'Serialized sample failed 29-column / 3-node + 1-session validation; refusing to corrupt samples.csv.'
+    }
+
+    # Atomic-enough append: header once, then the validated data lines.
+    if (-not (Test-Path $csvPath)) {
+        Set-Content -Path $csvPath -Value $SoakCanonicalHeader -Encoding utf8
+    }
+    Add-Content -Path $csvPath -Value ($dataLines -join "`r`n") -Encoding utf8
 
     $newState['_session'] = @{ classification = $classification; sampledAtUtc = $ts }
     $newState | ConvertTo-Json -Depth 4 | Out-File -FilePath $statePath -Encoding utf8
@@ -247,6 +304,9 @@ function Invoke-SoakSample {
 }
 
 # --- Main --------------------------------------------------------------
+# Refuse to resume a malformed session before writing anything.
+Assert-ExistingCsvValid
+
 Write-SoakEvent "sampler started (pid $PID, loop=$([bool]$Loop))"
 try {
     Invoke-SoakSample
