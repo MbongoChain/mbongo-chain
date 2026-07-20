@@ -128,6 +128,74 @@ or overwrite chain data:
   fresh start is intended.
 - Old v0.2 directories are never opened or migrated by these scripts.
 
+## Receipt smoke test
+
+With the devnet running, submit and verify one real `AnchorReceipt`
+(built and signed by the `mbongo-wallet` `submit_receipt` example using
+the **public devnet key** — not suitable for funds or production
+secrets):
+
+```powershell
+# 0. One-time: build and deploy the receipt tool from a PINNED commit
+#    (the commit that contains crates/mbongo-wallet/examples/submit_receipt.rs;
+#    re-run only after an approved tooling update, with the new commit SHA)
+.\build-receipt-tool.ps1 -SourceCommit <full 40-hex commit sha>
+
+# 1. Start (if not already running)
+.\start-devnet.ps1
+
+# 2. Submit one receipt (any fresh 64-hex-char task id)
+.\submit-receipt.ps1 -TaskId 11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa
+
+# 3. Verify inclusion on all three nodes
+.\verify-receipt.ps1 -TaskId 11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa
+
+# 4. Optional: deterministic duplicate-rejection test
+.\verify-receipt.ps1 -TaskId 11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa -DuplicateTest
+```
+
+### Receipt-tool provenance
+
+The submission tool is a **deployed artifact** with the same discipline
+as the node binary — `submit-receipt.ps1` never executes code from an
+arbitrary working tree:
+
+- `build-receipt-tool.ps1` builds `submit_receipt.exe` in a **clean git
+  worktree pinned to an explicitly named commit** (mandatory
+  `-SourceCommit`, full SHA; refuses dirty or mismatched trees) and
+  copies it to `<DevnetRoot>\bin\submit_receipt.exe`.
+- It stamps `<DevnetRoot>\receipt-tool-manifest.json` with: the tool
+  source commit, the compatible protocol tag (`v0.3-devnet-stable`) and
+  protocol commit, the absolute tool path, the SHA-256 of the deployed
+  binary, and the build timestamp.
+- Before **every** submission, `submit-receipt.ps1` verifies the
+  manifest exists, the tool path matches, the protocol tag/commit match
+  this deployment, and the recomputed SHA-256 matches — and refuses on
+  any mismatch. It never silently rebuilds from the current branch.
+- After an approved tooling change is committed, rebuild by re-running
+  `build-receipt-tool.ps1 -SourceCommit <new sha>`; the manifest is
+  restamped with the new provenance. Generated binaries and manifests
+  live only under the deployment root, never in Git.
+
+Details:
+
+- The submitter reads the dev account's current nonce from the
+  producer's REST API (`/accounts/{address}`) — never assumed.
+- Each submission writes a record to
+  `<DevnetRoot>\receipts\<task_id>.json` (task id, tx hash, nonce,
+  sender, receipt hash, endpoint, timestamp). `submit-receipt.ps1`
+  refuses a task id that already has a record unless `-AllowDuplicate`
+  is passed (used only by the duplicate test).
+- Verification scans blocks by height on **all three nodes**, requires
+  the task id to appear **exactly once** at the **same height**
+  everywhere, and reports per-node tips.
+- **Verification limit:** there is no `get_receipt` RPC yet, so the
+  scripts verify *inclusion of the anchoring transaction in the
+  canonical chain*, not the stored receipt bytes. Byte-level
+  canonicality is proven by the node test suite and the replay harness
+  at the deployed tag; the duplicate-rejection test additionally proves
+  the persistent receipt index is live.
+
 ## Backup note (interim)
 
 Until the dedicated backup script exists: stop the devnet (or one
@@ -159,7 +227,7 @@ same v0.3 binary. Rolling back to v0.2 is impossible by design (see
 
 ## Future steps (not yet implemented)
 
-1. Receipt submission smoke test (wallet example + script)
-2. Backup and confirmed reset/wipe scripts
-3. Convergence + receipt verification script
-4. 48–72 h soak test with resource/error monitoring
+1. Backup and confirmed reset/wipe scripts
+2. 48–72 h soak test with resource/error monitoring
+3. Dedicated receipt RPC (`get_receipt`) enabling byte-level receipt
+   verification from scripts

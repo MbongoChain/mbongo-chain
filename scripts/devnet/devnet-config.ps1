@@ -27,6 +27,13 @@ $BinDir = Join-Path $DevnetRoot 'bin'
 $BinaryPath = Join-Path $BinDir 'mbongo-node.exe'
 $ManifestPath = Join-Path $DevnetRoot 'manifest.json'
 
+# Receipt tool: a deployed, hash-verified artifact built from a clean
+# pinned source commit (build-receipt-tool.ps1). Never run from the
+# live working tree.
+$ReceiptToolBuildDir = Join-Path $DevnetRoot 'build\tool-src'
+$ReceiptToolPath = Join-Path $BinDir 'submit_receipt.exe'
+$ReceiptToolManifestPath = Join-Path $DevnetRoot 'receipt-tool-manifest.json'
+
 # ── Devnet parameters ───────────────────────────────────────────────────
 $BlockTimeSecs = 5
 $RpcReadyTimeoutSecs = 60
@@ -80,6 +87,39 @@ function Assert-DevnetManifest {
     $actual = Get-FileSha256 $BinaryPath
     if ($actual -ne $manifest.sha256) {
         throw "Binary hash mismatch: manifest=$($manifest.sha256) actual=$actual. The deployed binary is not the recorded v0.3 build; refusing. Rebuild the deployment."
+    }
+    return $manifest
+}
+
+function Read-ReceiptToolManifest {
+    if (-not (Test-Path $ReceiptToolManifestPath)) { return $null }
+    Get-Content $ReceiptToolManifestPath -Raw | ConvertFrom-Json
+}
+
+# Verifies the deployed receipt tool against its external manifest:
+# manifest present, tool path matches, protocol compatibility matches
+# the pinned devnet release, and the recomputed SHA-256 matches. Throws
+# an actionable error on any mismatch. NEVER rebuilds anything.
+function Assert-ReceiptToolManifest {
+    $manifest = Read-ReceiptToolManifest
+    if ($null -eq $manifest) {
+        throw "No receipt-tool manifest at $ReceiptToolManifestPath. Build the tool from a pinned commit first: build-receipt-tool.ps1 -SourceCommit <sha>."
+    }
+    if ($manifest.toolPath -ne $ReceiptToolPath) {
+        throw "Receipt-tool manifest path '$($manifest.toolPath)' does not match expected '$ReceiptToolPath'."
+    }
+    if ($manifest.protocolTag -ne $DevnetTag) {
+        throw "Receipt tool was built for protocol '$($manifest.protocolTag)', but this deployment runs '$DevnetTag'. Rebuild with build-receipt-tool.ps1."
+    }
+    if ($manifest.protocolCommit -ne $DevnetCommit) {
+        throw "Receipt tool targets protocol commit '$($manifest.protocolCommit)', expected '$DevnetCommit'. Rebuild with build-receipt-tool.ps1."
+    }
+    if (-not (Test-Path $ReceiptToolPath)) {
+        throw "Receipt tool missing at $ReceiptToolPath. Rebuild with build-receipt-tool.ps1 -SourceCommit <sha>."
+    }
+    $actual = Get-FileSha256 $ReceiptToolPath
+    if ($actual -ne $manifest.sha256) {
+        throw "Receipt tool hash mismatch: manifest=$($manifest.sha256) actual=$actual. The deployed tool is not the recorded build; refusing to submit. Rebuild with build-receipt-tool.ps1 -SourceCommit <sha>."
     }
     return $manifest
 }
