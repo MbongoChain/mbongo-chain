@@ -47,6 +47,63 @@ $DevnetNodes = @(
     @{ Name = 'follower-b'; Role = 'follower'; Rpc = 9946; Rest = 8082; P2p = 30335; Producer = $false }
 )
 
+$BackupRoot = Join-Path $DevnetRoot 'backups'
+$ReceiptRecordDir = Join-Path $DevnetRoot 'receipts'
+
+# ── Path safety ─────────────────────────────────────────────────────────
+
+# Validates the deployment root before any destructive or archival
+# operation. Refuses empty values, missing paths, drive roots, overly
+# shallow paths, and any root overlapping the repository. Returns the
+# resolved absolute path.
+function Assert-SafeDevnetRoot {
+    if ([string]::IsNullOrWhiteSpace($DevnetRoot)) {
+        throw 'DevnetRoot is empty; refusing.'
+    }
+    $resolved = $null
+    try { $resolved = (Resolve-Path $DevnetRoot -ErrorAction Stop).ProviderPath } catch {
+        throw "DevnetRoot '$DevnetRoot' does not exist."
+    }
+    $resolved = $resolved.TrimEnd('\')
+    $driveRoot = [System.IO.Path]::GetPathRoot($resolved).TrimEnd('\')
+    if ($resolved -eq $driveRoot) {
+        throw "DevnetRoot '$resolved' is a drive root; refusing."
+    }
+    $rel = $resolved.Substring($driveRoot.Length).Trim('\')
+    if ((@($rel -split '\\')).Count -lt 2) {
+        throw "DevnetRoot '$resolved' is too shallow (fewer than two path segments below the drive); refusing."
+    }
+    $repo = (Resolve-Path $RepoRoot).ProviderPath.TrimEnd('\')
+    if (($repo -ieq $resolved) -or
+        $repo.StartsWith("$resolved\", [System.StringComparison]::OrdinalIgnoreCase) -or
+        $resolved.StartsWith("$repo\", [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "DevnetRoot '$resolved' overlaps the repository '$repo'; refusing."
+    }
+    return $resolved
+}
+
+# Resolves a candidate path and requires it to live strictly inside the
+# validated deployment root (defeats traversal values). Returns the
+# full path.
+function Assert-PathInsideRoot([string]$Path, [string]$ResolvedRoot) {
+    $full = [System.IO.Path]::GetFullPath($Path)
+    if (-not $full.StartsWith("$($ResolvedRoot.TrimEnd('\'))\", [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to touch '$full': outside the deployment root '$ResolvedRoot'."
+    }
+    return $full
+}
+
+# Returns the nodes of this deployment whose recorded PID is alive and
+# still running the deployed binary.
+function Get-RunningDevnetNodes {
+    $running = @()
+    foreach ($node in $DevnetNodes) {
+        $proc = Get-RunningNodeProcess $node
+        if ($null -ne $proc) { $running += $node.Name }
+    }
+    return , $running
+}
+
 # ── Path helpers ────────────────────────────────────────────────────────
 function Get-NodeDir([hashtable]$Node) { Join-Path $DevnetRoot $Node.Name }
 function Get-NodeDataDir([hashtable]$Node) { Join-Path (Get-NodeDir $Node) 'data' }

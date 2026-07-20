@@ -196,13 +196,68 @@ Details:
   at the deployed tag; the duplicate-rejection test additionally proves
   the persistent receipt index is live.
 
-## Backup note (interim)
+## Backup
 
-Until the dedicated backup script exists: stop the devnet (or one
-node), copy that node's `data\` directory, restart. RocksDB data is
-consistent at rest. Rollback = restore a copied directory under the
-same v0.3 binary. Rolling back to v0.2 is impossible by design (see
-[PROTOCOL_LOCK_v0.3.md](../specs/PROTOCOL_LOCK_v0.3.md)).
+`backup-devnet.ps1 [-Label <name>]` creates a single verified ZIP under
+`<DevnetRoot>\backups\` (timestamped, or named via `-Label`; existing
+archives are never overwritten) plus a `.metadata.json` sidecar.
+
+- **Requires all nodes stopped** (consistent RocksDB copy); refuses
+  otherwise and names `stop-devnet.ps1`.
+- **Included:** each node's `data\`, its `deployment.json` provenance
+  marker, its `node.pid.json` (audit only), the latest log pair per
+  node, `receipts\` submission records, and both manifests.
+- **Excluded:** build worktrees, Cargo target directories, and deployed
+  binaries — reproducible from the pinned commits recorded in the
+  manifests.
+- The sidecar records timestamp, protocol tag/commit, operational
+  tooling commit, node binary and receipt-tool hashes, source root, the
+  archive SHA-256 and verified entry count, a config snapshot, and the
+  full file list.
+
+## Reset (confirmed wipe to fresh genesis)
+
+`reset-devnet.ps1 -ConfirmReset` — then type the **exact deployment
+root path** at the prompt (or pass it via `-ConfirmRoot` in scripted
+use). Nothing is ever wiped automatically:
+
+- Refuses without `-ConfirmReset`, on any typed-confirmation mismatch,
+  while any deployment node process is running, if the deployment
+  manifest fails validation, or if any non-empty data directory lacks a
+  matching provenance marker.
+- Takes an **automatic verified backup first** (`pre-reset-<utc>`), and
+  aborts the reset if that backup fails — unless the emergency override
+  `-EmergencySkipBackupIUnderstandDataLoss` is explicitly supplied
+  (there is deliberately no shorter alias).
+- Removes only deployment-owned runtime data: node `data\`, `logs\`,
+  PID metadata, provenance markers, and `receipts\` records (all
+  captured in the pre-wipe backup). Preserves binaries, both manifests,
+  all backups, and build sources. Every deletion path is re-validated
+  to live strictly inside the deployment root.
+- Recreates the empty directory structure and prints exactly what was
+  removed and preserved. The next `start-devnet.ps1` begins from fresh
+  genesis.
+
+## Restore (manual, documented)
+
+A backup is valid **only for the same protocol and storage version**
+(`v0.3-devnet-stable`, schema v2). There is no v0.2 rollback.
+
+1. Stop the devnet: `stop-devnet.ps1`.
+2. Expand the archive:
+   `Expand-Archive <backups>\devnet-backup-<name>.zip -DestinationPath <staging>`
+   (optionally verify first: `Get-FileHash` against the sidecar's
+   `archiveSha256`).
+3. For each node, copy the restored `<node>\data` and
+   `<node>\deployment.json` back into place (after moving aside or
+   resetting the current ones).
+4. **Delete or ignore any restored `node.pid.json`** — restored PID
+   files are audit records, never live process state.
+5. Restore `receipts\` if receipt records are wanted.
+6. Confirm the deployment manifest still validates (the tag, commit,
+   and binary hash checks run automatically on `start-devnet.ps1`).
+7. Start the devnet; it resumes from the backup's persisted height, and
+   `verify-receipt.ps1` confirms restored anchors.
 
 ---
 
@@ -227,7 +282,6 @@ same v0.3 binary. Rolling back to v0.2 is impossible by design (see
 
 ## Future steps (not yet implemented)
 
-1. Backup and confirmed reset/wipe scripts
-2. 48–72 h soak test with resource/error monitoring
-3. Dedicated receipt RPC (`get_receipt`) enabling byte-level receipt
+1. 48–72 h soak test with resource/error monitoring
+2. Dedicated receipt RPC (`get_receipt`) enabling byte-level receipt
    verification from scripts
