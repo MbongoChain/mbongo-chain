@@ -22,9 +22,14 @@ use tokio::time::sleep;
 // ── Configuration ───────────────────────────────────────────────────────
 
 const BLOCK_TIME_SECS: u64 = 1;
-const WAIT_INITIAL_SECS: u64 = 15;
-const WAIT_RESTART_SECS: u64 = 8;
 const MIN_HEIGHT: u64 = 5;
+
+// Convergence polling: with a 1s block time the cluster is perpetually one
+// block "in flux", so a single fixed-time equality check races against
+// block production. Instead, poll until all nodes report identical height
+// and tip hash, bounded by an overall deadline.
+const CONVERGENCE_POLL_INTERVAL_MS: u64 = 500;
+const CONVERGENCE_TIMEOUT_SECS: u64 = 30;
 
 // Explicit port constants — same values used for spawning AND probing.
 // CLI flags verified against main.rs Args struct:
@@ -416,20 +421,13 @@ async fn check_convergence(
     Ok(ConvergenceResult { heights, hashes })
 }
 
-fn validate_convergence(result: &ConvergenceResult, min_height: u64) -> Result<(), String> {
-    println!("  Heights:");
-    for (name, h) in &result.heights {
-        println!("    {name}: {h}");
-    }
-    println!("  Tip hashes:");
-    for (name, hash) in &result.hashes {
-        println!("    {name}: {hash}");
-    }
-
+/// Returns `None` if all nodes agree (identical height >= `min_height`,
+/// identical tip hash), otherwise the reason they do not.
+fn convergence_error(result: &ConvergenceResult, min_height: u64) -> Option<String> {
     // Check minimum height.
     for (name, h) in &result.heights {
         if *h < min_height {
-            return Err(format!("{name} height {h} < minimum expected {min_height}"));
+            return Some(format!("{name} height {h} < minimum expected {min_height}"));
         }
     }
 
@@ -437,7 +435,7 @@ fn validate_convergence(result: &ConvergenceResult, min_height: u64) -> Result<(
     let first_height = result.heights[0].1;
     for (name, h) in &result.heights[1..] {
         if *h != first_height {
-            return Err(format!(
+            return Some(format!(
                 "height mismatch: {} has {}, {} has {first_height}",
                 name, h, result.heights[0].0
             ));
@@ -448,15 +446,84 @@ fn validate_convergence(result: &ConvergenceResult, min_height: u64) -> Result<(
     let first_hash = &result.hashes[0].1;
     for (name, hash) in &result.hashes[1..] {
         if hash != first_hash {
-            return Err(format!(
+            return Some(format!(
                 "tip hash mismatch: {} has {}, {} has {first_hash}",
                 name, hash, result.hashes[0].0
             ));
         }
     }
 
-    println!("  Converged: height={first_height}, hash={first_hash}");
-    Ok(())
+    None
+}
+
+/// Format the observed per-node state for display.
+fn format_state(result: &ConvergenceResult) -> String {
+    result
+        .heights
+        .iter()
+        .zip(&result.hashes)
+        .map(|((name, h), (_, hash))| format!("    {name}: height={h}, hash={hash}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Poll all nodes until they report identical height (>= `min_height`) and
+/// identical tip hash. Retries every [`CONVERGENCE_POLL_INTERVAL_MS`] with
+/// an overall deadline of [`CONVERGENCE_TIMEOUT_SECS`]. Transient RPC
+/// errors are retried until the deadline.
+///
+/// Returns the converged height so later phases can derive their own
+/// height floor from it.
+///
+/// On timeout, reports the required floor, the last observed height and
+/// hash for every node, the elapsed time, and the number of attempts.
+async fn await_convergence(
+    client: &Client,
+    nodes: &[(&str, u16)],
+    min_height: u64,
+) -> Result<u64, String> {
+    let start = std::time::Instant::now();
+    let deadline = Duration::from_secs(CONVERGENCE_TIMEOUT_SECS);
+    let mut attempts: u32 = 0;
+    let mut last_state: Option<ConvergenceResult> = None;
+
+    loop {
+        attempts += 1;
+        let failure = match check_convergence(client, nodes).await {
+            Ok(conv) => match convergence_error(&conv, min_height) {
+                None => {
+                    let height = conv.heights[0].1;
+                    let hash = conv.hashes[0].1.clone();
+                    println!("{}", format_state(&conv));
+                    println!(
+                        "  Converged: height={height}, hash={hash} \
+                         (floor {min_height}, after {attempts} attempts, {:.1}s)",
+                        start.elapsed().as_secs_f64()
+                    );
+                    return Ok(height);
+                }
+                Some(reason) => {
+                    last_state = Some(conv);
+                    reason
+                }
+            },
+            Err(e) => e,
+        };
+
+        if start.elapsed() >= deadline {
+            let state = last_state
+                .as_ref()
+                .map_or_else(|| "    (no state observed)".to_string(), format_state);
+            return Err(format!(
+                "convergence timeout after {:.1}s ({attempts} attempts, \
+                 deadline {CONVERGENCE_TIMEOUT_SECS}s, required floor {min_height})\n\
+                   last observed state:\n{state}\n\
+                   last failure reason: {failure}",
+                start.elapsed().as_secs_f64()
+            ));
+        }
+        sleep(Duration::from_millis(CONVERGENCE_POLL_INTERVAL_MS)).await;
+    }
 }
 
 // ── Cleanup ─────────────────────────────────────────────────────────────
@@ -583,18 +650,17 @@ async fn run_harness(client: &Client, data_dirs: &[PathBuf]) -> Result<(), Strin
 
     // ── Phase 2: Wait for convergence ───────────────────────────────────
 
-    println!("Phase 2: Waiting {WAIT_INITIAL_SECS}s for block production...");
-    sleep(Duration::from_secs(WAIT_INITIAL_SECS)).await;
-
     let nodes = vec![
         ("producer", PRODUCER_RPC),
         ("follower_a", FOLLOWER1_RPC),
         ("follower_b", FOLLOWER2_RPC),
     ];
 
-    println!("Phase 2: Checking convergence...");
-    let conv = check_convergence(client, &nodes).await?;
-    validate_convergence(&conv, MIN_HEIGHT)?;
+    println!(
+        "Phase 2: Polling for convergence (every {CONVERGENCE_POLL_INTERVAL_MS}ms, \
+         up to {CONVERGENCE_TIMEOUT_SECS}s)..."
+    );
+    let phase2_height = await_convergence(client, &nodes, MIN_HEIGHT).await?;
     println!("  Phase 2: PASS\n");
 
     // ── Phase 3: Restart producer ───────────────────────────────────────
@@ -609,12 +675,21 @@ async fn run_harness(client: &Client, data_dirs: &[PathBuf]) -> Result<(), Strin
     wait_for_rpc(client, &mut producer).await?;
     println!("  Producer restarted, RPC ready on port {PRODUCER_RPC}");
 
-    println!("Waiting 10 seconds for network re-sync...");
-    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-
-    println!("Phase 3: Checking convergence...");
-    let conv = check_convergence(client, &nodes).await?;
-    validate_convergence(&conv, MIN_HEIGHT)?;
+    // Baseline: the restarted producer's height right after its RPC is
+    // ready. It restarts from persisted state, so this is >= its pre-kill
+    // tip >= phase2_height, and heights are monotonic — the baseline
+    // cannot race backward. Requiring convergence at baseline + 1 proves
+    // the restarted producer minted at least one NEW block and both
+    // followers received it; converging on an old persisted tip cannot
+    // pass. (max() with phase2_height also enforces the phase-2-derived
+    // floor explicitly.)
+    let restart_baseline = get_height(client, PRODUCER_RPC).await?;
+    let phase3_floor = restart_baseline.max(phase2_height) + 1;
+    println!(
+        "Phase 3: Polling for convergence after producer restart \
+         (baseline {restart_baseline}, floor {phase3_floor})..."
+    );
+    let phase3_height = await_convergence(client, &nodes, phase3_floor).await?;
     println!("  Phase 3: PASS\n");
 
     // ── Phase 4: Restart follower ───────────────────────────────────────
@@ -629,10 +704,21 @@ async fn run_harness(client: &Client, data_dirs: &[PathBuf]) -> Result<(), Strin
     wait_for_rpc(client, &mut follower_a).await?;
     println!("  Follower A restarted, RPC ready on port {FOLLOWER1_RPC}");
 
-    sleep(Duration::from_secs(WAIT_RESTART_SECS)).await;
-    println!("Phase 4: Checking convergence...");
-    let conv = check_convergence(client, &nodes).await?;
-    validate_convergence(&conv, MIN_HEIGHT)?;
+    // Baseline: the PRODUCER's height sampled after the restarted
+    // follower's RPC is ready. The producer was not restarted in this
+    // phase and its height is monotonic, so the baseline cannot race
+    // backward. Requiring convergence at baseline + 1 proves the active
+    // chain progressed while follower A was back up AND the restarted
+    // follower caught up to that new tip — agreement on follower A's old
+    // persisted height cannot pass. (max() with phase3_height also keeps
+    // the floor monotonic across phases.)
+    let follower_baseline = get_height(client, PRODUCER_RPC).await?;
+    let phase4_floor = follower_baseline.max(phase3_height) + 1;
+    println!(
+        "Phase 4: Polling for convergence after follower restart \
+         (baseline {follower_baseline}, floor {phase4_floor})..."
+    );
+    await_convergence(client, &nodes, phase4_floor).await?;
     println!("  Phase 4: PASS\n");
 
     // ── Cleanup: kill all remaining ─────────────────────────────────────
@@ -642,4 +728,53 @@ async fn run_harness(client: &Client, data_dirs: &[PathBuf]) -> Result<(), Strin
     let _ = follower_b.child.kill().await;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a `ConvergenceResult` from `(name, height, hash)` tuples.
+    fn state(entries: &[(&str, u64, &str)]) -> ConvergenceResult {
+        ConvergenceResult {
+            heights: entries.iter().map(|(n, h, _)| ((*n).to_string(), *h)).collect(),
+            hashes: entries
+                .iter()
+                .map(|(n, _, hash)| ((*n).to_string(), (*hash).to_string()))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn equal_state_below_floor_fails() {
+        let conv = state(&[("a", 5, "0xaa"), ("b", 5, "0xaa"), ("c", 5, "0xaa")]);
+        assert!(convergence_error(&conv, 6).is_some());
+    }
+
+    #[test]
+    fn equal_state_at_old_restart_height_fails() {
+        // Restart scenario: all nodes agree on the pre-restart tip (height
+        // 10), but the phase floor is baseline + 1 = 11. Stale agreement
+        // must not pass.
+        let conv = state(&[("a", 10, "0xold"), ("b", 10, "0xold"), ("c", 10, "0xold")]);
+        assert!(convergence_error(&conv, 11).is_some());
+    }
+
+    #[test]
+    fn equal_state_above_floor_passes() {
+        let conv = state(&[("a", 12, "0xbb"), ("b", 12, "0xbb"), ("c", 12, "0xbb")]);
+        assert!(convergence_error(&conv, 11).is_none());
+    }
+
+    #[test]
+    fn hash_mismatch_at_equal_height_fails() {
+        let conv = state(&[("a", 12, "0xbb"), ("b", 12, "0xbb"), ("c", 12, "0xcc")]);
+        assert!(convergence_error(&conv, 5).is_some());
+    }
+
+    #[test]
+    fn height_mismatch_fails() {
+        let conv = state(&[("a", 13, "0xbb"), ("b", 12, "0xbb"), ("c", 13, "0xbb")]);
+        assert!(convergence_error(&conv, 5).is_some());
+    }
 }
