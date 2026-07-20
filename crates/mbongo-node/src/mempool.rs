@@ -2,10 +2,11 @@
 
 use std::collections::HashMap;
 
-use mbongo_core::{Address, Hash, Transaction};
+use mbongo_core::{Address, Hash, Transaction, TransactionPayload};
 
 /// Errors returned by mempool operations.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[allow(clippy::enum_variant_names)] // every admission failure IS a duplicate; the prefix is the semantics
 pub enum MempoolError {
     /// Transaction with this hash already exists in mempool or storage.
     #[error("duplicate transaction hash")]
@@ -13,15 +14,30 @@ pub enum MempoolError {
     /// A transaction from this sender with this nonce is already pending.
     #[error("duplicate sender nonce")]
     DuplicateSenderNonce,
+    /// An `AnchorReceipt` transaction with this `task_id` is already
+    /// pending. Two pending receipts for one task id would be drained
+    /// into the same block, where RFC 0002 rule (j) rejects the block.
+    #[error("duplicate pending task_id")]
+    DuplicateTaskId,
+}
+
+/// Returns the receipt `task_id` carried by a transaction, if any.
+fn task_id_of(tx: &Transaction) -> Option<[u8; 32]> {
+    match &tx.payload {
+        TransactionPayload::AnchorReceipt(receipt) => Some(receipt.task_id),
+        TransactionPayload::None => None,
+    }
 }
 
 /// In-memory mempool with deterministic ordering.
 ///
-/// Maintains indexes by transaction hash and (sender, nonce) for deduplication.
+/// Maintains indexes by transaction hash, (sender, nonce), and — for
+/// `AnchorReceipt` transactions — receipt `task_id`, for deduplication.
 /// Order of insertion is preserved for block production.
 pub struct Mempool {
     by_hash: HashMap<Hash, Transaction>,
     by_sender_nonce: HashMap<(Address, u64), Hash>,
+    by_task_id: HashMap<[u8; 32], Hash>,
     order: Vec<Hash>,
 }
 
@@ -32,6 +48,7 @@ impl Mempool {
         Self {
             by_hash: HashMap::new(),
             by_sender_nonce: HashMap::new(),
+            by_task_id: HashMap::new(),
             order: Vec::new(),
         }
     }
@@ -42,6 +59,8 @@ impl Mempool {
     ///
     /// Returns [`MempoolError::DuplicateHash`] if `tx_hash` already exists.
     /// Returns [`MempoolError::DuplicateSenderNonce`] if (sender, nonce) is already pending.
+    /// Returns [`MempoolError::DuplicateTaskId`] if an `AnchorReceipt` with
+    /// the same `task_id` is already pending.
     pub fn insert(&mut self, tx_hash: Hash, tx: Transaction) -> Result<(), MempoolError> {
         if self.by_hash.contains_key(&tx_hash) {
             return Err(MempoolError::DuplicateHash);
@@ -50,9 +69,18 @@ impl Mempool {
         if self.by_sender_nonce.contains_key(&key) {
             return Err(MempoolError::DuplicateSenderNonce);
         }
+        let task_id = task_id_of(&tx);
+        if let Some(tid) = &task_id {
+            if self.by_task_id.contains_key(tid) {
+                return Err(MempoolError::DuplicateTaskId);
+            }
+        }
 
         self.by_hash.insert(tx_hash, tx.clone());
         self.by_sender_nonce.insert(key, tx_hash);
+        if let Some(tid) = task_id {
+            self.by_task_id.insert(tid, tx_hash);
+        }
         self.order.push(tx_hash);
         Ok(())
     }
@@ -62,6 +90,9 @@ impl Mempool {
     pub fn remove(&mut self, hash: &Hash) {
         if let Some(tx) = self.by_hash.remove(hash) {
             self.by_sender_nonce.remove(&(tx.sender, tx.nonce));
+            if let Some(tid) = task_id_of(&tx) {
+                self.by_task_id.remove(&tid);
+            }
             self.order.retain(|h| h != hash);
         }
     }
@@ -77,10 +108,19 @@ impl Mempool {
         for h in &hashes {
             if let Some(tx) = self.by_hash.remove(h) {
                 self.by_sender_nonce.remove(&(tx.sender, tx.nonce));
+                if let Some(tid) = task_id_of(&tx) {
+                    self.by_task_id.remove(&tid);
+                }
                 txs.push(tx);
             }
         }
         txs
+    }
+
+    /// Returns true if an `AnchorReceipt` with this `task_id` is pending.
+    #[must_use]
+    pub fn contains_task_id(&self, task_id: &[u8; 32]) -> bool {
+        self.by_task_id.contains_key(task_id)
     }
 
     /// Returns the number of transactions in the mempool.
@@ -183,5 +223,76 @@ mod tests {
         pool.remove(&h1);
         assert_eq!(pool.len(), 0);
         assert!(!pool.contains_hash(&h1));
+    }
+
+    /// Builds an `AnchorReceipt` transaction carrying the given task id.
+    /// Signatures are irrelevant to mempool indexing tests.
+    fn make_anchor_tx(
+        sender: u8,
+        nonce: u64,
+        hash_byte: u8,
+        task_id: [u8; 32],
+    ) -> (Hash, Transaction) {
+        let receipt = mbongo_core::Receipt {
+            version: 1,
+            task_id,
+            input_commitment: [0u8; 32],
+            output_commitment: [0u8; 32],
+            executor: Address([sender; 32]),
+            metadata: vec![],
+            signature: [0u8; 64],
+        };
+        let tx = Transaction {
+            tx_type: TransactionType::AnchorReceipt,
+            sender: Address([sender; 32]),
+            receiver: Address::zero(),
+            amount: 0,
+            nonce,
+            payload: TransactionPayload::AnchorReceipt(Box::new(receipt)),
+            signature: [0u8; 64],
+        };
+        (Hash([hash_byte; 32]), tx)
+    }
+
+    #[test]
+    fn mempool_duplicate_task_id_rejected() {
+        let mut pool = Mempool::new();
+        let task_id = [0xABu8; 32];
+        let (h1, tx1) = make_anchor_tx(1, 0, 20, task_id);
+        pool.insert(h1, tx1).unwrap();
+        assert!(pool.contains_task_id(&task_id));
+
+        // Different sender/nonce/hash, same task_id → DuplicateTaskId.
+        let (h2, tx2) = make_anchor_tx(2, 0, 21, task_id);
+        let err = pool.insert(h2, tx2).unwrap_err();
+        assert!(matches!(err, MempoolError::DuplicateTaskId));
+        assert_eq!(pool.len(), 1);
+    }
+
+    #[test]
+    fn mempool_drain_clears_task_id_index() {
+        let mut pool = Mempool::new();
+        let task_id = [0xACu8; 32];
+        let (h1, tx1) = make_anchor_tx(1, 0, 22, task_id);
+        pool.insert(h1, tx1).unwrap();
+
+        let drained = pool.drain_for_block(10);
+        assert_eq!(drained.len(), 1);
+        assert!(!pool.contains_task_id(&task_id));
+
+        // After draining, the same task_id can be inserted again.
+        let (h2, tx2) = make_anchor_tx(1, 1, 23, task_id);
+        pool.insert(h2, tx2).unwrap();
+    }
+
+    #[test]
+    fn mempool_remove_clears_task_id_index() {
+        let mut pool = Mempool::new();
+        let task_id = [0xADu8; 32];
+        let (h1, tx1) = make_anchor_tx(1, 0, 24, task_id);
+        pool.insert(h1, tx1).unwrap();
+        pool.remove(&h1);
+        assert!(!pool.contains_task_id(&task_id));
+        assert_eq!(pool.len(), 0);
     }
 }

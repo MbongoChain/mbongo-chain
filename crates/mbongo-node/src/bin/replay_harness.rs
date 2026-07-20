@@ -169,6 +169,45 @@ async fn main() {
     }
 }
 
+/// Builds a fully valid `AnchorReceipt` transaction from the dev account
+/// (the pre-funded key `[0xAA; 32]`, matching `ensure_genesis`). Returns
+/// the transaction as RPC JSON, the task id, and the canonical SCALE
+/// receipt bytes for the replay comparison.
+fn build_anchor_tx(nonce: u64, task_id: [u8; 32]) -> (Value, [u8; 32], Vec<u8>) {
+    use ed25519_dalek::{Signer, SigningKey};
+    use mbongo_core::{Address, Receipt, Transaction, TransactionPayload, TransactionType};
+    use parity_scale_codec::Encode;
+
+    let sk = SigningKey::from_bytes(&[0xAAu8; 32]);
+    let sender = Address(sk.verifying_key().to_bytes());
+
+    let mut receipt = Receipt {
+        version: 1,
+        task_id,
+        input_commitment: [0x10u8; 32],
+        output_commitment: [0x20u8; 32],
+        executor: sender,
+        metadata: b"replay-harness".to_vec(),
+        signature: [0u8; 64],
+    };
+    receipt.signature = sk.sign(&receipt.receipt_hash().0).to_bytes();
+    let receipt_bytes = receipt.encode();
+
+    let mut tx = Transaction {
+        tx_type: TransactionType::AnchorReceipt,
+        sender,
+        receiver: Address::zero(),
+        amount: 0,
+        nonce,
+        payload: TransactionPayload::AnchorReceipt(Box::new(receipt)),
+        signature: [0u8; 64],
+    };
+    tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+
+    let tx_json = serde_json::to_value(&tx).expect("transaction serializes");
+    (tx_json, task_id, receipt_bytes)
+}
+
 async fn run_replay(client: &Client, producer_dir: &std::path::Path) -> Result<(), String> {
     // ── Phase A: Produce chain ──────────────────────────────────────────
 
@@ -177,6 +216,14 @@ async fn run_replay(client: &Client, producer_dir: &std::path::Path) -> Result<(
 
     wait_for_rpc(client).await?;
     println!("  Producer RPC ready");
+
+    // Submit one AnchorReceipt from the dev account so the chain carries
+    // receipt state (RFC 0002 Phase 3 replay coverage).
+    let (anchor_tx_json, anchor_task_id, anchor_receipt_bytes) = build_anchor_tx(0, [0x5Eu8; 32]);
+    rpc_call(client, "submit_transaction", Some(anchor_tx_json))
+        .await
+        .map_err(|e| format!("anchor submission failed: {e}"))?;
+    println!("  AnchorReceipt submitted (task_id 0x5e..5e)");
 
     println!("  Waiting {WAIT_PRODUCTION_SECS}s for block production...");
     sleep(Duration::from_secs(WAIT_PRODUCTION_SECS)).await;
@@ -275,6 +322,7 @@ async fn run_replay(client: &Client, producer_dir: &std::path::Path) -> Result<(
     // This is valid because the blocks were already validated by the producer.
     // We're testing that the exported data, when stored, produces the same tip.
 
+    let mut replayed_receipts: u64 = 0;
     for (i, block_json) in exported_blocks.iter().enumerate().skip(1) {
         let block: Block = serde_json::from_value(block_json.clone())
             .map_err(|e| format!("failed to deserialize block {i}: {e}"))?;
@@ -304,6 +352,27 @@ async fn run_replay(client: &Client, producer_dir: &std::path::Path) -> Result<(
             ));
         }
 
+        // Reconstruct receipt state: the receipts index is fully derived
+        // from chain blocks (RFC 0002 §5), so replaying a block anchors
+        // the canonical SCALE bytes of every embedded receipt.
+        {
+            use mbongo_core::TransactionPayload;
+            use mbongo_storage::BatchOp;
+            use parity_scale_codec::Encode;
+            let mut receipt_ops = Vec::new();
+            for tx in &block.body.transactions {
+                if let TransactionPayload::AnchorReceipt(receipt) = &tx.payload {
+                    receipt_ops.push(BatchOp::PutReceipt(receipt.task_id, receipt.encode()));
+                    replayed_receipts += 1;
+                }
+            }
+            if !receipt_ops.is_empty() {
+                replay_storage
+                    .write_batch(receipt_ops)
+                    .map_err(|e| format!("storage error: {e}"))?;
+            }
+        }
+
         // Store the block.
         replay_storage
             .put_block(&block_hash, &block)
@@ -316,6 +385,7 @@ async fn run_replay(client: &Client, producer_dir: &std::path::Path) -> Result<(
             println!("  Replayed block {i}/{}", exported_blocks.len() - 1);
         }
     }
+    println!("  Replayed {replayed_receipts} anchored receipt(s)");
 
     println!("  Phase C: DONE\n");
 
@@ -347,6 +417,27 @@ async fn run_replay(client: &Client, producer_dir: &std::path::Path) -> Result<(
             "tip hash mismatch: replay={replay_tip_hash}, original={original_tip_hash}"
         ));
     }
+
+    // Receipt state comparison (RFC 0002 Phase 3): the submitted anchor
+    // must have been included by the producer, and the replayed receipt
+    // bytes must equal the canonical SCALE encoding submitted.
+    if replayed_receipts == 0 {
+        return Err("submitted AnchorReceipt was not included in any exported block".to_string());
+    }
+    if !replay_storage
+        .has_receipt(&anchor_task_id)
+        .map_err(|e| format!("storage error: {e}"))?
+    {
+        return Err("replayed chain is missing the anchored receipt".to_string());
+    }
+    let replayed_bytes = replay_storage
+        .get_receipt(&anchor_task_id)
+        .map_err(|e| format!("storage error: {e}"))?
+        .ok_or("anchored receipt bytes missing after replay")?;
+    if replayed_bytes != anchor_receipt_bytes {
+        return Err("replayed receipt bytes differ from canonical encoding".to_string());
+    }
+    println!("  Receipt state: anchored receipt reproduced byte-for-byte");
 
     println!("  Phase D: PASS");
     Ok(())

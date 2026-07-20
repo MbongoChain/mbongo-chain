@@ -103,12 +103,24 @@ fn preflight_ports(config: &NodeConfig) -> Result<(), String> {
 // ── RPC helpers ─────────────────────────────────────────────────────────
 
 async fn rpc_call(client: &Client, port: u16, method: &str) -> Result<Value, String> {
+    rpc_call_with_params(client, port, method, None).await
+}
+
+async fn rpc_call_with_params(
+    client: &Client,
+    port: u16,
+    method: &str,
+    params: Option<Value>,
+) -> Result<Value, String> {
     let url = format!("http://127.0.0.1:{port}/rpc");
-    let body = json!({
+    let mut body = json!({
         "jsonrpc": "2.0",
         "method": method,
         "id": 1
     });
+    if let Some(p) = params {
+        body["params"] = p;
+    }
 
     let resp = client
         .post(&url)
@@ -526,6 +538,113 @@ async fn await_convergence(
     }
 }
 
+// ── Receipt traffic (RFC 0002 Phase 3) ──────────────────────────────────
+
+/// Builds a fully valid `AnchorReceipt` transaction from the dev account
+/// (`[0xAA; 32]`, pre-funded by `ensure_genesis`) as RPC JSON.
+fn build_anchor_tx(nonce: u64, task_id: [u8; 32]) -> Value {
+    use ed25519_dalek::{Signer, SigningKey};
+    use mbongo_core::{Address, Receipt, Transaction, TransactionPayload, TransactionType};
+
+    let sk = SigningKey::from_bytes(&[0xAAu8; 32]);
+    let sender = Address(sk.verifying_key().to_bytes());
+
+    let mut receipt = Receipt {
+        version: 1,
+        task_id,
+        input_commitment: [0x10u8; 32],
+        output_commitment: [0x20u8; 32],
+        executor: sender,
+        metadata: b"devnet-harness".to_vec(),
+        signature: [0u8; 64],
+    };
+    receipt.signature = sk.sign(&receipt.receipt_hash().0).to_bytes();
+
+    let mut tx = Transaction {
+        tx_type: TransactionType::AnchorReceipt,
+        sender,
+        receiver: Address::zero(),
+        amount: 0,
+        nonce,
+        payload: TransactionPayload::AnchorReceipt(Box::new(receipt)),
+        signature: [0u8; 64],
+    };
+    tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+    serde_json::to_value(&tx).expect("transaction serializes")
+}
+
+/// Returns whether the block chain visible on `port` contains an
+/// `AnchorReceipt` transaction with the given task id. Scans blocks
+/// 1..=height via `get_block_by_height` (no receipt RPC exists until
+/// RFC 0002 Phase 4, so inclusion — plus tip-hash convergence — is the
+/// cross-node receipt-state check).
+async fn anchor_visible(
+    client: &Client,
+    port: u16,
+    task_id: [u8; 32],
+) -> Result<Option<u64>, String> {
+    let expected = json!(task_id.to_vec());
+    let height = get_height(client, port).await?;
+    for h in 1..=height {
+        let block = rpc_call_with_params(
+            client,
+            port,
+            "get_block_by_height",
+            Some(json!({"height": h})),
+        )
+        .await?;
+        if let Some(txs) = block["body"]["transactions"].as_array() {
+            for tx in txs {
+                if tx["payload"]["AnchorReceipt"]["task_id"] == expected {
+                    return Ok(Some(h));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Polls until the anchor with `task_id` is visible in a block on every
+/// node, at the same height everywhere. Bounded by the convergence
+/// deadline; on timeout reports per-node visibility.
+async fn await_anchor_on_all(
+    client: &Client,
+    nodes: &[(&str, u16)],
+    task_id: [u8; 32],
+) -> Result<u64, String> {
+    let start = std::time::Instant::now();
+    let deadline = Duration::from_secs(CONVERGENCE_TIMEOUT_SECS);
+    loop {
+        let mut heights: Vec<(String, Option<u64>)> = Vec::new();
+        for (name, port) in nodes {
+            heights.push((
+                (*name).to_string(),
+                anchor_visible(client, *port, task_id).await?,
+            ));
+        }
+        if let Some(first) = heights[0].1 {
+            if heights.iter().all(|(_, h)| *h == Some(first)) {
+                println!(
+                    "  Anchor visible on all nodes at height {first} ({:.1}s)",
+                    start.elapsed().as_secs_f64()
+                );
+                return Ok(first);
+            }
+        }
+        if start.elapsed() >= deadline {
+            let state = heights
+                .iter()
+                .map(|(n, h)| format!("    {n}: {h:?}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Err(format!(
+                "anchor not visible on all nodes within {CONVERGENCE_TIMEOUT_SECS}s:\n{state}"
+            ));
+        }
+        sleep(Duration::from_millis(CONVERGENCE_POLL_INTERVAL_MS)).await;
+    }
+}
+
 // ── Cleanup ─────────────────────────────────────────────────────────────
 
 fn cleanup_data_dirs(dirs: &[PathBuf]) {
@@ -661,6 +780,20 @@ async fn run_harness(client: &Client, data_dirs: &[PathBuf]) -> Result<(), Strin
          up to {CONVERGENCE_TIMEOUT_SECS}s)..."
     );
     let phase2_height = await_convergence(client, &nodes, MIN_HEIGHT).await?;
+
+    // Receipt traffic (RFC 0002 Phase 3): anchor task A from the dev
+    // account and require it to be visible in a block on every node.
+    let task_a = [0xA1u8; 32];
+    println!("Phase 2: Submitting AnchorReceipt (task A)...");
+    rpc_call_with_params(
+        client,
+        PRODUCER_RPC,
+        "submit_transaction",
+        Some(build_anchor_tx(0, task_a)),
+    )
+    .await
+    .map_err(|e| format!("anchor A submission failed: {e}"))?;
+    await_anchor_on_all(client, &nodes, task_a).await?;
     println!("  Phase 2: PASS\n");
 
     // ── Phase 3: Restart producer ───────────────────────────────────────
@@ -690,6 +823,42 @@ async fn run_harness(client: &Client, data_dirs: &[PathBuf]) -> Result<(), Strin
          (baseline {restart_baseline}, floor {phase3_floor})..."
     );
     let phase3_height = await_convergence(client, &nodes, phase3_floor).await?;
+
+    // Receipt state survived the producer restart: re-anchoring task A
+    // must be rejected at admission by the persistent duplicate check.
+    println!("Phase 3: Re-submitting task A (must be rejected as already anchored)...");
+    match rpc_call_with_params(
+        client,
+        PRODUCER_RPC,
+        "submit_transaction",
+        Some(build_anchor_tx(1, task_a)),
+    )
+    .await
+    {
+        Ok(_) => {
+            return Err(
+                "duplicate task_id was accepted after restart: receipt state lost".to_string(),
+            );
+        }
+        Err(e) if e.contains("already anchored") => {
+            println!("  Duplicate correctly rejected: receipt state persisted across restart");
+        }
+        Err(e) => return Err(format!("unexpected rejection for duplicate anchor: {e}")),
+    }
+
+    // Post-restart anchoring still works end-to-end: task B converges on
+    // all nodes (including followers syncing the new block).
+    let task_b = [0xB2u8; 32];
+    println!("Phase 3: Submitting AnchorReceipt (task B)...");
+    rpc_call_with_params(
+        client,
+        PRODUCER_RPC,
+        "submit_transaction",
+        Some(build_anchor_tx(1, task_b)),
+    )
+    .await
+    .map_err(|e| format!("anchor B submission failed: {e}"))?;
+    await_anchor_on_all(client, &nodes, task_b).await?;
     println!("  Phase 3: PASS\n");
 
     // ── Phase 4: Restart follower ───────────────────────────────────────
@@ -719,6 +888,12 @@ async fn run_harness(client: &Client, data_dirs: &[PathBuf]) -> Result<(), Strin
          (baseline {follower_baseline}, floor {phase4_floor})..."
     );
     await_convergence(client, &nodes, phase4_floor).await?;
+
+    // The restarted follower resynced the full receipt-bearing chain:
+    // both anchors must be visible on all nodes.
+    println!("Phase 4: Verifying anchored receipts on all nodes...");
+    await_anchor_on_all(client, &nodes, task_a).await?;
+    await_anchor_on_all(client, &nodes, task_b).await?;
     println!("  Phase 4: PASS\n");
 
     // ── Cleanup: kill all remaining ─────────────────────────────────────

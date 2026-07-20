@@ -10,12 +10,13 @@ use mbongo_api::rest::{
     Transaction as RestTransaction, Validator,
 };
 use mbongo_core::{
-    compute_transactions_root, Account, Address, Block, BlockBody, BlockHeader, Hash, Transaction,
-    TransactionType,
+    compute_transactions_root, Account, Address, Block, BlockBody, BlockHeader, Hash, Receipt,
+    Transaction, TransactionPayload, TransactionType,
 };
 use mbongo_network::rpc::{BackendError, RpcBackend};
 use mbongo_network::BlockBroadcaster;
-use mbongo_storage::{BatchOp, Storage};
+use mbongo_storage::{BatchOp, Storage, StorageError};
+use mbongo_verification::{verify_receipt_signature, ReceiptError, ReceiptIndex, RECEIPT_VERSION};
 use parity_scale_codec::Encode;
 use tokio::sync::RwLock;
 
@@ -23,6 +24,63 @@ use crate::mempool::{Mempool, MempoolError};
 
 /// Maximum transactions per block.
 const MAX_TX_PER_BLOCK: usize = 1000;
+
+/// Maximum `receipt.metadata` length in bytes (RFC 0002 §3, maintainer-
+/// approved value). This is a consensus validity rule of the anchoring
+/// protocol, not intrinsic receipt validity: raising it is a protocol
+/// version bump, and it is never lowered retroactively.
+const MAX_RECEIPT_METADATA_BYTES: usize = 4096;
+
+/// Where a duplicate `task_id` was found (RFC 0002 §2 rules i/j).
+enum DuplicateSource {
+    /// Anchored in persistent chain state as of the parent block (rule i).
+    PriorState,
+    /// Anchored by an earlier transaction in the current block (rule j).
+    CurrentBlock,
+}
+
+/// Composite read-only receipt index (RFC 0002 §4): the union of prior
+/// persistent state and receipts anchored earlier in the current block.
+/// Never mutated by validation; `pending` is the transient per-block set.
+struct CompositeReceiptIndex<'a, S: Storage> {
+    storage: &'a S,
+    pending: &'a std::collections::HashSet<[u8; 32]>,
+}
+
+impl<S: Storage> CompositeReceiptIndex<'_, S> {
+    /// Locates a duplicate, prior state first (normative rule i before j).
+    fn locate(&self, task_id: &[u8; 32]) -> Result<Option<DuplicateSource>, StorageError> {
+        if self.storage.has_receipt(task_id)? {
+            return Ok(Some(DuplicateSource::PriorState));
+        }
+        if self.pending.contains(task_id) {
+            return Ok(Some(DuplicateSource::CurrentBlock));
+        }
+        Ok(None)
+    }
+}
+
+impl<S: Storage> ReceiptIndex for CompositeReceiptIndex<'_, S> {
+    fn contains_task_id(&self, task_id: &[u8; 32]) -> Result<bool, ReceiptError> {
+        self.locate(task_id)
+            .map(|source| source.is_some())
+            .map_err(|e| ReceiptError::Index(e.to_string()))
+    }
+}
+
+/// Rule (a) of RFC 0002 §2: the payload variant must match the transaction
+/// type. Returns the embedded receipt for `AnchorReceipt` transactions,
+/// `None` for well-formed non-anchor transactions, or an error on mismatch.
+fn check_type_payload(tx: &Transaction) -> Result<Option<&Receipt>, ()> {
+    match (tx.tx_type, &tx.payload) {
+        (TransactionType::AnchorReceipt, TransactionPayload::AnchorReceipt(receipt)) => {
+            Ok(Some(receipt))
+        }
+        (TransactionType::AnchorReceipt, TransactionPayload::None)
+        | (_, TransactionPayload::AnchorReceipt(_)) => Err(()),
+        (_, TransactionPayload::None) => Ok(None),
+    }
+}
 
 /// Node backend backed by a [`Storage`] implementation.
 ///
@@ -193,73 +251,162 @@ impl<S: Storage> NodeBackend<S> {
         let mut account_cache: std::collections::HashMap<Address, Account> =
             std::collections::HashMap::new();
 
+        // Transaction-sequence baseline: read ONCE before the loop and
+        // advanced locally. The persistent counter is committed only in
+        // the final atomic batch (SetTxSeq + SetLastIncludedTxSeq below).
         let mut last_seq = storage
             .get_last_included_tx_seq()
             .map_err(|e| ApplyBlockError::Storage(e.to_string()))?;
 
+        // Transient set of task_ids anchored earlier in THIS block, in body
+        // order (RFC 0002 §4). Discarded when validation ends — success or
+        // failure; rule (j) consults it, and it never touches storage.
+        let mut pending_task_ids: std::collections::HashSet<[u8; 32]> =
+            std::collections::HashSet::new();
+
         for (i, tx) in block.body.transactions.iter().enumerate() {
-            // TEMPORARY execution barrier (RFC 0002 Phase 2): AnchorReceipt
-            // transactions are valid *data* (encodable, signable, hashable)
-            // but their consensus rules do not exist until Phase 3. They
-            // must never fall through to the transfer execution path below,
-            // so the whole block is rejected deterministically. Phase 3
-            // replaces this barrier with the normative validation dispatch.
-            if tx.tx_type == TransactionType::AnchorReceipt {
-                return Err(ApplyBlockError::AnchorReceiptNotActivated(i));
+            // (a) Type/form (RFC 0002 §2): AnchorReceipt requires an
+            // AnchorReceipt payload; every other type requires None.
+            let Ok(anchor_receipt) = check_type_payload(tx) else {
+                return Err(ApplyBlockError::TypePayloadMismatch(i));
+            };
+
+            // (b) Anchoring field constraints: unused fields are pinned to
+            // canonical values so two encodings of the same anchoring
+            // cannot differ.
+            if anchor_receipt.is_some() && (tx.amount != 0 || tx.receiver != Address::zero()) {
+                return Err(ApplyBlockError::AnchorFieldConstraint(i));
             }
 
-            // Signature validation.
+            // (c) Transaction signature.
             if !tx.verify_signature() {
                 return Err(ApplyBlockError::InvalidSignature(i));
             }
 
             let tx_hash = compute_tx_hash(tx);
 
-            // Skip if already persisted (idempotent re-apply guard).
+            // Already-stored transaction handling. For non-anchor types
+            // this is the v0.2 idempotent skip (unchanged this phase).
+            // An AnchorReceipt must NOT take the skip path: a stored
+            // anchor transaction implies its receipt is anchored (both
+            // commit in one atomic batch), so re-including it — even
+            // byte-identically — violates global task_id uniqueness and
+            // is rejected with the same verdict rule (i) would produce.
             let already_stored = storage
                 .get_transaction(&tx_hash)
                 .map_err(|e| ApplyBlockError::Storage(e.to_string()))?
                 .is_some();
             if already_stored {
+                if anchor_receipt.is_some() {
+                    return Err(ApplyBlockError::TaskIdAlreadyAnchored(i));
+                }
                 continue;
             }
 
-            // Load sender (from cache or storage).
-            let sender_addr = tx.sender;
-            let mut sender = match account_cache.get(&sender_addr) {
-                Some(acc) => acc.clone(),
-                None => storage
-                    .get_account(&sender_addr)
+            if let Some(receipt) = anchor_receipt {
+                // ── AnchorReceipt path (RFC 0002 §2 rules d–j) ──────────
+                // (d) Nonce: the sender account must exist and the nonce
+                // must match; the nonce is consumed. No balance movement.
+                let sender_addr = tx.sender;
+                let mut sender = match account_cache.get(&sender_addr) {
+                    Some(acc) => acc.clone(),
+                    None => storage
+                        .get_account(&sender_addr)
+                        .map_err(|e| ApplyBlockError::Storage(e.to_string()))?
+                        .ok_or(ApplyBlockError::SenderAccountMissing(i))?,
+                };
+                sender
+                    .validate_and_increment_nonce(tx.nonce)
+                    .map_err(|_| ApplyBlockError::InvalidNonce(i))?;
+
+                // (e) Metadata size cap (consensus parameter, RFC 0002 §3).
+                if receipt.metadata.len() > MAX_RECEIPT_METADATA_BYTES {
+                    return Err(ApplyBlockError::ReceiptMetadataTooLarge(i));
+                }
+                // (f) Receipt version.
+                if receipt.version != RECEIPT_VERSION {
+                    return Err(ApplyBlockError::ReceiptVersionUnsupported(i));
+                }
+                // (g) Submitter identity: transaction-level anchoring rule
+                // orchestrated here, not intrinsic receipt validity.
+                if tx.sender != receipt.executor {
+                    return Err(ApplyBlockError::SenderExecutorMismatch(i));
+                }
+                // (h) Receipt signature over the raw 32-byte receipt hash.
+                if !verify_receipt_signature(receipt) {
+                    return Err(ApplyBlockError::InvalidReceiptSignature(i));
+                }
+                // (i)+(j) Duplicates via the composite index: prior chain
+                // state first, then earlier receipts in this block.
+                let index = CompositeReceiptIndex {
+                    storage: storage.as_ref(),
+                    pending: &pending_task_ids,
+                };
+                match index
+                    .locate(&receipt.task_id)
                     .map_err(|e| ApplyBlockError::Storage(e.to_string()))?
-                    .ok_or(ApplyBlockError::InsufficientBalance(i))?,
-            };
+                {
+                    Some(DuplicateSource::PriorState) => {
+                        return Err(ApplyBlockError::TaskIdAlreadyAnchored(i));
+                    }
+                    Some(DuplicateSource::CurrentBlock) => {
+                        return Err(ApplyBlockError::TaskIdRepeatedInBlock(i));
+                    }
+                    None => {}
+                }
+                pending_task_ids.insert(receipt.task_id);
 
-            sender
-                .validate_and_increment_nonce(tx.nonce)
-                .map_err(|_| ApplyBlockError::InvalidNonce(i))?;
+                // Effects: accumulated only; committed in the final atomic
+                // batch. Stored bytes are the canonical SCALE encoding;
+                // storage never decodes them. The sequence number comes
+                // from the local counter — no persistent mutation here.
+                last_seq += 1;
+                ops.push(BatchOp::PutTransaction(tx_hash, tx.clone()));
+                ops.push(BatchOp::PutTxSeqIndex(last_seq, tx_hash));
+                ops.push(BatchOp::PutReceipt(receipt.task_id, receipt.encode()));
+                account_cache.insert(sender_addr, sender);
+            } else {
+                // ── Transfer path: unchanged v0.2 semantics. ComputeTask
+                // and Stake deliberately still fall through here (RFC 0002
+                // Non-Goals). ───────────────────────────────────────────
 
-            // Load receiver (from cache or storage).
-            let receiver_addr = tx.receiver;
-            let mut receiver = match account_cache.get(&receiver_addr) {
-                Some(acc) => acc.clone(),
-                None => storage
-                    .get_account(&receiver_addr)
-                    .map_err(|e| ApplyBlockError::Storage(e.to_string()))?
-                    .unwrap_or_else(|| Account::new(receiver_addr)),
-            };
+                // Load sender (from cache or storage).
+                let sender_addr = tx.sender;
+                let mut sender = match account_cache.get(&sender_addr) {
+                    Some(acc) => acc.clone(),
+                    None => storage
+                        .get_account(&sender_addr)
+                        .map_err(|e| ApplyBlockError::Storage(e.to_string()))?
+                        .ok_or(ApplyBlockError::InsufficientBalance(i))?,
+                };
 
-            Account::transfer(&mut sender, &mut receiver, tx.amount)
-                .map_err(|_| ApplyBlockError::InsufficientBalance(i))?;
+                sender
+                    .validate_and_increment_nonce(tx.nonce)
+                    .map_err(|_| ApplyBlockError::InvalidNonce(i))?;
 
-            // Allocate sequence number (safe to leak on batch failure).
-            last_seq =
-                storage.next_tx_seq().map_err(|e| ApplyBlockError::Storage(e.to_string()))?;
+                // Load receiver (from cache or storage).
+                let receiver_addr = tx.receiver;
+                let mut receiver = match account_cache.get(&receiver_addr) {
+                    Some(acc) => acc.clone(),
+                    None => storage
+                        .get_account(&receiver_addr)
+                        .map_err(|e| ApplyBlockError::Storage(e.to_string()))?
+                        .unwrap_or_else(|| Account::new(receiver_addr)),
+                };
 
-            ops.push(BatchOp::PutTransaction(tx_hash, tx.clone()));
-            ops.push(BatchOp::PutTxSeqIndex(last_seq, tx_hash));
+                Account::transfer(&mut sender, &mut receiver, tx.amount)
+                    .map_err(|_| ApplyBlockError::InsufficientBalance(i))?;
 
-            account_cache.insert(sender_addr, sender);
-            account_cache.insert(receiver_addr, receiver);
+                // Allocate the sequence number from the local counter —
+                // no persistent mutation during validation.
+                last_seq += 1;
+
+                ops.push(BatchOp::PutTransaction(tx_hash, tx.clone()));
+                ops.push(BatchOp::PutTxSeqIndex(last_seq, tx_hash));
+
+                account_cache.insert(sender_addr, sender);
+                account_cache.insert(receiver_addr, receiver);
+            }
         }
 
         // Flush modified accounts.
@@ -268,6 +415,12 @@ impl<S: Storage> NodeBackend<S> {
         }
 
         if !block.body.transactions.is_empty() {
+            // Persist the sequence state only now, in the same atomic
+            // batch as everything else: the counter baseline was read once
+            // before the loop and advanced locally, so a rejected block
+            // leaves both meta keys byte-for-byte unchanged, and sequence
+            // values are a pure function of accepted chain history.
+            ops.push(BatchOp::SetTxSeq(last_seq));
             ops.push(BatchOp::SetLastIncludedTxSeq(last_seq));
         }
 
@@ -347,19 +500,45 @@ pub enum ApplyBlockError {
     /// The transactions_root commitment does not match the body.
     #[error("transactions_root mismatch")]
     TransactionsRootMismatch,
-    /// A transaction in the block has an invalid signature.
+    /// The payload variant does not match the transaction type (rule a).
+    #[error("payload does not match transaction type at index {0}")]
+    TypePayloadMismatch(usize),
+    /// An `AnchorReceipt` transaction has a non-zero amount or a non-zero
+    /// receiver (rule b).
+    #[error("anchor receipt requires amount 0 and zero receiver at index {0}")]
+    AnchorFieldConstraint(usize),
+    /// A transaction in the block has an invalid signature (rule c).
     #[error("invalid transaction signature at index {0}")]
     InvalidSignature(usize),
-    /// A transaction has an invalid nonce.
+    /// The sender account of an `AnchorReceipt` transaction does not exist
+    /// (rule d: the nonce rule requires an existing account).
+    #[error("anchor receipt sender account missing at index {0}")]
+    SenderAccountMissing(usize),
+    /// A transaction has an invalid nonce (rule d).
     #[error("invalid nonce at index {0}")]
     InvalidNonce(usize),
     /// A transaction has insufficient balance.
     #[error("insufficient balance at index {0}")]
     InsufficientBalance(usize),
-    /// The block contains an `AnchorReceipt` transaction, whose consensus
-    /// rules are not activated until RFC 0002 Phase 3.
-    #[error("receipt anchoring not activated until RFC 0002 Phase 3 (transaction index {0})")]
-    AnchorReceiptNotActivated(usize),
+    /// The receipt metadata exceeds `MAX_RECEIPT_METADATA_BYTES` (rule e).
+    #[error("receipt metadata too large at index {0}")]
+    ReceiptMetadataTooLarge(usize),
+    /// The receipt version is not supported (rule f).
+    #[error("unsupported receipt version at index {0}")]
+    ReceiptVersionUnsupported(usize),
+    /// The transaction sender is not the receipt executor (rule g).
+    #[error("sender must equal receipt executor at index {0}")]
+    SenderExecutorMismatch(usize),
+    /// The receipt signature does not verify (rule h).
+    #[error("invalid receipt signature at index {0}")]
+    InvalidReceiptSignature(usize),
+    /// The task id is already anchored in prior chain state (rule i).
+    #[error("task_id already anchored at index {0}")]
+    TaskIdAlreadyAnchored(usize),
+    /// The task id was anchored by an earlier transaction in the same
+    /// block (rule j).
+    #[error("task_id repeated within block at index {0}")]
+    TaskIdRepeatedInBlock(usize),
     /// Storage error.
     #[error("storage error: {0}")]
     Storage(String),
@@ -413,26 +592,44 @@ impl<S: Storage + Send + Sync + 'static> RpcBackend for NodeBackend<S> {
         let storage = Arc::clone(&self.storage);
         let mempool = Arc::clone(&self.mempool);
         async move {
-            // TEMPORARY admission barrier (RFC 0002 Phase 2): reject
-            // AnchorReceipt before it can enter the mempool. Without this,
-            // an admitted AnchorReceipt would be drained into every
-            // produced block and apply_block's barrier would reject the
-            // whole block, stalling production. Phase 3 replaces this with
-            // the normative receipt admission checks.
-            if tx.tx_type == TransactionType::AnchorReceipt {
+            // ── Admission checks mirroring apply_block's normative order
+            // (RFC 0002 §2). Admission is best-effort: consensus in
+            // apply_block stays authoritative, and nothing here mutates
+            // storage. ─────────────────────────────────────────────────
+
+            // (a) Type/form.
+            let Ok(anchor_receipt) = check_type_payload(&tx) else {
                 return Err(BackendError::Internal(
-                    "receipt anchoring not activated until RFC 0002 Phase 3".to_string(),
+                    "payload does not match transaction type".to_string(),
+                ));
+            };
+            // (b) Anchoring field constraints.
+            if anchor_receipt.is_some() && (tx.amount != 0 || tx.receiver != Address::zero()) {
+                return Err(BackendError::Internal(
+                    "anchor receipt requires amount 0 and zero receiver".to_string(),
                 ));
             }
+            // Copy what the anchor checks below need so the borrow of `tx`
+            // ends before it is moved into the mempool.
+            let anchor = anchor_receipt.map(|r| (r.clone(), r.task_id));
 
             let tx_hash = compute_tx_hash(&tx);
 
-            // Idempotence: if already in storage (included in a block), return the hash.
+            // Already-included transaction handling. Non-anchor types keep
+            // the idempotent success (return the hash). Re-submitting an
+            // anchored AnchorReceipt — even byte-identically — is a
+            // duplicate anchoring attempt and is rejected, mirroring
+            // apply_block's stored-anchor rejection.
             if storage
                 .get_transaction(&tx_hash)
                 .map_err(|_| BackendError::Internal("storage error".to_string()))?
                 .is_some()
             {
+                if anchor.is_some() {
+                    return Err(BackendError::Internal(
+                        "task_id already anchored".to_string(),
+                    ));
+                }
                 return Ok(tx_hash.to_string());
             }
 
@@ -453,9 +650,46 @@ impl<S: Storage + Send + Sync + 'static> RpcBackend for NodeBackend<S> {
                 return Err(BackendError::Internal("invalid nonce".to_string()));
             }
 
-            // Validate balance.
+            // Validate balance. (Vacuous for AnchorReceipt: amount is 0.)
             if sender.balance < tx.amount {
                 return Err(BackendError::Internal("insufficient balance".to_string()));
+            }
+
+            // Anchor-specific admission (rules e–i; RFC 0002 §2).
+            if let Some((receipt, task_id)) = &anchor {
+                // (e) Metadata size cap.
+                if receipt.metadata.len() > MAX_RECEIPT_METADATA_BYTES {
+                    return Err(BackendError::Internal(
+                        "receipt metadata too large".to_string(),
+                    ));
+                }
+                // (f) Receipt version.
+                if receipt.version != RECEIPT_VERSION {
+                    return Err(BackendError::Internal(
+                        "unsupported receipt version".to_string(),
+                    ));
+                }
+                // (g) Submitter identity.
+                if tx.sender != receipt.executor {
+                    return Err(BackendError::Internal(
+                        "sender must equal receipt executor".to_string(),
+                    ));
+                }
+                // (h) Receipt signature.
+                if !verify_receipt_signature(receipt) {
+                    return Err(BackendError::Internal(
+                        "invalid receipt signature".to_string(),
+                    ));
+                }
+                // (i) Already anchored in persistent state (read-only).
+                if storage
+                    .has_receipt(task_id)
+                    .map_err(|_| BackendError::Internal("storage error".to_string()))?
+                {
+                    return Err(BackendError::Internal(
+                        "task_id already anchored".to_string(),
+                    ));
+                }
             }
 
             // Insert into mempool. Idempotent: if already in mempool, return hash.
@@ -463,12 +697,25 @@ impl<S: Storage + Send + Sync + 'static> RpcBackend for NodeBackend<S> {
             if pool.contains_hash(&tx_hash) {
                 return Ok(tx_hash.to_string());
             }
+            // Mempool-pending duplicate task_id guard: without it, two
+            // pending receipts for one task_id would be drained into the
+            // same block and rule (j) would reject the whole block.
+            if let Some((_, task_id)) = &anchor {
+                if pool.contains_task_id(task_id) {
+                    return Err(BackendError::Internal(
+                        "task_id already pending".to_string(),
+                    ));
+                }
+            }
             pool.insert(tx_hash, tx).map_err(|e| match e {
                 MempoolError::DuplicateHash => {
                     BackendError::Internal("duplicate transaction".to_string())
                 }
                 MempoolError::DuplicateSenderNonce => {
                     BackendError::Internal("duplicate sender nonce".to_string())
+                }
+                MempoolError::DuplicateTaskId => {
+                    BackendError::Internal("task_id already pending".to_string())
                 }
             })?;
 
@@ -1394,20 +1641,32 @@ mod tests {
         }
     }
 
-    /// Builds a validly signed `AnchorReceipt` transaction. The receipt is
-    /// inert data in Phase 2; only the transaction signature needs to be
-    /// valid to prove the barrier (not the signature check) rejects it.
-    fn signed_anchor_receipt_tx(sender_sk: &SigningKey, nonce: u64) -> Transaction {
-        let sender = Address(sender_sk.verifying_key().to_bytes());
-        let receipt = Receipt {
-            version: 1,
-            task_id: [0x77u8; 32],
+    /// Builds a receipt with the given fields, signed by `executor_sk`
+    /// over the raw receipt hash (valid receipt signature).
+    fn signed_receipt_for(
+        executor_sk: &SigningKey,
+        task_id: [u8; 32],
+        metadata: Vec<u8>,
+        version: u8,
+    ) -> Receipt {
+        let executor = Address(executor_sk.verifying_key().to_bytes());
+        let mut receipt = Receipt {
+            version,
+            task_id,
             input_commitment: [1u8; 32],
             output_commitment: [2u8; 32],
-            executor: sender,
-            metadata: vec![],
+            executor,
+            metadata,
             signature: [0u8; 64],
         };
+        receipt.signature = executor_sk.sign(&receipt.receipt_hash().0).to_bytes();
+        receipt
+    }
+
+    /// Wraps a receipt in a canonically formed `AnchorReceipt` transaction
+    /// (amount 0, zero receiver) signed by `sk`.
+    fn signed_anchor_tx(sk: &SigningKey, nonce: u64, receipt: Receipt) -> Transaction {
+        let sender = Address(sk.verifying_key().to_bytes());
         let mut tx = Transaction {
             tx_type: TransactionType::AnchorReceipt,
             sender,
@@ -1417,112 +1676,822 @@ mod tests {
             payload: TransactionPayload::AnchorReceipt(Box::new(receipt)),
             signature: [0u8; 64],
         };
-        tx.signature = sender_sk.sign(&tx.signing_payload()).to_bytes();
+        tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
         tx
     }
 
+    /// Fully valid anchor transaction: sender == executor, both signatures
+    /// valid, canonical fields.
+    fn valid_anchor_tx(sk: &SigningKey, nonce: u64, task_id: [u8; 32]) -> Transaction {
+        signed_anchor_tx(sk, nonce, signed_receipt_for(sk, task_id, vec![1, 2, 3], 1))
+    }
+
+    /// Funds an account for `sk` with the given balance.
+    fn fund(backend: &NodeBackend<InMemoryStorage>, sk: &SigningKey, balance: u128) -> Address {
+        let addr = Address(sk.verifying_key().to_bytes());
+        let mut acc = Account::new(addr);
+        acc.balance = balance;
+        backend.storage.put_account(&addr, &acc).unwrap();
+        addr
+    }
+
+    // ── RFC 0002 Phase 3: validation order and typed errors ──────────
+
     #[test]
-    fn apply_block_rejects_anchor_receipt() {
+    fn wrong_type_payload_pairing_rejected() {
         let backend = make_backend();
         backend.ensure_genesis().unwrap();
-
         let sk = SigningKey::from_bytes(&[60u8; 32]);
-        let sender_addr = Address(sk.verifying_key().to_bytes());
-        let mut acc = Account::new(sender_addr);
-        acc.balance = 5000;
-        backend.storage.put_account(&sender_addr, &acc).unwrap();
+        fund(&backend, &sk, 5000);
 
-        let tx = signed_anchor_receipt_tx(&sk, 0);
-        // The transaction signature is valid: the Phase 2 barrier, not the
-        // signature check, must be what rejects the block.
-        assert!(tx.verify_signature());
-        let task_id = [0x77u8; 32];
-
+        // AnchorReceipt type with None payload.
+        let mut tx = valid_anchor_tx(&sk, 0, [0x70u8; 32]);
+        tx.payload = TransactionPayload::None;
+        tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
         let block = build_valid_block(&backend, vec![tx]);
-        let result = backend.apply_block(&block);
         assert!(matches!(
-            result,
-            Err(ApplyBlockError::AnchorReceiptNotActivated(0))
+            backend.apply_block(&block),
+            Err(ApplyBlockError::TypePayloadMismatch(0))
         ));
 
-        // Nothing was applied: height, balance, nonce, receipts untouched.
-        assert_eq!(backend.storage.get_latest_height().unwrap(), 0);
-        let sender = backend.storage.get_account(&sender_addr).unwrap().unwrap();
-        assert_eq!(sender.balance, 5000);
-        assert_eq!(sender.nonce, 0);
-        assert!(!backend.storage.has_receipt(&task_id).unwrap());
+        // Transfer type carrying an AnchorReceipt payload.
+        let receipt = signed_receipt_for(&sk, [0x71u8; 32], vec![], 1);
+        let mut tx = signed_transfer(&sk, Address([9u8; 32]), 1, 0);
+        tx.payload = TransactionPayload::AnchorReceipt(Box::new(receipt));
+        tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+        let block = build_valid_block(&backend, vec![tx]);
+        assert!(matches!(
+            backend.apply_block(&block),
+            Err(ApplyBlockError::TypePayloadMismatch(0))
+        ));
     }
 
     #[test]
-    fn anchor_receipt_block_fails_atomically() {
+    fn anchor_field_constraints_rejected() {
         let backend = make_backend();
         backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        fund(&backend, &sk, 5000);
 
-        let transfer_sk = SigningKey::from_bytes(&[61u8; 32]);
-        let transfer_sender = Address(transfer_sk.verifying_key().to_bytes());
-        let receiver_addr = Address([62u8; 32]);
-        let mut acc = Account::new(transfer_sender);
-        acc.balance = 5000;
-        backend.storage.put_account(&transfer_sender, &acc).unwrap();
-
-        let anchor_sk = SigningKey::from_bytes(&[63u8; 32]);
-        let anchor_sender = Address(anchor_sk.verifying_key().to_bytes());
-        let mut anchor_acc = Account::new(anchor_sender);
-        anchor_acc.balance = 100;
-        backend.storage.put_account(&anchor_sender, &anchor_acc).unwrap();
-
-        // Valid transfer first, AnchorReceipt second: the barrier fires at
-        // index 1 and the whole block — including the valid transfer —
-        // must leave no trace.
-        let transfer = signed_transfer(&transfer_sk, receiver_addr, 200, 0);
-        let anchor = signed_anchor_receipt_tx(&anchor_sk, 0);
-        let block = build_valid_block(&backend, vec![transfer.clone(), anchor]);
-
-        let result = backend.apply_block(&block);
+        // Non-zero amount.
+        let mut tx = valid_anchor_tx(&sk, 0, [0x72u8; 32]);
+        tx.amount = 1;
+        tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+        let block = build_valid_block(&backend, vec![tx]);
         assert!(matches!(
-            result,
-            Err(ApplyBlockError::AnchorReceiptNotActivated(1))
+            backend.apply_block(&block),
+            Err(ApplyBlockError::AnchorFieldConstraint(0))
         ));
 
+        // Non-zero receiver.
+        let mut tx = valid_anchor_tx(&sk, 0, [0x73u8; 32]);
+        tx.receiver = Address([9u8; 32]);
+        tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+        let block = build_valid_block(&backend, vec![tx]);
+        assert!(matches!(
+            backend.apply_block(&block),
+            Err(ApplyBlockError::AnchorFieldConstraint(0))
+        ));
+    }
+
+    #[test]
+    fn tx_signature_precedes_receipt_signature() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        fund(&backend, &sk, 5000);
+
+        // Both signatures invalid: rule (c) fires before rule (h).
+        let receipt = signed_receipt_for(&sk, [0x74u8; 32], vec![], 1);
+        let mut tx = signed_anchor_tx(
+            &sk,
+            0,
+            Receipt {
+                signature: [0xEEu8; 64], // invalid receipt signature
+                ..receipt
+            },
+        );
+        tx.signature = [0xEEu8; 64]; // invalid transaction signature
+        let block = build_valid_block(&backend, vec![tx]);
+        assert!(matches!(
+            backend.apply_block(&block),
+            Err(ApplyBlockError::InvalidSignature(0))
+        ));
+    }
+
+    #[test]
+    fn nonce_precedes_receipt_signature() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        fund(&backend, &sk, 5000);
+
+        // Wrong nonce and invalid receipt signature: rule (d) fires first.
+        let receipt = signed_receipt_for(&sk, [0x75u8; 32], vec![], 1);
+        let tx = signed_anchor_tx(
+            &sk,
+            5,
+            Receipt {
+                signature: [0xEEu8; 64],
+                ..receipt
+            },
+        );
+        let block = build_valid_block(&backend, vec![tx]);
+        assert!(matches!(
+            backend.apply_block(&block),
+            Err(ApplyBlockError::InvalidNonce(0))
+        ));
+    }
+
+    #[test]
+    fn metadata_cap_enforced() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        fund(&backend, &sk, 5000);
+
+        // 4097 bytes: rejected at rule (e).
+        let receipt = signed_receipt_for(&sk, [0x76u8; 32], vec![0u8; 4097], 1);
+        let tx = signed_anchor_tx(&sk, 0, receipt);
+        let block = build_valid_block(&backend, vec![tx]);
+        assert!(matches!(
+            backend.apply_block(&block),
+            Err(ApplyBlockError::ReceiptMetadataTooLarge(0))
+        ));
+
+        // Exactly 4096 bytes: accepted.
+        let receipt = signed_receipt_for(&sk, [0x76u8; 32], vec![0u8; 4096], 1);
+        let tx = signed_anchor_tx(&sk, 0, receipt);
+        let block = build_valid_block(&backend, vec![tx]);
+        backend.apply_block(&block).unwrap();
+        assert!(backend.storage.has_receipt(&[0x76u8; 32]).unwrap());
+    }
+
+    #[test]
+    fn wrong_receipt_version_rejected() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        fund(&backend, &sk, 5000);
+
+        // Version 2, correctly signed over the version-2 hash: rule (f)
+        // fires, not the signature rule.
+        let receipt = signed_receipt_for(&sk, [0x77u8; 32], vec![], 2);
+        let tx = signed_anchor_tx(&sk, 0, receipt);
+        let block = build_valid_block(&backend, vec![tx]);
+        assert!(matches!(
+            backend.apply_block(&block),
+            Err(ApplyBlockError::ReceiptVersionUnsupported(0))
+        ));
+    }
+
+    #[test]
+    fn sender_executor_mismatch_rejected() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        fund(&backend, &sk, 5000);
+
+        // Receipt validly signed by a DIFFERENT executor: rule (g) fires.
+        let other = SigningKey::from_bytes(&[61u8; 32]);
+        let receipt = signed_receipt_for(&other, [0x78u8; 32], vec![], 1);
+        let tx = signed_anchor_tx(&sk, 0, receipt);
+        let block = build_valid_block(&backend, vec![tx]);
+        assert!(matches!(
+            backend.apply_block(&block),
+            Err(ApplyBlockError::SenderExecutorMismatch(0))
+        ));
+    }
+
+    #[test]
+    fn invalid_receipt_signature_rejected() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        fund(&backend, &sk, 5000);
+
+        let receipt = signed_receipt_for(&sk, [0x79u8; 32], vec![], 1);
+        let tx = signed_anchor_tx(
+            &sk,
+            0,
+            Receipt {
+                signature: [0xEEu8; 64],
+                ..receipt
+            },
+        );
+        let block = build_valid_block(&backend, vec![tx]);
+        assert!(matches!(
+            backend.apply_block(&block),
+            Err(ApplyBlockError::InvalidReceiptSignature(0))
+        ));
+        assert!(!backend.storage.has_receipt(&[0x79u8; 32]).unwrap());
+    }
+
+    #[test]
+    fn stored_anchor_tx_in_later_block_rejected() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        let sender_addr = fund(&backend, &sk, 5000);
+        let task_id = [0x96u8; 32];
+
+        // Anchor once at height 1.
+        let anchor = valid_anchor_tx(&sk, 0, task_id);
+        let anchor_bytes = match &anchor.payload {
+            TransactionPayload::AnchorReceipt(r) => r.encode(),
+            TransactionPayload::None => unreachable!(),
+        };
+        let block = build_valid_block(&backend, vec![anchor.clone()]);
+        backend.apply_block(&block).unwrap();
+        assert_eq!(backend.storage.get_last_included_tx_seq().unwrap(), 1);
+
+        // The EXACT same transaction (identical hash, identical receipt
+        // bytes) in a later block must be rejected — the stored-tx skip
+        // path must not bypass global task_id uniqueness.
+        let block = build_valid_block(&backend, vec![anchor]);
+        assert!(matches!(
+            backend.apply_block(&block),
+            Err(ApplyBlockError::TaskIdAlreadyAnchored(0))
+        ));
+
+        // The failed duplicate block changed nothing (read-only checks):
+        // height, nonce, balance, sequence state, and receipt bytes are
+        // all exactly the post-height-1 state.
+        assert_eq!(backend.storage.get_latest_height().unwrap(), 1);
+        let sender = backend.storage.get_account(&sender_addr).unwrap().unwrap();
+        assert_eq!(sender.balance, 5000);
+        assert_eq!(sender.nonce, 1);
+        assert_eq!(backend.storage.get_last_included_tx_seq().unwrap(), 1);
+        assert!(backend.storage.get_tx_hash_by_seq(2).unwrap().is_none());
+        assert_eq!(
+            backend.storage.get_receipt(&task_id).unwrap(),
+            Some(anchor_bytes)
+        );
+    }
+
+    #[test]
+    fn prior_state_duplicate_rejected() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        fund(&backend, &sk, 5000);
+        let task_id = [0x7Au8; 32];
+
+        // Anchor once.
+        let block = build_valid_block(&backend, vec![valid_anchor_tx(&sk, 0, task_id)]);
+        backend.apply_block(&block).unwrap();
+        assert!(backend.storage.has_receipt(&task_id).unwrap());
+
+        // Anchor the same task_id again in the next block: rule (i).
+        let block = build_valid_block(&backend, vec![valid_anchor_tx(&sk, 1, task_id)]);
+        assert!(matches!(
+            backend.apply_block(&block),
+            Err(ApplyBlockError::TaskIdAlreadyAnchored(0))
+        ));
+        assert_eq!(backend.storage.get_latest_height().unwrap(), 1);
+    }
+
+    #[test]
+    fn in_block_duplicate_rejected() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        fund(&backend, &sk, 5000);
+        let task_id = [0x7Bu8; 32];
+
+        // Two receipts for one task_id in the same block: rule (j) fires
+        // on the second, and the whole block — including the first — is
+        // rejected with nothing written.
+        let block = build_valid_block(
+            &backend,
+            vec![
+                valid_anchor_tx(&sk, 0, task_id),
+                valid_anchor_tx(&sk, 1, task_id),
+            ],
+        );
+        assert!(matches!(
+            backend.apply_block(&block),
+            Err(ApplyBlockError::TaskIdRepeatedInBlock(1))
+        ));
+        assert!(!backend.storage.has_receipt(&task_id).unwrap());
+        assert_eq!(backend.storage.get_latest_height().unwrap(), 0);
+        let sender = backend.storage.get_account(&Address(sk.verifying_key().to_bytes()));
+        assert_eq!(sender.unwrap().unwrap().nonce, 0);
+        // No sequence state either.
+        assert_eq!(backend.storage.get_last_included_tx_seq().unwrap(), 0);
+        assert!(backend.storage.get_tx_hash_by_seq(1).unwrap().is_none());
+        assert!(backend.storage.get_tx_hash_by_seq(2).unwrap().is_none());
+    }
+
+    #[test]
+    fn first_failure_precedence_pinned() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        fund(&backend, &sk, 5000);
+        let other = SigningKey::from_bytes(&[61u8; 32]);
+
+        // Oversized metadata AND wrong version: (e) before (f).
+        let receipt = signed_receipt_for(&sk, [0x7Cu8; 32], vec![0u8; 4097], 2);
+        let block = build_valid_block(&backend, vec![signed_anchor_tx(&sk, 0, receipt)]);
+        assert!(matches!(
+            backend.apply_block(&block),
+            Err(ApplyBlockError::ReceiptMetadataTooLarge(0))
+        ));
+
+        // Wrong version AND wrong executor: (f) before (g).
+        let receipt = signed_receipt_for(&other, [0x7Cu8; 32], vec![], 2);
+        let block = build_valid_block(&backend, vec![signed_anchor_tx(&sk, 0, receipt)]);
+        assert!(matches!(
+            backend.apply_block(&block),
+            Err(ApplyBlockError::ReceiptVersionUnsupported(0))
+        ));
+
+        // Wrong executor AND invalid receipt signature: (g) before (h).
+        let receipt = signed_receipt_for(&other, [0x7Cu8; 32], vec![], 1);
+        let block = build_valid_block(
+            &backend,
+            vec![signed_anchor_tx(
+                &sk,
+                0,
+                Receipt {
+                    signature: [0xEEu8; 64],
+                    ..receipt
+                },
+            )],
+        );
+        assert!(matches!(
+            backend.apply_block(&block),
+            Err(ApplyBlockError::SenderExecutorMismatch(0))
+        ));
+    }
+
+    // ── RFC 0002 Phase 3: atomicity ──────────────────────────────────
+
+    #[test]
+    fn transfer_before_invalid_receipt_leaves_no_state() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let transfer_sk = SigningKey::from_bytes(&[62u8; 32]);
+        let transfer_sender = fund(&backend, &transfer_sk, 5000);
+        let anchor_sk = SigningKey::from_bytes(&[63u8; 32]);
+        fund(&backend, &anchor_sk, 100);
+        let receiver_addr = Address([64u8; 32]);
+
+        let transfer = signed_transfer(&transfer_sk, receiver_addr, 200, 0);
+        let receipt = signed_receipt_for(&anchor_sk, [0x7Du8; 32], vec![], 1);
+        let bad_anchor = signed_anchor_tx(
+            &anchor_sk,
+            0,
+            Receipt {
+                signature: [0xEEu8; 64],
+                ..receipt
+            },
+        );
+        let block = build_valid_block(&backend, vec![transfer.clone(), bad_anchor]);
+        assert!(matches!(
+            backend.apply_block(&block),
+            Err(ApplyBlockError::InvalidReceiptSignature(1))
+        ));
+
+        // The valid transfer left no trace.
         assert_eq!(backend.storage.get_latest_height().unwrap(), 0);
         let sender = backend.storage.get_account(&transfer_sender).unwrap().unwrap();
-        assert_eq!(sender.balance, 5000, "transfer must not have executed");
+        assert_eq!(sender.balance, 5000);
         assert_eq!(sender.nonce, 0);
         assert!(backend.storage.get_account(&receiver_addr).unwrap().is_none());
-        assert!(!backend.storage.has_receipt(&[0x77u8; 32]).unwrap());
+        assert!(!backend.storage.has_receipt(&[0x7Du8; 32]).unwrap());
+        // No sequence state either: last-included unchanged, no index rows.
+        assert_eq!(backend.storage.get_last_included_tx_seq().unwrap(), 0);
+        assert!(backend.storage.get_tx_hash_by_seq(1).unwrap().is_none());
+        assert!(backend.storage.get_tx_hash_by_seq(2).unwrap().is_none());
 
-        // Ordinary transfer behavior is unchanged: the same transfer in a
-        // block without the AnchorReceipt applies normally.
+        // Ordinary transfer behavior unchanged: same transfer alone applies.
         let block = build_valid_block(&backend, vec![transfer]);
         backend.apply_block(&block).unwrap();
-        assert_eq!(backend.storage.get_latest_height().unwrap(), 1);
         let sender = backend.storage.get_account(&transfer_sender).unwrap().unwrap();
         assert_eq!(sender.balance, 4800);
         assert_eq!(sender.nonce, 1);
     }
 
-    #[tokio::test]
-    async fn submit_tx_anchor_receipt_rejected_at_mempool() {
+    #[test]
+    fn valid_receipt_before_invalid_tx_leaves_no_receipt() {
         let backend = make_backend();
         backend.ensure_genesis().unwrap();
+        let anchor_sk = SigningKey::from_bytes(&[63u8; 32]);
+        let anchor_sender = fund(&backend, &anchor_sk, 100);
+        let poor_sk = SigningKey::from_bytes(&[65u8; 32]);
+        fund(&backend, &poor_sk, 10);
+        let task_id = [0x7Eu8; 32];
 
-        let sk = SigningKey::from_bytes(&[64u8; 32]);
-        let sender_addr = Address(sk.verifying_key().to_bytes());
-        let mut acc = Account::new(sender_addr);
-        acc.balance = 5000;
-        backend.storage.put_account(&sender_addr, &acc).unwrap();
+        // Valid receipt first, then a transfer exceeding its balance.
+        let anchor = valid_anchor_tx(&anchor_sk, 0, task_id);
+        let bad_transfer = signed_transfer(&poor_sk, Address([66u8; 32]), 1000, 0);
+        let block = build_valid_block(&backend, vec![anchor, bad_transfer]);
+        assert!(matches!(
+            backend.apply_block(&block),
+            Err(ApplyBlockError::InsufficientBalance(1))
+        ));
 
-        let tx = signed_anchor_receipt_tx(&sk, 0);
-        assert!(tx.verify_signature());
+        // The valid receipt was not written.
+        assert!(!backend.storage.has_receipt(&task_id).unwrap());
+        assert_eq!(backend.storage.get_latest_height().unwrap(), 0);
+        let sender = backend.storage.get_account(&anchor_sender).unwrap().unwrap();
+        assert_eq!(sender.nonce, 0);
+        // No sequence state either.
+        assert_eq!(backend.storage.get_last_included_tx_seq().unwrap(), 0);
+        assert!(backend.storage.get_tx_hash_by_seq(1).unwrap().is_none());
+        assert!(backend.storage.get_tx_hash_by_seq(2).unwrap().is_none());
+    }
 
-        let result = backend.submit_transaction(tx).await;
-        let err = result.expect_err("AnchorReceipt must be rejected at admission");
-        assert!(
-            err.to_string().contains("not activated"),
-            "unexpected error: {err}"
+    #[test]
+    fn mixed_block_commits_atomically() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let transfer_sk = SigningKey::from_bytes(&[62u8; 32]);
+        let transfer_sender = fund(&backend, &transfer_sk, 5000);
+        let anchor_sk = SigningKey::from_bytes(&[63u8; 32]);
+        let anchor_sender = fund(&backend, &anchor_sk, 100);
+        let receiver_addr = Address([64u8; 32]);
+        let task_id = [0x7Fu8; 32];
+
+        let receipt = signed_receipt_for(&anchor_sk, task_id, vec![1, 2, 3], 1);
+        let expected_bytes = receipt.encode();
+        let transfer = signed_transfer(&transfer_sk, receiver_addr, 200, 0);
+        let transfer_hash = compute_tx_hash(&transfer);
+        let anchor = signed_anchor_tx(&anchor_sk, 0, receipt);
+        let anchor_hash = compute_tx_hash(&anchor);
+
+        let block = build_valid_block(&backend, vec![transfer, anchor]);
+        backend.apply_block(&block).unwrap();
+
+        // All effects committed atomically.
+        assert_eq!(backend.storage.get_latest_height().unwrap(), 1);
+        let sender = backend.storage.get_account(&transfer_sender).unwrap().unwrap();
+        assert_eq!(sender.balance, 4800);
+        assert_eq!(sender.nonce, 1);
+        let receiver = backend.storage.get_account(&receiver_addr).unwrap().unwrap();
+        assert_eq!(receiver.balance, 200);
+        let anchor_acc = backend.storage.get_account(&anchor_sender).unwrap().unwrap();
+        assert_eq!(anchor_acc.balance, 100, "anchoring moves no balance");
+        assert_eq!(anchor_acc.nonce, 1, "anchoring consumes the nonce");
+
+        // Receipt anchored with canonical SCALE bytes; tx indexed.
+        assert!(backend.storage.has_receipt(&task_id).unwrap());
+        assert_eq!(
+            backend.storage.get_receipt(&task_id).unwrap(),
+            Some(expected_bytes)
+        );
+        assert!(backend.storage.get_transaction(&anchor_hash).unwrap().is_some());
+
+        // Sequence state committed in the same batch, in body order.
+        assert_eq!(backend.storage.get_last_included_tx_seq().unwrap(), 2);
+        assert_eq!(
+            backend.storage.get_tx_hash_by_seq(1).unwrap(),
+            Some(transfer_hash)
+        );
+        assert_eq!(
+            backend.storage.get_tx_hash_by_seq(2).unwrap(),
+            Some(anchor_hash)
+        );
+    }
+
+    // ── Transaction-sequence atomicity (no leak on rejected blocks) ──
+
+    #[test]
+    fn failed_block_does_not_advance_persistent_seq_counter() {
+        // Scenario 1: valid transfer before an invalid receipt.
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let transfer_sk = SigningKey::from_bytes(&[62u8; 32]);
+        fund(&backend, &transfer_sk, 5000);
+        let anchor_sk = SigningKey::from_bytes(&[63u8; 32]);
+        fund(&backend, &anchor_sk, 100);
+        let receipt = signed_receipt_for(&anchor_sk, [0x90u8; 32], vec![], 1);
+        let bad_anchor = signed_anchor_tx(
+            &anchor_sk,
+            0,
+            Receipt {
+                signature: [0xEEu8; 64],
+                ..receipt
+            },
+        );
+        let transfer = signed_transfer(&transfer_sk, Address([64u8; 32]), 200, 0);
+        let block = build_valid_block(&backend, vec![transfer, bad_anchor]);
+        assert!(backend.apply_block(&block).is_err());
+        // Read-only observation first: both persistent sequence keys are
+        // written atomically from the same local value (SetTxSeq +
+        // SetLastIncludedTxSeq in one batch), so the read-only
+        // last-included getter and index rows observe the counter state.
+        assert_eq!(backend.storage.get_last_included_tx_seq().unwrap(), 0);
+        assert!(backend.storage.get_tx_hash_by_seq(1).unwrap().is_none());
+        // Terminal cross-check of the tx_seq key itself: next_tx_seq
+        // returning 1 proves it was 0. It mutates, so it is the LAST
+        // assertion against this fresh backend.
+        assert_eq!(backend.storage.next_tx_seq().unwrap(), 1);
+
+        // Scenario 2: valid receipt before an over-spending transfer.
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let anchor_sk = SigningKey::from_bytes(&[63u8; 32]);
+        fund(&backend, &anchor_sk, 100);
+        let poor_sk = SigningKey::from_bytes(&[65u8; 32]);
+        fund(&backend, &poor_sk, 10);
+        let block = build_valid_block(
+            &backend,
+            vec![
+                valid_anchor_tx(&anchor_sk, 0, [0x91u8; 32]),
+                signed_transfer(&poor_sk, Address([66u8; 32]), 1000, 0),
+            ],
+        );
+        assert!(backend.apply_block(&block).is_err());
+        assert_eq!(backend.storage.get_last_included_tx_seq().unwrap(), 0);
+        assert!(backend.storage.get_tx_hash_by_seq(1).unwrap().is_none());
+        assert_eq!(backend.storage.next_tx_seq().unwrap(), 1);
+
+        // Scenario 3: two receipts for the same task_id.
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        fund(&backend, &sk, 5000);
+        let block = build_valid_block(
+            &backend,
+            vec![
+                valid_anchor_tx(&sk, 0, [0x92u8; 32]),
+                valid_anchor_tx(&sk, 1, [0x92u8; 32]),
+            ],
+        );
+        assert!(backend.apply_block(&block).is_err());
+        assert_eq!(backend.storage.get_last_included_tx_seq().unwrap(), 0);
+        assert!(backend.storage.get_tx_hash_by_seq(1).unwrap().is_none());
+        assert_eq!(backend.storage.next_tx_seq().unwrap(), 1);
+    }
+
+    #[test]
+    fn retry_after_failed_block_assigns_same_sequences() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let transfer_sk = SigningKey::from_bytes(&[62u8; 32]);
+        fund(&backend, &transfer_sk, 5000);
+        let anchor_sk = SigningKey::from_bytes(&[63u8; 32]);
+        fund(&backend, &anchor_sk, 100);
+
+        // A failing attempt: valid transfer plus a bad receipt.
+        let transfer = signed_transfer(&transfer_sk, Address([64u8; 32]), 200, 0);
+        let receipt = signed_receipt_for(&anchor_sk, [0x93u8; 32], vec![], 1);
+        let bad_anchor = signed_anchor_tx(
+            &anchor_sk,
+            0,
+            Receipt {
+                signature: [0xEEu8; 64],
+                ..receipt
+            },
+        );
+        let block = build_valid_block(&backend, vec![transfer.clone(), bad_anchor]);
+        assert!(backend.apply_block(&block).is_err());
+
+        // Retry with a valid block: sequence values start at 1, exactly as
+        // if the failed attempt had never happened.
+        let good_anchor = valid_anchor_tx(&anchor_sk, 0, [0x94u8; 32]);
+        let transfer_hash = compute_tx_hash(&transfer);
+        let anchor_hash = compute_tx_hash(&good_anchor);
+        let block = build_valid_block(&backend, vec![transfer, good_anchor]);
+        backend.apply_block(&block).unwrap();
+
+        assert_eq!(
+            backend.storage.get_tx_hash_by_seq(1).unwrap(),
+            Some(transfer_hash)
+        );
+        assert_eq!(
+            backend.storage.get_tx_hash_by_seq(2).unwrap(),
+            Some(anchor_hash)
+        );
+        assert!(backend.storage.get_tx_hash_by_seq(3).unwrap().is_none());
+        assert_eq!(backend.storage.get_last_included_tx_seq().unwrap(), 2);
+    }
+
+    #[test]
+    fn tx_seq_deterministic_across_backends() {
+        // Backend A experiences a failed block; backend B never does.
+        // Both then apply the SAME accepted block (identical genesis, so
+        // identical parent hash) and must end with identical sequence
+        // state — including the persistent counter.
+        let backend_a = make_backend();
+        backend_a.ensure_genesis().unwrap();
+        let backend_b = make_backend();
+        backend_b.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        fund(&backend_a, &sk, 5000);
+        fund(&backend_b, &sk, 5000);
+
+        // Failed attempt on A only.
+        let block = build_valid_block(
+            &backend_a,
+            vec![
+                valid_anchor_tx(&sk, 0, [0x95u8; 32]),
+                valid_anchor_tx(&sk, 1, [0x95u8; 32]), // in-block duplicate
+            ],
+        );
+        assert!(backend_a.apply_block(&block).is_err());
+
+        // Same accepted block applied to both.
+        let transfer = signed_transfer(&sk, Address([64u8; 32]), 200, 0);
+        let block = build_valid_block(&backend_a, vec![transfer]);
+        backend_a.apply_block(&block).unwrap();
+        backend_b.apply_block(&block).unwrap();
+
+        assert_eq!(
+            backend_a.storage.get_tx_hash_by_seq(1).unwrap(),
+            backend_b.storage.get_tx_hash_by_seq(1).unwrap()
+        );
+        assert_eq!(
+            backend_a.storage.get_last_included_tx_seq().unwrap(),
+            backend_b.storage.get_last_included_tx_seq().unwrap()
+        );
+        // Persistent counters agree too (probe mutates, so it is last).
+        assert_eq!(
+            backend_a.storage.next_tx_seq().unwrap(),
+            backend_b.storage.next_tx_seq().unwrap()
+        );
+    }
+
+    #[test]
+    fn idempotent_reapply_allocates_no_new_seq() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        fund(&backend, &sk, 5000);
+        let other_sk = SigningKey::from_bytes(&[61u8; 32]);
+        fund(&backend, &other_sk, 5000);
+
+        // Block 1 includes txA (seq 1).
+        let tx_a = signed_transfer(&sk, Address([64u8; 32]), 100, 0);
+        let tx_a_hash = compute_tx_hash(&tx_a);
+        let block = build_valid_block(&backend, vec![tx_a.clone()]);
+        backend.apply_block(&block).unwrap();
+        assert_eq!(
+            backend.storage.get_tx_hash_by_seq(1).unwrap(),
+            Some(tx_a_hash)
         );
 
-        // Nothing entered the mempool.
+        // Block 2 carries txA again (skipped by the idempotent guard, no
+        // new sequence) plus txB (seq 2).
+        let tx_b = signed_transfer(&other_sk, Address([65u8; 32]), 100, 0);
+        let tx_b_hash = compute_tx_hash(&tx_b);
+        let block = build_valid_block(&backend, vec![tx_a, tx_b]);
+        backend.apply_block(&block).unwrap();
+
+        assert_eq!(
+            backend.storage.get_tx_hash_by_seq(1).unwrap(),
+            Some(tx_a_hash)
+        );
+        assert_eq!(
+            backend.storage.get_tx_hash_by_seq(2).unwrap(),
+            Some(tx_b_hash)
+        );
+        assert!(backend.storage.get_tx_hash_by_seq(3).unwrap().is_none());
+        assert_eq!(backend.storage.get_last_included_tx_seq().unwrap(), 2);
+    }
+
+    // ── RFC 0002 Phase 3: mempool admission ──────────────────────────
+
+    #[tokio::test]
+    async fn submit_anchor_valid_accepted() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        fund(&backend, &sk, 5000);
+
+        let tx = valid_anchor_tx(&sk, 0, [0x80u8; 32]);
+        backend.submit_transaction(tx).await.unwrap();
+        assert_eq!(backend.mempool.read().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn submit_anchor_wrong_pairing_rejected() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        fund(&backend, &sk, 5000);
+
+        let mut tx = valid_anchor_tx(&sk, 0, [0x81u8; 32]);
+        tx.payload = TransactionPayload::None;
+        tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+        let err = backend.submit_transaction(tx).await.unwrap_err();
+        assert!(err.to_string().contains("payload does not match"), "{err}");
+        assert_eq!(backend.mempool.read().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn submit_anchor_sender_executor_mismatch_rejected() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        fund(&backend, &sk, 5000);
+        let other = SigningKey::from_bytes(&[61u8; 32]);
+
+        let receipt = signed_receipt_for(&other, [0x82u8; 32], vec![], 1);
+        let tx = signed_anchor_tx(&sk, 0, receipt);
+        let err = backend.submit_transaction(tx).await.unwrap_err();
+        assert!(err.to_string().contains("executor"), "{err}");
+        assert_eq!(backend.mempool.read().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn submit_anchor_bad_receipt_signature_rejected() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        fund(&backend, &sk, 5000);
+
+        let receipt = signed_receipt_for(&sk, [0x83u8; 32], vec![], 1);
+        let tx = signed_anchor_tx(
+            &sk,
+            0,
+            Receipt {
+                signature: [0xEEu8; 64],
+                ..receipt
+            },
+        );
+        let err = backend.submit_transaction(tx).await.unwrap_err();
+        assert!(err.to_string().contains("receipt signature"), "{err}");
+        assert_eq!(backend.mempool.read().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn submit_anchor_persistent_duplicate_rejected() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        fund(&backend, &sk, 5000);
+        let task_id = [0x84u8; 32];
+
+        // Anchor via a block first.
+        let block = build_valid_block(&backend, vec![valid_anchor_tx(&sk, 0, task_id)]);
+        backend.apply_block(&block).unwrap();
+
+        // Submitting the same task_id again is rejected at admission.
+        let tx = valid_anchor_tx(&sk, 1, task_id);
+        let err = backend.submit_transaction(tx).await.unwrap_err();
+        assert!(err.to_string().contains("already anchored"), "{err}");
+        assert_eq!(backend.mempool.read().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn resubmit_identical_anchored_tx_rejected() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        fund(&backend, &sk, 5000);
+        let task_id = [0x97u8; 32];
+
+        // Anchor via a block.
+        let anchor = valid_anchor_tx(&sk, 0, task_id);
+        let block = build_valid_block(&backend, vec![anchor.clone()]);
+        backend.apply_block(&block).unwrap();
+
+        // Re-submitting the byte-identical anchored transaction must be
+        // rejected as already anchored — NOT returned as an idempotent
+        // success — and must not enter the pool.
+        let err = backend.submit_transaction(anchor).await.unwrap_err();
+        assert!(err.to_string().contains("already anchored"), "{err}");
+        assert_eq!(backend.mempool.read().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn submit_anchor_pending_duplicate_rejected() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        fund(&backend, &sk, 5000);
+        let task_id = [0x85u8; 32];
+
+        backend.submit_transaction(valid_anchor_tx(&sk, 0, task_id)).await.unwrap();
+        // A different executor claiming the same task_id while the first
+        // is pending: rejected by the mempool-local task_id guard.
+        let other = SigningKey::from_bytes(&[61u8; 32]);
+        fund(&backend, &other, 100);
+        let err = backend
+            .submit_transaction(valid_anchor_tx(&other, 0, task_id))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("already pending"), "{err}");
+        assert_eq!(backend.mempool.read().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn produce_block_anchors_submitted_receipt() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        fund(&backend, &sk, 5000);
+        let task_id = [0x86u8; 32];
+
+        backend.submit_transaction(valid_anchor_tx(&sk, 0, task_id)).await.unwrap();
+        backend.produce_block().await.unwrap();
+
+        assert_eq!(backend.storage.get_latest_height().unwrap(), 1);
+        assert!(backend.storage.has_receipt(&task_id).unwrap());
         assert_eq!(backend.mempool.read().await.len(), 0);
     }
 
