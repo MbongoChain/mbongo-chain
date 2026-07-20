@@ -1,4 +1,6 @@
-use mbongo_core::{compute_transactions_root, Address, Transaction, TransactionType};
+use mbongo_core::{
+    compute_transactions_root, Address, Transaction, TransactionPayload, TransactionType,
+};
 use proptest::prelude::*;
 
 prop_compose! {
@@ -27,7 +29,15 @@ prop_compose! {
         nonce in any::<u64>(),
         signature in arb_signature(),
     ) -> Transaction {
-        Transaction { tx_type, sender, receiver, amount, nonce, signature }
+        Transaction {
+            tx_type,
+            sender,
+            receiver,
+            amount,
+            nonce,
+            payload: TransactionPayload::None,
+            signature,
+        }
     }
 }
 

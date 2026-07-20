@@ -11,6 +11,7 @@ use mbongo_api::rest::{
 };
 use mbongo_core::{
     compute_transactions_root, Account, Address, Block, BlockBody, BlockHeader, Hash, Transaction,
+    TransactionType,
 };
 use mbongo_network::rpc::{BackendError, RpcBackend};
 use mbongo_network::BlockBroadcaster;
@@ -197,6 +198,16 @@ impl<S: Storage> NodeBackend<S> {
             .map_err(|e| ApplyBlockError::Storage(e.to_string()))?;
 
         for (i, tx) in block.body.transactions.iter().enumerate() {
+            // TEMPORARY execution barrier (RFC 0002 Phase 2): AnchorReceipt
+            // transactions are valid *data* (encodable, signable, hashable)
+            // but their consensus rules do not exist until Phase 3. They
+            // must never fall through to the transfer execution path below,
+            // so the whole block is rejected deterministically. Phase 3
+            // replaces this barrier with the normative validation dispatch.
+            if tx.tx_type == TransactionType::AnchorReceipt {
+                return Err(ApplyBlockError::AnchorReceiptNotActivated(i));
+            }
+
             // Signature validation.
             if !tx.verify_signature() {
                 return Err(ApplyBlockError::InvalidSignature(i));
@@ -345,6 +356,10 @@ pub enum ApplyBlockError {
     /// A transaction has insufficient balance.
     #[error("insufficient balance at index {0}")]
     InsufficientBalance(usize),
+    /// The block contains an `AnchorReceipt` transaction, whose consensus
+    /// rules are not activated until RFC 0002 Phase 3.
+    #[error("receipt anchoring not activated until RFC 0002 Phase 3 (transaction index {0})")]
+    AnchorReceiptNotActivated(usize),
     /// Storage error.
     #[error("storage error: {0}")]
     Storage(String),
@@ -398,6 +413,18 @@ impl<S: Storage + Send + Sync + 'static> RpcBackend for NodeBackend<S> {
         let storage = Arc::clone(&self.storage);
         let mempool = Arc::clone(&self.mempool);
         async move {
+            // TEMPORARY admission barrier (RFC 0002 Phase 2): reject
+            // AnchorReceipt before it can enter the mempool. Without this,
+            // an admitted AnchorReceipt would be drained into every
+            // produced block and apply_block's barrier would reject the
+            // whole block, stalling production. Phase 3 replaces this with
+            // the normative receipt admission checks.
+            if tx.tx_type == TransactionType::AnchorReceipt {
+                return Err(BackendError::Internal(
+                    "receipt anchoring not activated until RFC 0002 Phase 3".to_string(),
+                ));
+            }
+
             let tx_hash = compute_tx_hash(&tx);
 
             // Idempotence: if already in storage (included in a block), return the hash.
@@ -646,7 +673,8 @@ mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
     use mbongo_core::{
-        Account, Address, Block, BlockBody, BlockHeader, Hash, Transaction, TransactionType,
+        Account, Address, Block, BlockBody, BlockHeader, Hash, Receipt, Transaction,
+        TransactionPayload, TransactionType,
     };
     use mbongo_storage::InMemoryStorage;
 
@@ -672,6 +700,7 @@ mod tests {
                     receiver: Address([6u8; 32]),
                     amount: 50,
                     nonce: 0,
+                    payload: TransactionPayload::None,
                     signature: [0u8; 64],
                 }],
             },
@@ -687,6 +716,7 @@ mod tests {
             receiver: Address([4u8; 32]),
             amount: 100,
             nonce: 0,
+            payload: TransactionPayload::None,
             signature: [0u8; 64],
         };
         (hash, tx)
@@ -715,6 +745,7 @@ mod tests {
             receiver: receiver_addr,
             amount,
             nonce,
+            payload: TransactionPayload::None,
             signature: [0u8; 64],
         };
         let sig = sender_sk.sign(&tx.signing_payload());
@@ -1361,6 +1392,138 @@ mod tests {
             },
             body: BlockBody { transactions: txs },
         }
+    }
+
+    /// Builds a validly signed `AnchorReceipt` transaction. The receipt is
+    /// inert data in Phase 2; only the transaction signature needs to be
+    /// valid to prove the barrier (not the signature check) rejects it.
+    fn signed_anchor_receipt_tx(sender_sk: &SigningKey, nonce: u64) -> Transaction {
+        let sender = Address(sender_sk.verifying_key().to_bytes());
+        let receipt = Receipt {
+            version: 1,
+            task_id: [0x77u8; 32],
+            input_commitment: [1u8; 32],
+            output_commitment: [2u8; 32],
+            executor: sender,
+            metadata: vec![],
+            signature: [0u8; 64],
+        };
+        let mut tx = Transaction {
+            tx_type: TransactionType::AnchorReceipt,
+            sender,
+            receiver: Address::zero(),
+            amount: 0,
+            nonce,
+            payload: TransactionPayload::AnchorReceipt(Box::new(receipt)),
+            signature: [0u8; 64],
+        };
+        tx.signature = sender_sk.sign(&tx.signing_payload()).to_bytes();
+        tx
+    }
+
+    #[test]
+    fn apply_block_rejects_anchor_receipt() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+
+        let sk = SigningKey::from_bytes(&[60u8; 32]);
+        let sender_addr = Address(sk.verifying_key().to_bytes());
+        let mut acc = Account::new(sender_addr);
+        acc.balance = 5000;
+        backend.storage.put_account(&sender_addr, &acc).unwrap();
+
+        let tx = signed_anchor_receipt_tx(&sk, 0);
+        // The transaction signature is valid: the Phase 2 barrier, not the
+        // signature check, must be what rejects the block.
+        assert!(tx.verify_signature());
+        let task_id = [0x77u8; 32];
+
+        let block = build_valid_block(&backend, vec![tx]);
+        let result = backend.apply_block(&block);
+        assert!(matches!(
+            result,
+            Err(ApplyBlockError::AnchorReceiptNotActivated(0))
+        ));
+
+        // Nothing was applied: height, balance, nonce, receipts untouched.
+        assert_eq!(backend.storage.get_latest_height().unwrap(), 0);
+        let sender = backend.storage.get_account(&sender_addr).unwrap().unwrap();
+        assert_eq!(sender.balance, 5000);
+        assert_eq!(sender.nonce, 0);
+        assert!(!backend.storage.has_receipt(&task_id).unwrap());
+    }
+
+    #[test]
+    fn anchor_receipt_block_fails_atomically() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+
+        let transfer_sk = SigningKey::from_bytes(&[61u8; 32]);
+        let transfer_sender = Address(transfer_sk.verifying_key().to_bytes());
+        let receiver_addr = Address([62u8; 32]);
+        let mut acc = Account::new(transfer_sender);
+        acc.balance = 5000;
+        backend.storage.put_account(&transfer_sender, &acc).unwrap();
+
+        let anchor_sk = SigningKey::from_bytes(&[63u8; 32]);
+        let anchor_sender = Address(anchor_sk.verifying_key().to_bytes());
+        let mut anchor_acc = Account::new(anchor_sender);
+        anchor_acc.balance = 100;
+        backend.storage.put_account(&anchor_sender, &anchor_acc).unwrap();
+
+        // Valid transfer first, AnchorReceipt second: the barrier fires at
+        // index 1 and the whole block — including the valid transfer —
+        // must leave no trace.
+        let transfer = signed_transfer(&transfer_sk, receiver_addr, 200, 0);
+        let anchor = signed_anchor_receipt_tx(&anchor_sk, 0);
+        let block = build_valid_block(&backend, vec![transfer.clone(), anchor]);
+
+        let result = backend.apply_block(&block);
+        assert!(matches!(
+            result,
+            Err(ApplyBlockError::AnchorReceiptNotActivated(1))
+        ));
+
+        assert_eq!(backend.storage.get_latest_height().unwrap(), 0);
+        let sender = backend.storage.get_account(&transfer_sender).unwrap().unwrap();
+        assert_eq!(sender.balance, 5000, "transfer must not have executed");
+        assert_eq!(sender.nonce, 0);
+        assert!(backend.storage.get_account(&receiver_addr).unwrap().is_none());
+        assert!(!backend.storage.has_receipt(&[0x77u8; 32]).unwrap());
+
+        // Ordinary transfer behavior is unchanged: the same transfer in a
+        // block without the AnchorReceipt applies normally.
+        let block = build_valid_block(&backend, vec![transfer]);
+        backend.apply_block(&block).unwrap();
+        assert_eq!(backend.storage.get_latest_height().unwrap(), 1);
+        let sender = backend.storage.get_account(&transfer_sender).unwrap().unwrap();
+        assert_eq!(sender.balance, 4800);
+        assert_eq!(sender.nonce, 1);
+    }
+
+    #[tokio::test]
+    async fn submit_tx_anchor_receipt_rejected_at_mempool() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+
+        let sk = SigningKey::from_bytes(&[64u8; 32]);
+        let sender_addr = Address(sk.verifying_key().to_bytes());
+        let mut acc = Account::new(sender_addr);
+        acc.balance = 5000;
+        backend.storage.put_account(&sender_addr, &acc).unwrap();
+
+        let tx = signed_anchor_receipt_tx(&sk, 0);
+        assert!(tx.verify_signature());
+
+        let result = backend.submit_transaction(tx).await;
+        let err = result.expect_err("AnchorReceipt must be rejected at admission");
+        assert!(
+            err.to_string().contains("not activated"),
+            "unexpected error: {err}"
+        );
+
+        // Nothing entered the mempool.
+        assert_eq!(backend.mempool.read().await.len(), 0);
     }
 
     #[test]

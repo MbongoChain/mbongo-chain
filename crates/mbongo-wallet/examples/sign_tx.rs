@@ -6,7 +6,7 @@
 //! ```
 
 use ed25519_dalek::{Signer, SigningKey};
-use mbongo_core::{Address, Transaction, TransactionType};
+use mbongo_core::{Address, Transaction, TransactionPayload, TransactionType};
 use serde_json::json;
 
 fn main() {
@@ -24,6 +24,7 @@ fn main() {
         receiver,
         amount: 100,
         nonce: 0,
+        payload: TransactionPayload::None,
         signature: [0u8; 64],
     };
 

@@ -19,7 +19,8 @@ mod tests {
     use super::*;
     use crate::rocksdb::SCHEMA_VERSION_CURRENT;
     use mbongo_core::{
-        Account, Address, Block, BlockBody, BlockHeader, Hash, Transaction, TransactionType,
+        Account, Address, Block, BlockBody, BlockHeader, Hash, Transaction, TransactionPayload,
+        TransactionType,
     };
 
     fn sample_account() -> (Address, Account) {
@@ -38,6 +39,7 @@ mod tests {
             receiver: Address([4u8; 32]),
             amount: 100,
             nonce: 0,
+            payload: TransactionPayload::None,
             signature: [0u8; 64],
         };
         (hash, tx)
@@ -60,6 +62,7 @@ mod tests {
                     receiver: Address([6u8; 32]),
                     amount: 50,
                     nonce: 0,
+                    payload: TransactionPayload::None,
                     signature: [0u8; 64],
                 }],
             },

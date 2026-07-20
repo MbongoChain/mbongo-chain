@@ -106,7 +106,7 @@ impl Default for Mempool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mbongo_core::{Address, TransactionType};
+    use mbongo_core::{Address, TransactionPayload, TransactionType};
 
     fn make_tx(sender: u8, nonce: u64) -> (Hash, Transaction) {
         make_tx_with_hash(sender, nonce, sender)
@@ -122,6 +122,7 @@ mod tests {
             receiver: Address([99u8; 32]),
             amount: 100,
             nonce,
+            payload: TransactionPayload::None,
             signature: [0u8; 64],
         };
         (hash, tx)

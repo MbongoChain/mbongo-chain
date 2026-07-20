@@ -92,17 +92,56 @@ impl<'de> Deserialize<'de> for Address {
 }
 
 /// Supported transaction types.
+///
+/// Codec indexes are pinned explicitly: this enum is consensus-visible,
+/// and variant order must never silently change the wire format. Indexes
+/// 0–2 match the implicit v0.2 encoding byte-for-byte; index 3 is the
+/// v0.3 addition (RFC 0002 §1).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize, Encode, Decode)]
 pub enum TransactionType {
     /// Simple transfer from sender to receiver of `amount`.
+    #[codec(index = 0)]
     Transfer,
     /// Compute task assignment/payment.
+    #[codec(index = 1)]
     ComputeTask,
     /// Stake `amount` to validator or staking contract.
+    #[codec(index = 2)]
     Stake,
+    /// Anchor an off-chain compute receipt (RFC 0002). Carried in
+    /// [`TransactionPayload::AnchorReceipt`]. Consensus rules for this
+    /// type activate in RFC 0002 Phase 3; until then it is pure data.
+    #[codec(index = 3)]
+    AnchorReceipt,
+}
+
+/// Typed transaction payload (RFC 0002 §1.1).
+///
+/// Appending variants (with a new explicit index) is the extension point
+/// for future transaction kinds. Codec indexes are pinned explicitly:
+/// this enum is consensus-visible.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Encode, Decode)]
+#[allow(clippy::cast_possible_truncation)] // codec derive casts the explicit index to u8
+pub enum TransactionPayload {
+    /// No payload. Required for `Transfer`, `ComputeTask`, and `Stake`
+    /// transactions. Encodes as a single `0x00` byte.
+    #[codec(index = 0)]
+    None,
+    /// A receipt to anchor. Required for `AnchorReceipt` transactions.
+    /// Boxed to keep `Transaction` small for the common `None` case;
+    /// SCALE encodes `Box<T>` identically to `T`, so the wire format is
+    /// exactly `0x01` followed by the canonical receipt bytes.
+    #[codec(index = 1)]
+    AnchorReceipt(Box<crate::receipt::Receipt>),
 }
 
 /// Transaction structure (SCALE serializable) with ed25519 signature.
+///
+/// Canonical v0.3 SCALE field order (RFC 0002 §1): `tx_type`, `sender`,
+/// `receiver`, `amount`, `nonce`, `payload`, `signature`. The payload is
+/// covered by both the signing payload and the transaction hash. This
+/// encoding is incompatible with v0.2 (which had no `payload` field);
+/// v0.2 transaction bytes do not decode under v0.3.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Encode, Decode)]
 pub struct Transaction {
     /// Transaction type.
@@ -115,29 +154,34 @@ pub struct Transaction {
     pub amount: u128,
     /// Nonce to prevent replay.
     pub nonce: u64,
+    /// Typed payload. [`TransactionPayload::None`] for all v0.2 types.
+    pub payload: TransactionPayload,
     /// ed25519 signature over the signing payload.
     #[serde(with = "serde_arr64")]
     pub signature: [u8; 64],
 }
 
 impl Transaction {
-    /// Returns SCALE-encoded signing payload (all fields except signature).
+    /// Returns SCALE-encoded signing payload (all fields except signature,
+    /// in canonical order — including `payload`).
     #[must_use]
     pub fn signing_payload(&self) -> Vec<u8> {
         #[derive(Encode)]
-        struct Payload {
+        struct SigningFields<'a> {
             tx_type: TransactionType,
             sender: Address,
             receiver: Address,
             amount: u128,
             nonce: u64,
+            payload: &'a TransactionPayload,
         }
-        Payload {
+        SigningFields {
             tx_type: self.tx_type,
             sender: self.sender,
             receiver: self.receiver,
             amount: self.amount,
             nonce: self.nonce,
+            payload: &self.payload,
         }
         .encode()
     }
@@ -205,7 +249,7 @@ pub fn compute_transactions_root(txs: &[Transaction]) -> Hash {
 }
 
 // Serde helpers for fixed-size 64-byte arrays as hex strings
-mod serde_arr64 {
+pub(crate) mod serde_arr64 {
     use serde::{Deserialize, Deserializer, Serializer};
     pub fn serialize<S: Serializer>(v: &[u8; 64], s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(&format!("0x{}", hex::encode(v)))

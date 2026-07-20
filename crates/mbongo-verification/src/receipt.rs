@@ -1,117 +1,65 @@
-//! Receipt anchoring primitive per `docs/specs/RECEIPT_SPEC_v0.1.md`.
+//! Receipt validation per `docs/specs/RECEIPT_SPEC_v0.1.md`.
 //!
-//! Implements the canonical receipt structure, SCALE encoding, BLAKE3
-//! receipt hash, Ed25519 signature verification, and the v1 minimal
-//! validation rules (version, signature, duplicate `task_id`).
+//! The canonical [`Receipt`] data type — struct, SCALE encoding,
+//! `signing_payload()`, `receipt_hash()` — lives in `mbongo-core`
+//! (relocated under RFC 0002 §6.1–6.2) and is re-exported here for
+//! compatibility. This module owns all validation judgment: version
+//! rules, Ed25519 receipt-signature verification, and duplicate
+//! detection through the read-only [`ReceiptIndex`] port.
 //!
 //! This module is a pure library: it performs no I/O and holds no chain
-//! state. Duplicate detection is abstracted behind the read-only
-//! [`ReceiptIndex`] trait; persistent storage integration is a separate,
-//! later step. Validation never mutates the index.
+//! state. Persistent duplicate-index composition happens in the node
+//! layer; validation never mutates an index.
 
 #![allow(clippy::module_name_repetitions)]
 
-use mbongo_core::crypto::blake3_hash;
-use mbongo_core::{Address, Hash};
-use parity_scale_codec::{Decode, Encode};
+pub use mbongo_core::Receipt;
+use parity_scale_codec::Decode;
 
 /// The only receipt version accepted by this spec revision.
 pub const RECEIPT_VERSION: u8 = 1;
 
-/// Canonical receipt structure (`RECEIPT_SPEC_v0.1` Section 2).
+/// Verifies that `receipt.signature` is a valid Ed25519 signature over
+/// the raw 32-byte receipt hash by `receipt.executor`.
 ///
-/// Field order is fixed and matches the spec's canonical SCALE encoding
-/// order: `version`, `task_id`, `input_commitment`, `output_commitment`,
-/// `executor`, `metadata`, `signature`. Adding, removing, or reordering
-/// fields is a breaking change.
-#[derive(Clone, PartialEq, Eq, Debug, Encode, Decode)]
-pub struct Receipt {
-    /// Protocol version. Must be 1 for this spec.
-    pub version: u8,
-    /// Unique task identifier. Opaque to the chain.
-    pub task_id: [u8; 32],
-    /// Commitment to the input (e.g. BLAKE3 of input). Opaque to the chain.
-    pub input_commitment: [u8; 32],
-    /// Commitment to the output (e.g. BLAKE3 of output). Opaque to the chain.
-    pub output_commitment: [u8; 32],
-    /// Ed25519 public key of the executor.
-    pub executor: Address,
-    /// Opaque metadata. Never interpreted by the protocol.
-    pub metadata: Vec<u8>,
-    /// Ed25519 signature over the raw 32-byte receipt hash.
-    pub signature: [u8; 64],
+/// Signature verification is validation, owned by this crate — it does
+/// not travel with the data type (RFC 0002 §6.1).
+#[must_use]
+pub fn verify_receipt_signature(receipt: &Receipt) -> bool {
+    use ed25519_dalek::{Signature, Verifier};
+    let Ok(pk) = ed25519_dalek::VerifyingKey::from_bytes(&receipt.executor.0) else {
+        return false;
+    };
+    let sig = Signature::from_bytes(&receipt.signature);
+    pk.verify(&receipt.receipt_hash().0, &sig).is_ok()
 }
 
-impl Receipt {
-    /// Returns the SCALE-encoded signing payload: all fields except
-    /// `signature`, in canonical order.
-    #[must_use]
-    pub fn signing_payload(&self) -> Vec<u8> {
-        #[derive(Encode)]
-        struct Payload<'a> {
-            version: u8,
-            task_id: &'a [u8; 32],
-            input_commitment: &'a [u8; 32],
-            output_commitment: &'a [u8; 32],
-            executor: &'a Address,
-            metadata: &'a Vec<u8>,
-        }
-        Payload {
-            version: self.version,
-            task_id: &self.task_id,
-            input_commitment: &self.input_commitment,
-            output_commitment: &self.output_commitment,
-            executor: &self.executor,
-            metadata: &self.metadata,
-        }
-        .encode()
+/// Validates a receipt against the v1 minimal rules
+/// (`RECEIPT_SPEC_v0.1` Section 5): version, signature, and duplicate
+/// `task_id`. Read-only: the index is never mutated; anchoring
+/// (insertion) belongs to the consensus/storage integration.
+///
+/// This checks a *standalone* receipt only. Transaction-level anchoring
+/// rules (e.g. `sender == executor`) are orchestrated by the node layer
+/// and are not part of receipt validity (RFC 0002 §2).
+///
+/// # Errors
+///
+/// - [`ReceiptError::UnsupportedVersion`] if `version != 1`.
+/// - [`ReceiptError::InvalidSignature`] if the signature does not verify.
+/// - [`ReceiptError::DuplicateTaskId`] if `task_id` is already anchored.
+/// - [`ReceiptError::Index`] if the index lookup fails.
+pub fn validate_receipt(receipt: &Receipt, index: &impl ReceiptIndex) -> Result<(), ReceiptError> {
+    if receipt.version != RECEIPT_VERSION {
+        return Err(ReceiptError::UnsupportedVersion(receipt.version));
     }
-
-    /// Computes the receipt hash: `BLAKE3(SCALE_encode(signing payload))`
-    /// (`RECEIPT_SPEC_v0.1` Section 4).
-    ///
-    /// The returned [`Hash`] displays as `0x` + 64 lowercase hex characters;
-    /// signing and verification use its raw 32 bytes, never the hex string.
-    #[must_use]
-    pub fn receipt_hash(&self) -> Hash {
-        Hash(blake3_hash(&self.signing_payload()))
+    if !verify_receipt_signature(receipt) {
+        return Err(ReceiptError::InvalidSignature);
     }
-
-    /// Verifies that `signature` is a valid Ed25519 signature over the raw
-    /// 32-byte receipt hash by `executor`.
-    #[must_use]
-    pub fn verify_signature(&self) -> bool {
-        use ed25519_dalek::{Signature, Verifier};
-        let Ok(pk) = ed25519_dalek::VerifyingKey::from_bytes(&self.executor.0) else {
-            return false;
-        };
-        let sig = Signature::from_bytes(&self.signature);
-        pk.verify(&self.receipt_hash().0, &sig).is_ok()
+    if index.contains_task_id(&receipt.task_id)? {
+        return Err(ReceiptError::DuplicateTaskId);
     }
-
-    /// Validates the receipt against the v1 minimal rules
-    /// (`RECEIPT_SPEC_v0.1` Section 5): version, signature, and duplicate
-    /// `task_id`. Read-only: the index is never mutated; anchoring
-    /// (insertion) belongs to a later storage integration step.
-    ///
-    /// # Errors
-    ///
-    /// - [`ReceiptError::UnsupportedVersion`] if `version != 1`.
-    /// - [`ReceiptError::InvalidSignature`] if the signature does not verify.
-    /// - [`ReceiptError::DuplicateTaskId`] if `task_id` is already anchored.
-    /// - [`ReceiptError::Index`] if the index lookup fails.
-    pub fn validate(&self, index: &impl ReceiptIndex) -> Result<(), ReceiptError> {
-        if self.version != RECEIPT_VERSION {
-            return Err(ReceiptError::UnsupportedVersion(self.version));
-        }
-        if !self.verify_signature() {
-            return Err(ReceiptError::InvalidSignature);
-        }
-        if index.contains_task_id(&self.task_id)? {
-            return Err(ReceiptError::DuplicateTaskId);
-        }
-        Ok(())
-    }
+    Ok(())
 }
 
 /// Decodes a receipt from SCALE bytes, then validates it.
@@ -122,13 +70,13 @@ impl Receipt {
 /// # Errors
 ///
 /// [`ReceiptError::Decode`] if the bytes are not a valid SCALE-encoded
-/// receipt; otherwise any error from [`Receipt::validate`].
+/// receipt; otherwise any error from [`validate_receipt`].
 pub fn decode_and_validate(
     bytes: &[u8],
     index: &impl ReceiptIndex,
 ) -> Result<Receipt, ReceiptError> {
     let receipt = Receipt::decode(&mut &bytes[..]).map_err(ReceiptError::Decode)?;
-    receipt.validate(index)?;
+    validate_receipt(&receipt, index)?;
     Ok(receipt)
 }
 
@@ -167,7 +115,8 @@ pub trait ReceiptIndex {
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
-    use mbongo_core::crypto::hash_to_hex;
+    use mbongo_core::Address;
+    use parity_scale_codec::Encode;
 
     /// In-memory receipt index, test-only. Not a persistence layer;
     /// storage-backed indexing is a separate, later integration step.
@@ -182,7 +131,7 @@ mod tests {
         }
 
         /// Records `task_id` as anchored. Setup helper; never called by
-        /// [`Receipt::validate`].
+        /// [`validate_receipt`].
         fn insert_task_id(&mut self, task_id: [u8; 32]) {
             self.anchored.insert(task_id);
         }
@@ -220,72 +169,10 @@ mod tests {
     }
 
     #[test]
-    fn scale_roundtrip() {
-        let receipt = signed_receipt(&test_signing_key());
-        let encoded = receipt.encode();
-        let decoded = Receipt::decode(&mut &encoded[..]).unwrap();
-        assert_eq!(decoded, receipt);
-    }
-
-    #[test]
-    fn encoded_field_order_is_canonical() {
-        let receipt = signed_receipt(&test_signing_key());
-        let encoded = receipt.encode();
-
-        // Manually assemble the canonical encoding: version, task_id,
-        // input_commitment, output_commitment, executor, metadata
-        // (compact length prefix + bytes), signature.
-        let mut expected = Vec::new();
-        expected.push(receipt.version);
-        expected.extend_from_slice(&receipt.task_id);
-        expected.extend_from_slice(&receipt.input_commitment);
-        expected.extend_from_slice(&receipt.output_commitment);
-        expected.extend_from_slice(&receipt.executor.0);
-        // SCALE compact encoding of len 3 is (3 << 2) = 0x0C.
-        expected.push(0x0C);
-        expected.extend_from_slice(&receipt.metadata);
-        expected.extend_from_slice(&receipt.signature);
-
-        assert_eq!(encoded, expected);
-    }
-
-    #[test]
-    fn receipt_hash_is_deterministic() {
-        let receipt = signed_receipt(&test_signing_key());
-        assert_eq!(receipt.receipt_hash(), receipt.receipt_hash());
-        assert_eq!(receipt.clone().receipt_hash(), receipt.receipt_hash());
-    }
-
-    #[test]
-    fn receipt_hash_fixed_test_vector() {
-        // Fixed vector: any change to encoding order or hash inputs breaks
-        // this test. Fields are the unsigned_receipt constants with the
-        // executor derived from seed [42u8; 32].
-        let receipt = unsigned_receipt(Address(test_signing_key().verifying_key().to_bytes()));
-
-        // Cross-check: the hash must equal BLAKE3 over the manually
-        // assembled signing payload (all fields except signature).
-        let mut payload = Vec::new();
-        payload.push(receipt.version);
-        payload.extend_from_slice(&receipt.task_id);
-        payload.extend_from_slice(&receipt.input_commitment);
-        payload.extend_from_slice(&receipt.output_commitment);
-        payload.extend_from_slice(&receipt.executor.0);
-        payload.push(0x0C); // SCALE compact length prefix for 3 bytes
-        payload.extend_from_slice(&receipt.metadata);
-        assert_eq!(receipt.receipt_hash().0, blake3_hash(&payload));
-
-        assert_eq!(
-            hash_to_hex(&receipt.receipt_hash().0),
-            "56510bc65a92b2655cbeba66b4c219705862d431181a244b0ce37ca04322a0f1"
-        );
-    }
-
-    #[test]
     fn valid_signature_passes_validation() {
         let receipt = signed_receipt(&test_signing_key());
         let index = InMemoryReceiptIndex::new();
-        assert!(receipt.validate(&index).is_ok());
+        assert!(validate_receipt(&receipt, &index).is_ok());
     }
 
     #[test]
@@ -294,7 +181,7 @@ mod tests {
         receipt.output_commitment = [9u8; 32];
         let index = InMemoryReceiptIndex::new();
         assert!(matches!(
-            receipt.validate(&index),
+            validate_receipt(&receipt, &index),
             Err(ReceiptError::InvalidSignature)
         ));
     }
@@ -307,7 +194,7 @@ mod tests {
         receipt.executor = Address(other.verifying_key().to_bytes());
         let index = InMemoryReceiptIndex::new();
         assert!(matches!(
-            receipt.validate(&index),
+            validate_receipt(&receipt, &index),
             Err(ReceiptError::InvalidSignature)
         ));
     }
@@ -322,7 +209,7 @@ mod tests {
         receipt.signature = sk.sign(&receipt.receipt_hash().0).to_bytes();
         let index = InMemoryReceiptIndex::new();
         assert!(matches!(
-            receipt.validate(&index),
+            validate_receipt(&receipt, &index),
             Err(ReceiptError::UnsupportedVersion(2))
         ));
     }
@@ -331,20 +218,12 @@ mod tests {
     fn duplicate_task_id_rejected() {
         let receipt = signed_receipt(&test_signing_key());
         let mut index = InMemoryReceiptIndex::new();
-        assert!(receipt.validate(&index).is_ok());
+        assert!(validate_receipt(&receipt, &index).is_ok());
         index.insert_task_id(receipt.task_id);
         assert!(matches!(
-            receipt.validate(&index),
+            validate_receipt(&receipt, &index),
             Err(ReceiptError::DuplicateTaskId)
         ));
-    }
-
-    #[test]
-    fn signature_excluded_from_receipt_hash() {
-        let receipt = signed_receipt(&test_signing_key());
-        let mut resigned = receipt.clone();
-        resigned.signature = [0xFFu8; 64];
-        assert_eq!(receipt.receipt_hash(), resigned.receipt_hash());
     }
 
     #[test]

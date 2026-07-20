@@ -256,7 +256,10 @@ async fn write_length_delimited<T: AsyncWrite + Unpin>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mbongo_core::{Address, Block, BlockBody, BlockHeader, Hash, Transaction, TransactionType};
+    use mbongo_core::{
+        Address, Block, BlockBody, BlockHeader, Hash, Transaction, TransactionPayload,
+        TransactionType,
+    };
     use parity_scale_codec::{Decode, Encode};
 
     #[test]
@@ -312,6 +315,7 @@ mod tests {
                     receiver: Address([2u8; 32]),
                     amount: 100,
                     nonce: 0,
+                    payload: TransactionPayload::None,
                     signature: [0u8; 64],
                 }],
             },
