@@ -91,8 +91,10 @@ foreach ($node in $DevnetNodes) {
 Write-Host ''
 Write-Host '── Convergence ────────────────────────────────────────────────'
 if ($heights.Count -eq $DevnetNodes.Count) {
-    $uniqueHeights = $heights.Values | Sort-Object -Unique
-    $uniqueHashes = $hashes.Values | Sort-Object -Unique
+    # Force arrays: Sort-Object -Unique returning one value unwraps to a
+    # scalar in PowerShell 5.1, which has no .Count under StrictMode.
+    $uniqueHeights = @($heights.Values | Sort-Object -Unique)
+    $uniqueHashes = @($hashes.Values | Sort-Object -Unique)
     if (($uniqueHeights.Count -eq 1) -and ($uniqueHashes.Count -eq 1)) {
         Write-Host "  CONVERGED at height $($uniqueHeights[0])"
     } elseif ([math]::Abs([int64]($heights.Values | Measure-Object -Maximum).Maximum - [int64]($heights.Values | Measure-Object -Minimum).Minimum) -le 1) {

@@ -86,7 +86,11 @@ try {
     Copy-IntoStaging $ManifestPath 'manifest.json'
     Copy-IntoStaging $ReceiptToolManifestPath 'receipt-tool-manifest.json'
 
-    $stagedFiles = Get-ChildItem $staging -Recurse -File
+    # Force an array: Get-ChildItem returning one file unwraps to a scalar
+    # FileInfo in PowerShell 5.1, which has no .Count under StrictMode
+    # (reachable when only manifest.json is staged, e.g. a built but
+    # never-started deployment).
+    $stagedFiles = @(Get-ChildItem $staging -Recurse -File)
     if ($stagedFiles.Count -eq 0) { throw 'Nothing was staged; refusing to write an empty backup.' }
     $fileList = $stagedFiles | ForEach-Object { $_.FullName.Substring($staging.Length + 1) }
 
