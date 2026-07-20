@@ -82,8 +82,16 @@ pub trait BlockBroadcaster: Send + Sync {
     fn broadcast(&self, block: Block);
 }
 
-/// Protocol version string exchanged during identify handshake.
-const PROTOCOL_VERSION: &str = "/mbongo/0.1.0";
+/// Protocol version string exchanged during the libp2p Identify
+/// handshake.
+///
+/// v0.3: this is **informational metadata only** — peers advertise it but
+/// nothing gates on it, and it must never grow fallback or admission
+/// logic. The authoritative compatibility gates are the Sync and Block
+/// Notify protocol negotiations ([`SYNC_PROTOCOL`],
+/// [`BLOCK_NOTIFY_PROTOCOL`]), which fail deterministically across
+/// versions.
+const IDENTIFY_PROTOCOL_VERSION: &str = "/mbongo/0.3.0";
 
 /// Agent version string exchanged during identify handshake.
 const AGENT_VERSION: &str = "mbongo-node/0.1.0";
@@ -154,7 +162,7 @@ impl P2PNode {
             )?
             .with_behaviour(|key| {
                 let identify = identify::Behaviour::new(
-                    identify::Config::new(PROTOCOL_VERSION.to_string(), key.public())
+                    identify::Config::new(IDENTIFY_PROTOCOL_VERSION.to_string(), key.public())
                         .with_agent_version(AGENT_VERSION.to_string()),
                 );
                 let mdns = mdns::tokio::Behaviour::new(
@@ -546,5 +554,18 @@ impl BlockBroadcaster for ChannelBroadcaster {
         if self.tx.send(block).is_err() {
             warn!("P2P broadcast channel closed; block not broadcast");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::IDENTIFY_PROTOCOL_VERSION;
+
+    #[test]
+    fn identify_protocol_version_pinned() {
+        // Locked identifier (PROTOCOL_LOCK_v0.3): informational Identify
+        // metadata only — never a negotiation gate. Changing it is a
+        // protocol version bump.
+        assert_eq!(IDENTIFY_PROTOCOL_VERSION, "/mbongo/0.3.0");
     }
 }

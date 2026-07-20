@@ -14,10 +14,17 @@ use parity_scale_codec::{Decode, Encode};
 pub const MAX_RANGE: u64 = 256;
 
 /// Protocol name used for libp2p request/response negotiation.
-pub const SYNC_PROTOCOL: &str = "/mbongo-sync/1";
+///
+/// v0.3 (RFC 0002 Phase 4): bumped from `/mbongo-sync/1` so v0.2 and
+/// v0.3 nodes fail cleanly at negotiation instead of exchanging
+/// undecodable payloads. There is deliberately no v0.2 fallback.
+pub const SYNC_PROTOCOL: &str = "/mbongo-sync/2";
 
 /// Protocol name for block announcement push notifications.
-pub const BLOCK_NOTIFY_PROTOCOL: &str = "/mbongo/block_notify/0.1.0";
+///
+/// v0.3 (RFC 0002 Phase 4): bumped from `/mbongo/block_notify/0.1.0`;
+/// same rationale as [`SYNC_PROTOCOL`], no v0.2 fallback.
+pub const BLOCK_NOTIFY_PROTOCOL: &str = "/mbongo/block_notify/0.2.0";
 
 // ── Request ────────────────────────────────────────────────────────────
 
@@ -350,6 +357,20 @@ mod tests {
     #[test]
     fn max_range_is_256() {
         assert_eq!(MAX_RANGE, 256);
+    }
+
+    #[test]
+    fn sync_protocol_string_pinned() {
+        // Locked surface (PROTOCOL_LOCK_v0.3): changing this string is a
+        // protocol version bump and requires an RFC.
+        assert_eq!(SYNC_PROTOCOL, "/mbongo-sync/2");
+    }
+
+    #[test]
+    fn block_notify_protocol_string_pinned() {
+        // Locked surface (PROTOCOL_LOCK_v0.3): changing this string is a
+        // protocol version bump and requires an RFC.
+        assert_eq!(BLOCK_NOTIFY_PROTOCOL, "/mbongo/block_notify/0.2.0");
     }
 
     #[test]
