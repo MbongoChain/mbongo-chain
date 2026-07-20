@@ -24,6 +24,8 @@ pub struct InMemoryStorage {
     tx_seq_index: RwLock<HashMap<Vec<u8>, Vec<u8>>>,
     /// Stores metadata values under fixed keys.
     meta: RwLock<HashMap<Vec<u8>, Vec<u8>>>,
+    /// Maps task id (32 bytes) → opaque receipt bytes.
+    receipts: RwLock<HashMap<Vec<u8>, Vec<u8>>>,
 }
 
 impl InMemoryStorage {
@@ -37,6 +39,7 @@ impl InMemoryStorage {
             height_index: RwLock::new(HashMap::new()),
             tx_seq_index: RwLock::new(HashMap::new()),
             meta: RwLock::new(HashMap::new()),
+            receipts: RwLock::new(HashMap::new()),
         }
     }
 }
@@ -200,6 +203,16 @@ impl Storage for InMemoryStorage {
         Ok(())
     }
 
+    fn has_receipt(&self, task_id: &[u8; 32]) -> Result<bool, StorageError> {
+        let map = self.receipts.read().map_err(|_| StorageError::Database)?;
+        Ok(map.contains_key(task_id.as_slice()))
+    }
+
+    fn get_receipt(&self, task_id: &[u8; 32]) -> Result<Option<Vec<u8>>, StorageError> {
+        let map = self.receipts.read().map_err(|_| StorageError::Database)?;
+        Ok(map.get(task_id.as_slice()).cloned())
+    }
+
     fn write_batch(&self, ops: Vec<BatchOp>) -> Result<(), StorageError> {
         // Acquire all locks up front to guarantee atomicity.
         let mut accounts = self.accounts.write().map_err(|_| StorageError::Database)?;
@@ -208,6 +221,7 @@ impl Storage for InMemoryStorage {
         let mut height_index = self.height_index.write().map_err(|_| StorageError::Database)?;
         let mut tx_seq_index = self.tx_seq_index.write().map_err(|_| StorageError::Database)?;
         let mut meta = self.meta.write().map_err(|_| StorageError::Database)?;
+        let mut receipts = self.receipts.write().map_err(|_| StorageError::Database)?;
 
         let mut max_height: Option<u64> = None;
 
@@ -238,6 +252,9 @@ impl Storage for InMemoryStorage {
                 BatchOp::SetLastIncludedTxSeq(seq) => {
                     meta.insert(b"last_included_tx_seq".to_vec(), seq.to_be_bytes().to_vec());
                 }
+                BatchOp::PutReceipt(task_id, bytes) => {
+                    receipts.insert(task_id.to_vec(), bytes);
+                }
             }
         }
 
@@ -257,5 +274,35 @@ impl Storage for InMemoryStorage {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A failing batch must write nothing. write_batch acquires all locks
+    /// up front; poisoning the accounts lock makes acquisition fail before
+    /// any map is mutated, so the receipt op must not be applied.
+    #[test]
+    fn write_batch_failure_writes_no_receipt() {
+        let store = InMemoryStorage::new();
+        let task_id = [0x5Au8; 32];
+
+        // Poison the accounts lock from another thread.
+        std::thread::scope(|s| {
+            let handle = s.spawn(|| {
+                let _guard = store.accounts.write().unwrap();
+                panic!("poison accounts lock");
+            });
+            assert!(handle.join().is_err());
+        });
+
+        let result = store.write_batch(vec![BatchOp::PutReceipt(task_id, vec![1, 2, 3])]);
+        assert!(result.is_err(), "batch must fail with a poisoned lock");
+
+        // The receipts map is untouched: the failed batch wrote nothing.
+        assert!(!store.has_receipt(&task_id).unwrap());
+        assert!(store.get_receipt(&task_id).unwrap().is_none());
     }
 }
