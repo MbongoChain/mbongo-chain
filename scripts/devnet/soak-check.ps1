@@ -252,7 +252,13 @@ function Invoke-SoakSample {
         Write-SoakEvent "CONVERGENCE state changed: $prevClass -> $classification"
     }
 
-    $uptimeSec = [math]::Round(($now - [datetime]$session.startedAtUtc).TotalSeconds)
+    # Uptime is derived from true UTC instants (DateTimeOffset), using the
+    # very timestamp recorded in this row so the two always agree. An
+    # implicit [datetime] cast would yield a Kind=Local value and add the
+    # host's UTC offset to every sample.
+    $uptimeSec = [math]::Round((
+        (ConvertFrom-IsoUtc $ts) - (ConvertFrom-IsoUtc $session.startedAtUtc)
+    ).TotalSeconds)
     $sessionRow = New-SoakRow @{
         timestampUtc = $ts; scope = 'session'
         allReachable = $allReachable; heightSpread = $spread
@@ -312,11 +318,14 @@ try {
     Invoke-SoakSample
     if ($Loop) {
         while ($true) {
+            # Planned end is start-instant + PlannedHours, compared as true
+            # UTC instants (DateTimeOffset). A [datetime] cast here would
+            # make the sampler stop one local-UTC-offset early.
             $plannedEnd = $null
             if (("$($session.plannedHours)" -ne '') -and ([double]$session.plannedHours -gt 0)) {
-                $plannedEnd = ([datetime]$session.startedAtUtc).AddHours([double]$session.plannedHours)
+                $plannedEnd = (ConvertFrom-IsoUtc $session.startedAtUtc).AddHours([double]$session.plannedHours)
             }
-            if (($null -ne $plannedEnd) -and ((Get-Date).ToUniversalTime() -ge $plannedEnd)) {
+            if (($null -ne $plannedEnd) -and ([System.DateTimeOffset]::UtcNow -ge $plannedEnd)) {
                 Write-SoakEvent 'planned duration reached; sampler exiting'
                 break
             }

@@ -344,12 +344,32 @@ header, per-record column count, and the convergence column, and returns
 **FAIL** ("invalid CSV schema/data") on any malformed input rather than a
 misleading PASS.
 
-> **Invalid session (do not use).** The first attempted real soak,
-> `soak-20260720-212722-v03-72h-baseline`, was written before this CSV
-> fix on a French-locale host and is corrupted (decimal commas shifted
-> columns). It is invalid test data and must be discarded. Runtime
-> session data is never committed to Git; the next real soak begins in a
-> **new** session directory created by `start-soak.ps1` after the fix.
+**Timestamp handling.** All persisted timestamps are written as
+round-trip ISO-8601 UTC (`...Z`) and parsed back with
+`ConvertFrom-IsoUtc` (`DateTimeOffset.Parse` with `InvariantCulture` +
+`RoundtripKind`). Session uptime, planned-duration end, report
+start/end/duration, expected-sample count, and gap detection all compare
+true UTC instants. An implicit `[datetime]` cast must never be used: it
+converts `...Z` to local wall-clock with `Kind=Local`, and PowerShell
+does not normalize `Kind` when subtracting or comparing, which silently
+adds the host's UTC offset.
+
+> **Invalid sessions (do not use).** The early real-soak attempts are
+> invalid test data and must be discarded:
+>
+> 1. `soak-20260720-212722-v03-72h-baseline` — written before the CSV
+>    locale fix on a French-locale host; decimal commas shifted columns.
+> 2. `soak-20260720-224028-v03-72h-baseline-2` and
+>    `soak-20260720-225517-v03-72h-baseline-2` — written before the UTC
+>    parsing fix; every `sessionUptimeSec` carries a constant +14400 s
+>    (four-hour) offset on this America/Toronto host, and the planned
+>    duration would have ended four hours early.
+>
+> `soak-report.ps1` now rejects all of them automatically — the first for
+> invalid CSV schema/data, the others for uptime-vs-elapsed
+> disagreement. Runtime session data is never committed to Git; the
+> replacement soak begins in a **new** session directory created by
+> `start-soak.ps1` after the fix.
 
 ---
 

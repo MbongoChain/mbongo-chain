@@ -69,6 +69,24 @@ $SoakThresholds = @{
     MissingSampleFailPercent  = 20    # missing samples -> FAIL
 }
 
+# --- UTC-safe timestamp parsing -----------------------------------------
+# Parses a persisted ISO-8601 timestamp into a DateTimeOffset, preserving
+# the true UTC instant regardless of the host time zone.
+#
+# An implicit [datetime] cast of "....Z" converts the value to LOCAL
+# wall-clock time and tags it Kind=Local. PowerShell's subtraction and
+# comparison operators on DateTime do NOT normalize Kind, so mixing that
+# with a Kind=Utc value (e.g. (Get-Date).ToUniversalTime()) silently adds
+# the local UTC offset -- on an America/Toronto host that is +14400
+# seconds. Always parse persisted timestamps with this helper and do the
+# arithmetic on DateTimeOffset instants.
+function ConvertFrom-IsoUtc([string]$Value) {
+    return [System.DateTimeOffset]::Parse(
+        $Value,
+        [System.Globalization.CultureInfo]::InvariantCulture,
+        [System.Globalization.DateTimeStyles]::RoundtripKind)
+}
+
 # --- Soak CSV schema (single source of truth) ---------------------------
 # The 29 columns in fixed order. Rows are built as ordered PSCustomObjects
 # with exactly these properties and serialized through ConvertTo-Csv, so

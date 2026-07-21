@@ -95,6 +95,23 @@ foreach ($r in $rows) {
         exit 1
     }
 }
+# Timestamp sanity: each session row's recorded sessionUptimeSec must
+# agree with the elapsed time derived from the UTC instants. Sessions
+# written before the UTC parsing fix carry a constant local-UTC-offset
+# error (e.g. +14400 s on America/Toronto) and are rejected here.
+$UptimeToleranceSec = 120
+foreach ($sr in $sessionRows) {
+    if ("$($sr.sessionUptimeSec)" -eq '') { continue }
+    $elapsed = ((ConvertFrom-IsoUtc $sr.timestampUtc) -
+        (ConvertFrom-IsoUtc $session.startedAtUtc)).TotalSeconds
+    $drift = [math]::Abs([double]$sr.sessionUptimeSec - $elapsed)
+    if ($drift -gt $UptimeToleranceSec) {
+        $elapsedInt = [math]::Round($elapsed)
+        $driftInt = [math]::Round($drift)
+        Write-InvalidCsvReport "sessionUptimeSec $($sr.sessionUptimeSec) disagrees with elapsed ${elapsedInt}s by ${driftInt}s (UTC parsing bug in the writing sampler)"
+        exit 1
+    }
+}
 
 # Wrap the whole if-expression in @() so a single-line events.log does
 # not unwrap to a scalar string (which lacks .Count under StrictMode).
@@ -105,9 +122,12 @@ $th = $session.thresholds
 $intervalMin = [double]$session.intervalMinutes
 
 # --- Time and sample accounting ---------------------------------------
-$startUtc = [datetime]$session.startedAtUtc
-$firstSample = [datetime]$sessionRows[0].timestampUtc
-$lastSample = [datetime]$sessionRows[-1].timestampUtc
+# All timestamp arithmetic uses true UTC instants (DateTimeOffset); an
+# implicit [datetime] cast yields Kind=Local values whose Kind PowerShell
+# does not normalize when subtracting.
+$startUtc = ConvertFrom-IsoUtc $session.startedAtUtc
+$firstSample = ConvertFrom-IsoUtc $sessionRows[0].timestampUtc
+$lastSample = ConvertFrom-IsoUtc $sessionRows[-1].timestampUtc
 $durationMin = [math]::Max(0, ($lastSample - $startUtc).TotalMinutes)
 $expectedSamples = [math]::Floor($durationMin / $intervalMin) + 1
 $actualSamples = $sessionRows.Count
@@ -117,7 +137,8 @@ $missingPct = if ($expectedSamples -gt 0) { [math]::Round(100.0 * $missing / $ex
 # Gaps: consecutive session samples farther apart than 1.5x interval.
 $gaps = @()
 for ($i = 1; $i -lt $sessionRows.Count; $i++) {
-    $dt = ([datetime]$sessionRows[$i].timestampUtc - [datetime]$sessionRows[$i - 1].timestampUtc).TotalMinutes
+    $dt = ((ConvertFrom-IsoUtc $sessionRows[$i].timestampUtc) -
+        (ConvertFrom-IsoUtc $sessionRows[$i - 1].timestampUtc)).TotalMinutes
     if ($dt -gt (1.5 * $intervalMin)) {
         $gaps += "gap of $([math]::Round($dt,1)) min after $($sessionRows[$i-1].timestampUtc)"
     }
