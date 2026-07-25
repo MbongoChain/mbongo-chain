@@ -92,6 +92,44 @@ function Get-BlockJson([int]$Port, [long]$Height) {
     } catch { return $null }
 }
 
+# Resolves the spread used ONLY for convergence classification, leaving
+# the raw observed spread (recorded in the CSV session row) untouched.
+#
+# The three nodes are read sequentially over RPC, so a block boundary
+# crossed mid-read can make one node appear exactly one block ahead of
+# another even though the cluster is fully converged. When everything is
+# otherwise healthy (all nodes reachable, ancestry consistent) and the
+# raw spread is exactly one block, this waits briefly and re-reads ONLY
+# the three heights: a confirmation spread of 0 means the earlier gap was
+# a non-atomic-read artifact and 0 is used for classification. If the
+# gap persists, a re-read fails, or the wrong number of heights is
+# returned, the raw spread is kept so genuine skew/divergence is never
+# hidden. This never touches producerDelta, heightDelta, or any raw
+# per-node metric.
+function Resolve-ClassificationSpread {
+    param(
+        [long]$RawSpread,
+        [bool]$AllReachable,
+        [bool]$TipsConsistent,
+        [int]$ExpectedNodeCount,
+        [scriptblock]$HeightReader,
+        [int]$DelaySeconds = 1
+    )
+    $classificationSpread = $RawSpread
+    if ($AllReachable -and $TipsConsistent -and ($RawSpread -eq 1)) {
+        if ($DelaySeconds -gt 0) { Start-Sleep -Seconds $DelaySeconds }
+        $confirm = $null
+        try { $confirm = @(& $HeightReader) } catch { $confirm = $null }
+        if (($null -ne $confirm) -and (@($confirm).Count -eq $ExpectedNodeCount)) {
+            $vals = @($confirm | ForEach-Object { [long]$_ })
+            $cSpread = [long]($vals | Measure-Object -Maximum).Maximum -
+                [long]($vals | Measure-Object -Minimum).Minimum
+            if ($cSpread -eq 0) { $classificationSpread = 0 }
+        }
+    }
+    return $classificationSpread
+}
+
 # --- One sample --------------------------------------------------------
 function Invoke-SoakSample {
     $now = (Get-Date).ToUniversalTime()
@@ -239,8 +277,22 @@ function Invoke-SoakSample {
         }
     }
 
+    # The raw spread above stays in the CSV as the observed measurement.
+    # For classification only, confirm a 1-block spread with a brief
+    # re-read of just the heights, to absorb non-atomic sequential RPC
+    # reads (a block boundary crossed while polling the three nodes).
+    $rawSpreadNum = $(if ("$spread" -eq '') { 0 } else { [long]$spread })
+    $classificationSpread = Resolve-ClassificationSpread `
+        -RawSpread $rawSpreadNum -AllReachable $allReachable -TipsConsistent $tipsConsistent `
+        -ExpectedNodeCount $DevnetNodes.Count `
+        -HeightReader {
+            $h = @()
+            foreach ($n in $DevnetNodes) { $h += [long](Get-DevnetHeight $n.Rpc) }
+            $h
+        }
+
     $classification = Get-ConvergenceClassification -AllReachable $allReachable `
-        -HeightSpread $(if ("$spread" -eq '') { 0 } else { [long]$spread }) `
+        -HeightSpread $classificationSpread `
         -TipsConsistent $tipsConsistent -ProducerDelta $producerDelta `
         -SkewAllowance ([int]$session.thresholds.ConvergenceSkewBlocks)
 
