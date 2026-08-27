@@ -362,6 +362,185 @@ function Get-RunningNodeProcess([hashtable]$Node) {
     return $proc
 }
 
+# ── Soak sampler identity & lifecycle (pure / injectable) ────────────────
+# stop-soak must recognize THIS session's live sampler before stopping it,
+# and must never (a) kill an unrelated PowerShell process, nor (b) declare a
+# genuinely-live sampler "stale" and delete its PID file + emit a premature
+# report. The decision is factored into these pure functions (no process I/O
+# here) so it is fully unit-testable: the caller gathers the live facts and
+# passes them in.
+
+# Case-insensitive test that a command line references a script by its leaf
+# name (e.g. 'soak-check.ps1'). Ordinal IndexOf, so any characters in the
+# name are treated literally (never as wildcards).
+function Test-CommandLineReferencesLeaf([string]$CommandLine, [string]$Leaf) {
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) { return $false }
+    if ([string]::IsNullOrWhiteSpace($Leaf)) { return $false }
+    return ($CommandLine.IndexOf($Leaf, [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
+}
+
+# Case-insensitive test that a command line references an absolute path as a
+# WHOLE path token. Normalizes separators (so '/' vs '\' does not matter),
+# tolerates a trailing separator, but refuses to match a longer sibling
+# directory: path 'C:\a\smoke' must NOT match a command line that contains
+# only 'C:\a\smoke-2'. This replaces the previous `-like "*$SessionPath*"`
+# check, which was wildcard-unsafe, separator- and trailing-slash-sensitive,
+# and permissive to sibling prefixes.
+function Test-CommandLineReferencesPath([string]$CommandLine, [string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) { return $false }
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    $needle = $null
+    try { $needle = ([System.IO.Path]::GetFullPath($Path)).TrimEnd('\') } catch { return $false }
+    if ([string]::IsNullOrWhiteSpace($needle)) { return $false }
+    $hay = $CommandLine.Replace('/', '\')
+    $start = 0
+    while ($true) {
+        $idx = $hay.IndexOf($needle, $start, [System.StringComparison]::OrdinalIgnoreCase)
+        if ($idx -lt 0) { return $false }
+        $after = $idx + $needle.Length
+        if ($after -ge $hay.Length) { return $true }
+        $c = $hay[$after]
+        # A separator, whitespace, or a closing quote ends the path token.
+        if (($c -eq '\') -or ($c -eq ' ') -or ($c -eq "`t") -or ($c -eq '"') -or ($c -eq "'")) { return $true }
+        $start = $after
+    }
+}
+
+# True only when the live executable is the SAME PowerShell host recorded at
+# launch: the recorded and live paths must resolve equal (case-insensitive,
+# separator-normalized) AND the leaf must be a known PowerShell host
+# (powershell.exe for Windows PowerShell 5.1, pwsh.exe for PowerShell 7+).
+# Never matches on the process name alone.
+function Test-SamePowerShellHost([string]$LiveExePath, [string]$RecordedExePath) {
+    if ([string]::IsNullOrWhiteSpace($LiveExePath)) { return $false }
+    if ([string]::IsNullOrWhiteSpace($RecordedExePath)) { return $false }
+    $live = $null; $rec = $null
+    try {
+        $live = ([System.IO.Path]::GetFullPath($LiveExePath)).TrimEnd('\')
+        $rec = ([System.IO.Path]::GetFullPath($RecordedExePath)).TrimEnd('\')
+    } catch { return $false }
+    if (-not $live.Equals($rec, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+    $leaf = [System.IO.Path]::GetFileName($live).ToLowerInvariant()
+    return (@('powershell.exe', 'pwsh.exe') -contains $leaf)
+}
+
+# Decides what stop-soak must do with a recorded sampler PID, from facts the
+# caller gathered from the live system. Pure: performs no process I/O.
+#
+# Returned Action:
+#   'report-only'  - no PID file: nothing to stop; just generate the report
+#   'stop'         - CONFIRMED this session's live sampler: stop it, confirm
+#                    death, then remove the PID file, then report
+#   'remove-stale' - the recorded sampler is genuinely not running (PID gone,
+#                    or the PID now belongs to an unrelated/foreign process):
+#                    never kill anything, remove the stale PID file, report
+#   'abort'        - a process is alive but could NOT be positively confirmed
+#                    as this session's sampler: never kill, KEEP the PID file,
+#                    do NOT report (fail closed, surface an explicit error)
+function Get-SoakSamplerDisposition {
+    param(
+        [bool]$PidFilePresent = $true,
+        [bool]$ProcessAlive,
+        [string]$RecordedExePath,
+        [string]$LiveExePath,
+        [string]$CommandLine,
+        [string]$ExpectedScript = 'soak-check.ps1',
+        [Parameter(Mandatory = $true)][string]$SessionPath,
+        [string]$RecordedStartUtc,
+        [string]$LiveStartUtc
+    )
+
+    if (-not $PidFilePresent) {
+        return [pscustomobject]@{ Action = 'report-only'; Identity = 'absent'
+            Reason = 'no sampler PID file (sampler not running or already cleaned up)'
+        }
+    }
+    if (-not $ProcessAlive) {
+        return [pscustomobject]@{ Action = 'remove-stale'; Identity = 'gone'
+            Reason = 'no live process holds the recorded PID'
+        }
+    }
+
+    # Alive: it must be positively identified before ANY action is taken.
+    # A live process whose command line cannot be read can be proven neither
+    # ours nor foreign -> fail closed rather than delete a live sampler's PID.
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) {
+        return [pscustomobject]@{ Action = 'abort'; Identity = 'indeterminate'
+            Reason = 'process is alive but its command line is inaccessible; cannot prove ownership'
+        }
+    }
+
+    $scriptMatch = Test-CommandLineReferencesLeaf -CommandLine $CommandLine -Leaf $ExpectedScript
+    $sessionMatch = Test-CommandLineReferencesPath -CommandLine $CommandLine -Path $SessionPath
+
+    if (-not ($scriptMatch -and $sessionMatch)) {
+        # Readable command line that does NOT belong to this session's
+        # sampler => the recorded PID was reused by an unrelated process (or
+        # belongs to a different session's sampler). Our sampler is not
+        # running; never kill the other process, just drop our stale pointer.
+        return [pscustomobject]@{ Action = 'remove-stale'; Identity = 'foreign'
+            Reason = 'recorded PID is held by an unrelated process (not this session''s sampler)'
+        }
+    }
+
+    # The command line positively identifies our sampler AND this session.
+    # PID-reuse guard: a genuine sampler cannot have started before we
+    # recorded its launch (allow a few seconds of slack for the pid-file
+    # write). A live process that predates the launch cannot be ours.
+    if ((-not [string]::IsNullOrWhiteSpace($RecordedStartUtc)) -and
+        (-not [string]::IsNullOrWhiteSpace($LiveStartUtc))) {
+        try {
+            $rec = ConvertFrom-IsoUtc $RecordedStartUtc
+            $liv = ConvertFrom-IsoUtc $LiveStartUtc
+            if ($liv -lt $rec.AddSeconds(-5)) {
+                return [pscustomobject]@{ Action = 'abort'; Identity = 'indeterminate'
+                    Reason = 'live process started before the recorded sampler launch; possible PID reuse'
+                }
+            }
+        } catch { }
+    }
+
+    # Validate the executable too: never stop on a command line match alone.
+    if (Test-SamePowerShellHost -LiveExePath $LiveExePath -RecordedExePath $RecordedExePath) {
+        return [pscustomobject]@{ Action = 'stop'; Identity = 'confirmed'
+            Reason = 'live PowerShell host runs the sampler script for this session'
+        }
+    }
+
+    # Command line says it is ours, but the executable could not be verified
+    # as the recorded PowerShell host. Refuse to kill (exe unverified) and
+    # refuse to purge (it looks alive and ours). Fail closed.
+    return [pscustomobject]@{ Action = 'abort'; Identity = 'indeterminate'
+        Reason = 'command line matches this session but the executable is not the recorded PowerShell host'
+    }
+}
+
+# Stops a process by PID and returns $true ONLY after confirming it is gone
+# within the timeout; $false if it is still alive afterwards. The stopper,
+# alive-probe, and sleeper are injectable so the stop/confirm decision is
+# unit-testable without spawning or killing real processes.
+function Invoke-SamplerStop {
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [int]$TimeoutSeconds = 15,
+        [scriptblock]$Stopper = { param($p) Stop-Process -Id $p -Force -Confirm:$false -ErrorAction SilentlyContinue },
+        [scriptblock]$AliveProbe = {
+            param($p)
+            $x = $null
+            try { $x = Get-Process -Id $p -ErrorAction Stop } catch { $x = $null }
+            return ($null -ne $x)
+        },
+        [scriptblock]$Sleeper = { Start-Sleep -Milliseconds 250 }
+    )
+    & $Stopper $ProcessId | Out-Null
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if (-not (& $AliveProbe $ProcessId)) { return $true }
+        & $Sleeper | Out-Null
+    }
+    return (-not (& $AliveProbe $ProcessId))
+}
+
 # ── Port helpers ────────────────────────────────────────────────────────
 function Get-PortListener([int]$Port) {
     Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue
