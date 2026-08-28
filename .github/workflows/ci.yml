@@ -149,6 +149,12 @@ jobs:
       - name: Run model unit tests
         run: python research/monetary-policy/test_model.py
 
+      # The sensitivity study imports model.py directly, so a change to the
+      # model's API can break it while the model's own tests stay green.
+      # These tests guard the experimental design, not an economic outcome.
+      - name: Run primary sensitivity tests
+        run: python research/monetary-policy/test_primary_sensitivity.py
+
       # The CLI exits non-zero when any accounting identity is violated, so
       # its exit status is the assertion.
       - name: Run deterministic 100-year simulation
