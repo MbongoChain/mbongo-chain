@@ -30,6 +30,50 @@ It is also not:
 - a cost-of-attack calculator — see *Security metrics* below;
 - a claim that any modelled adoption path will happen.
 
+## Current model scope
+
+The engine can parameterise several monetary-policy families, but **the
+scenario set in this PR deliberately does not explore the complete MBO
+monetary-policy design space.**
+
+Every scenario shipped here reuses the same primary issuance schedule —
+`initial_annual_issuance 3153600`, `step_years 5`, `step_factor 0.5` — taken
+from the schedule documented in `docs/supply_schedule.md` (0.1 MBO per block,
+halving every five years). The set therefore compares what happens **after**
+that schedule: hard-cap termination, fixed tail, percentage tail, an
+experimental adaptive tail, and adoption/stress assumptions.
+
+**`base` is not a neutral monetary baseline.** It is an illustrative benchmark
+anchored on the documented historical schedule; it varies fees, allocation,
+staking and adoption, not the issuance schedule itself.
+
+Future economic work must independently vary: initial issuance magnitude,
+primary issuance duration, decay interval, decay factor, issuance curve shape,
+hard cap, tail policy, fee structure, burn policy, and security allocation.
+This PR assigns no values to any of those.
+
+## Terminology
+
+Three quantities are routinely confused. The model keeps them separate and so
+should any document quoting it.
+
+| Term | Meaning |
+|---|---|
+| **Cumulative issuance** | Total MBO created by protocol issuance over the run |
+| **Cumulative issuance cap** | Upper bound on cumulative issuance in a hard-cap model (`monetary.cap`) |
+| **Ending supply** | Issued MBO still outstanding after modelled burns |
+
+**A cumulative issuance cap is not an ending supply.** A scenario with a
+31,536,000 cumulative issuance cap can end far below 31,536,000 once burns are
+applied — `historical_documented_partial` ends near 2.5M MBO for exactly that
+reason, because it burns its entire fee pool.
+
+A further property of the documented schedule, as reconstructed here: because
+the halving series is geometric, cumulative issuance **approaches the cap
+asymptotically without reaching it**. A 100-year run yields 31,535,969.92 MBO,
+not 31,536,000. That is a property of the schedule as modelled, not a protocol
+guarantee.
+
 ## Running it
 
 Python 3.8+ with the standard library. No third-party packages.
@@ -111,14 +155,25 @@ world", nothing more.
 
 | Family | Behaviour after the primary emission phase |
 |---|---|
-| `hard_cap` | nothing more is issued; a configured cap is never exceeded |
+| `hard_cap` | nothing more is issued; the cumulative issuance cap is never exceeded |
 | `fixed_tail` | a constant number of MBO per year |
 | `percentage_tail` | a constant fraction of current supply per year |
 | `adaptive_bounded` | issuance moves inside an explicit `[min_rate, max_rate]` band |
 
-`adaptive_bounded` is **research only**. It defines no on-chain measurement,
-no controller design and no governance path; it exists so the family can be
-plotted rather than dismissed without evidence.
+`adaptive_bounded` is **research only**, and its current implementation is
+narrower than the name suggests. It is a **two-state (bang-bang) controller**:
+below `target_security_ratio` it issues at `max_rate`, otherwise at `min_rate`.
+It never produces an intermediate rate.
+
+`target_security_ratio` is a free illustrative parameter. It is **not derived
+from any Mbongo threat or security model**, because none exists yet. And
+because the ratio compares two reference-value quantities, the MBO reference
+price cancels between numerator and denominator: **the controller is
+price-invariant by construction** and does not react to a price shock at all.
+A test asserts this, so the property cannot change silently.
+
+This scenario **must not be read as a proposed Mbongo adaptive monetary
+policy.** It exists only to exercise the framework.
 
 The primary emission phase itself is a stepped schedule: an initial annual
 amount multiplied by `step_factor` every `step_years`. With factor `0.5` that
@@ -153,10 +208,20 @@ Every number in `scenarios.json` is **illustrative**. None of it is a proposal.
 A test asserts that no shipped scenario is marked normative, so the distinction
 cannot rot silently.
 
-The one scenario with real provenance is `historical_documented`, which
-reconstructs the emission schedule written in `docs/supply_schedule.md`. That
-schedule is *documentation*, not implemented behaviour. It is included so the
-documented plan can be compared against alternatives instead of assumed.
+The one scenario with real provenance is `historical_documented_partial`, and
+the suffix is load-bearing. It reconstructs the **issuance schedule and cap**
+written in `docs/supply_schedule.md` faithfully. It does **not** reconstruct
+the documented fee system: `docs/economic_summary.md` describes two channels —
+base fee burned, priority fee routed to validators and providers — without
+stating the ratio between them, and this simulator has a single aggregate fee
+pool. Setting `burn_share` to 1.0 models the base-fee burn channel only, so
+validator fee revenue is zero there by construction and the scenario
+**understates the documented security budget by the whole priority-fee
+channel**. No base/priority ratio was invented to close that gap.
+
+That schedule is *documentation*, not implemented behaviour. The scenario is
+included so the documented plan can be compared against alternatives instead
+of assumed.
 
 ## Units
 

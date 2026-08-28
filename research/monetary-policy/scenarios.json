@@ -3,22 +3,48 @@
     "Scenario configurations for the MBO monetary policy model.",
     "",
     "EVERY NUMBER IN THIS FILE IS ILLUSTRATIVE AND NON-NORMATIVE. None of it is",
-    "a policy proposal, a recommendation, or a protocol parameter. The values",
-    "exist so the model can be exercised and so candidate policy families can",
-    "be compared on identical assumptions.",
+    "a policy proposal, a recommendation, or a protocol parameter.",
     "",
-    "The one exception in provenance (not in status) is 'historical_documented',",
-    "which reconstructs the emission schedule currently written in docs/. That",
-    "schedule is documentation, not implemented behaviour: see the RFC baseline",
-    "table. It is included so the documented plan can be compared against",
-    "alternatives rather than assumed."
+    "CURRENT SCOPE - READ THIS BEFORE DRAWING ANY CONCLUSION.",
+    "",
+    "Every scenario below shares the same primary issuance schedule:",
+    "initial_annual_issuance 3153600, step_years 5, step_factor 0.5.",
+    "Those three values are taken from the emission schedule documented in",
+    "docs/supply_schedule.md (0.1 MBO per block, halving every five years).",
+    "",
+    "Consequently this scenario set does NOT explore the primary-issuance",
+    "design space. It holds the documented schedule constant and compares only",
+    "what happens AFTER it: hard-cap termination, fixed tail, percentage tail,",
+    "an experimental adaptive tail, and adoption/stress assumptions.",
+    "",
+    "In particular, base is NOT a neutral monetary baseline. It is an",
+    "illustrative benchmark anchored on the documented historical schedule.",
+    "",
+    "historical_documented_partial is a PARTIAL reconstruction; see the",
+    "fidelity notes attached to that scenario."
   ],
 
   "scenarios": {
-    "historical_documented": {
-      "description": "Reconstruction of the emission schedule documented in docs/supply_schedule.md (documented, NOT implemented).",
+    "historical_documented_partial": {
+      "description": "PARTIAL reconstruction of the emission schedule documented in docs/supply_schedule.md. Documented, NOT implemented, and NOT a faithful reconstruction of the documented fee system.",
       "normative": false,
       "provenance": "docs/supply_schedule.md, docs/monetary_policy.md, docs/token_distribution.md",
+      "fidelity": [
+        "FAITHFUL: primary issuance schedule (0.1 MBO per block, 3153600 per year,",
+        "halving every 5 years) and the 31536000 cumulative issuance cap.",
+        "",
+        "NOT FAITHFUL: the fee system. docs/economic_summary.md describes two fee",
+        "channels - base fee burned, priority fee routed to validators and compute",
+        "providers - and does not state the ratio between them. This simulator has a",
+        "single aggregate fee pool and cannot represent two channels.",
+        "",
+        "burn_share 1.0 therefore models the documented base-fee burn channel only.",
+        "The priority-fee channel is absent, so validator_fee_revenue is 0 here by",
+        "construction. Validator fee revenue and the security budget in this",
+        "scenario MUST NOT be read as a faithful reconstruction of the documented",
+        "historical security budget: they understate it by the whole priority-fee",
+        "channel. No base/priority ratio has been invented to fill the gap."
+      ],
       "monetary": {
         "family": "hard_cap",
         "initial_supply": 0,
@@ -64,7 +90,7 @@
     },
 
     "base": {
-      "description": "Illustrative mid-case adoption with a hard-cap emission family.",
+      "description": "Illustrative mid-case adoption. NOT a neutral monetary baseline: it reuses the documented historical primary issuance schedule and cap, and varies only fees, allocation, staking and adoption.",
       "normative": false,
       "monetary": {
         "family": "hard_cap",
@@ -353,7 +379,17 @@
     },
 
     "adaptive_bounded_illustrative": {
-      "description": "RESEARCH ONLY. Issuance moves inside an explicit band depending on modelled security coverage. Not a governance design and not a recommendation.",
+      "description": "RESEARCH ONLY. Experimental two-state (bang-bang) issuance controller used to exercise the framework. NOT a proposed Mbongo adaptive monetary policy.",
+      "controller_notes": [
+        "Rule: below target_security_ratio use max_rate, otherwise use min_rate.",
+        "Only the two band endpoints are ever used; no intermediate rate exists.",
+        "target_security_ratio is a free illustrative parameter. It is NOT derived",
+        "from any Mbongo threat or security model, because none exists yet.",
+        "The ratio compares two reference-value quantities, so the MBO reference",
+        "price appears in both numerator and denominator and cancels: the",
+        "controller is price-invariant by construction and does not react to a",
+        "price shock. Verified by running the scenario with and without one."
+      ],
       "normative": false,
       "monetary": {
         "family": "adaptive_bounded",

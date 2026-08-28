@@ -137,7 +137,7 @@ class AccountingIdentityTests(unittest.TestCase):
 
 class PolicyFamilyTests(unittest.TestCase):
     def test_hard_cap_is_never_exceeded(self):
-        cfg = scenario("historical_documented")
+        cfg = scenario("historical_documented_partial")
         cap = cfg["monetary"]["cap"]
         rows = model.simulate(cfg, 100)
         for row in rows:
@@ -356,6 +356,71 @@ class ConfigIntegrityTests(unittest.TestCase):
         }
         self.assertTrue({"hard_cap", "fixed_tail", "percentage_tail", "adaptive_bounded"} <= families)
 
+
+    def test_shared_primary_schedule_is_declared_in_the_config_readme(self):
+        # Every scenario currently reuses the documented primary issuance
+        # schedule. That is a real limitation of the scenario set, so the
+        # config must say so out loud rather than let a reader assume the
+        # design space was explored.
+        schedules = {
+            (
+                cfg["monetary"]["primary_emission"]["initial_annual_issuance"],
+                cfg["monetary"]["primary_emission"]["step_years"],
+                cfg["monetary"]["primary_emission"]["step_factor"],
+            )
+            for cfg in CONFIG["scenarios"].values()
+        }
+        readme = " ".join(CONFIG["_readme"]).lower()
+        if len(schedules) == 1:
+            self.assertIn("does not explore the primary-issuance", readme)
+            self.assertIn("not a neutral monetary baseline", readme)
+
+    def test_partial_historical_scenario_declares_its_fidelity_limits(self):
+        cfg = CONFIG["scenarios"]["historical_documented_partial"]
+        self.assertFalse(cfg["normative"])
+        self.assertIn("partial", cfg["description"].lower())
+        notes = " ".join(cfg["fidelity"]).lower()
+        # The documented fee system has two channels; this model has one pool.
+        self.assertIn("priority fee", notes)
+        self.assertIn("single aggregate fee pool", notes)
+        self.assertIn("must not be read as a faithful reconstruction", notes)
+
+    def test_adaptive_scenario_declares_it_is_not_a_proposed_policy(self):
+        cfg = CONFIG["scenarios"]["adaptive_bounded_illustrative"]
+        self.assertFalse(cfg["normative"])
+        notes = " ".join(cfg["controller_notes"]).lower()
+        self.assertIn("price-invariant", notes)
+        self.assertIn("not derived", notes)
+        self.assertIn("not a proposed mbongo adaptive monetary policy", cfg["description"].lower())
+
+    def test_adaptive_controller_is_price_invariant(self):
+        # Documented behaviour, asserted so a future change cannot silently
+        # make the controller price-sensitive without updating its notes.
+        clean = model.simulate(scenario("adaptive_bounded_illustrative"), 60)
+        shocked_cfg = scenario("adaptive_bounded_illustrative")
+        shocked_cfg["shocks"] = [
+            {"metric": "mbo_reference_price", "start_year": 25, "end_year": 60, "multiplier": 0.1}
+        ]
+        shocked = model.simulate(shocked_cfg, 60)
+        for a, b in zip(clean, shocked):
+            self.assertAlmostEqual(a.gross_issuance, b.gross_issuance, places=6)
+
+    def test_cumulative_issuance_cap_is_not_the_ending_supply(self):
+        # The distinction that the terminology corrections exist to protect:
+        # a capped scenario that burns fees ends well below its cap.
+        cfg = scenario("historical_documented_partial")
+        rows = model.simulate(cfg, 100)
+        cap = cfg["monetary"]["cap"]
+        cumulative = sum(r.gross_issuance for r in rows)
+        self.assertLessEqual(cumulative, cap + 1e-6)
+        self.assertLess(rows[-1].ending_supply, cumulative)
+
+    def test_documented_schedule_approaches_the_cap_without_reaching_it(self):
+        cfg = scenario("historical_documented_partial")
+        cap = cfg["monetary"]["cap"]
+        cumulative = sum(r.gross_issuance for r in model.simulate(cfg, 100))
+        self.assertLess(cumulative, cap)
+        self.assertGreater(cumulative, cap * 0.999)
     def test_csv_columns_match_the_row_definition(self):
         rows = model.simulate(scenario("base"), 3)
         self.assertEqual(set(model.CSV_COLUMNS), set(vars(rows[0]).keys()))

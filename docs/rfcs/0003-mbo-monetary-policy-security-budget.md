@@ -44,6 +44,17 @@ This document is research. Concretely:
   exogenous scenario input.
 - Where the repository's documentation and its code disagree, this RFC records
   both and does not resolve the disagreement.
+- The scenario set holds the documented primary issuance schedule constant, so
+  it compares tail behaviour rather than the full design space, and `base` is
+  **not** a neutral baseline. See [§11 Current scenario-set scope](#current-scenario-set-scope).
+- `historical_documented_partial` is a **partial** reconstruction: faithful on
+  the issuance schedule and cap, deliberately incomplete on fees. The
+  documented fee system has two channels (base fee burned, priority fee to
+  validators/providers) whose ratio the documentation never states, and this
+  simulator has one aggregate fee pool. That scenario therefore models the
+  base-fee burn only, gives validators zero fee revenue by construction, and
+  **understates the documented security budget**. No base/priority ratio has
+  been invented to close the gap.
 - Statements are labelled by status: **IMPLEMENTED** (present in `crates/`),
   **DOCUMENTED** (written in `docs/`, not enforced by the runtime),
   **PROVISIONAL** (explicitly marked as not final by its own source),
@@ -93,7 +104,7 @@ issuance to be consensus-critical about.
 | Halving every 5 years | **DOCUMENTED** | `docs/supply_schedule.md` §1.1, §3.2 | "Block rewards decrease by 50% every 5 years"; the 25-year table is fully tabulated |
 | 31,536,000 blocks per year | **DOCUMENTED** | `docs/supply_schedule.md` §3.1 | Implies a 1-second block time. The runtime default is 5 s (`--block-time`), and `docs/ALIGNMENT_AUDIT_2026-02.md` already calls 1 s "aspirational, not implemented" |
 | Allocation 40/20/15/10/10/5 | **DOCUMENTED** | `docs/token_distribution.md` §2.1 | PoS validators 40%, PoUW compute 20%, ecosystem 15%, foundation 10%, community 10%, early contributors 5% |
-| Base fees 100% burned | **DOCUMENTED** | `docs/economic_summary.md` | Also: slashed stake burned, invalid-compute penalties burned |
+| Base fee burned, priority fee to validators/providers | **DOCUMENTED** | `docs/economic_summary.md:42,95-96` | Two channels. The **ratio between them is not stated**. Also: slashed stake burned, invalid-compute penalties burned |
 | Post-cap security via fees | **DOCUMENTED** | `docs/monetary_policy.md` §5 | "Validator and compute rewards transition to transaction fee distribution" |
 | "No inflation — ever" | **DOCUMENTED** | `docs/monetary_policy.md` §2 | A strong claim with no implementation behind it |
 | `reward_split` 70/20/10 | **PROVISIONAL** | `docs/specs/COMPUTE_INTERFACE_v0.1.md:152` | The source itself marks it "Proposed, not final" |
@@ -222,15 +233,30 @@ All four are candidates. None is recommended.
 
 | Family | Definition | Principal open risk |
 |---|---|---|
-| **Hard cap** | Primary emission decays to zero; total supply never exceeds a configured cap | Security depends entirely on fee revenue once emission ends |
+| **Hard cap** | Primary emission decays to zero; cumulative issuance never exceeds a configured cap (ending supply may be lower after burns) | Security depends entirely on fee revenue once emission ends |
 | **Fixed tail** | After the primary phase, a constant number of MBO per year | Dilution falls asymptotically toward zero as supply grows, but never stops |
 | **Percentage tail** | After the primary phase, a constant fraction of supply per year | Perpetual, constant-rate dilution; the supply curve never flattens |
 | **Adaptive bounded** | Issuance moves within an explicit `[min_rate, max_rate]` band in response to security coverage | Requires an on-chain measurement and a controller, neither of which is designed; introduces governance surface |
 
-The adaptive family is included as a **research comparator only**. This RFC
-proposes no controller design, no on-chain measurement, and no governance
-mechanism. It is modelled so the family can be evaluated on evidence rather
-than dismissed or adopted on intuition.
+The adaptive family is included as a **research comparator only**, and its
+current implementation is narrower than its name suggests. As implemented it is
+a **two-state (bang-bang) controller**: below `target_security_ratio` it issues
+at `max_rate`, otherwise at `min_rate`, and never at any intermediate rate.
+
+Three properties must be stated plainly before anyone cites it:
+
+- `target_security_ratio` is a **free illustrative parameter**. It is not
+  derived from any Mbongo threat or security model, because none exists yet.
+- The controller reads the previous year's values, so it lags by one period.
+- The ratio it evaluates compares two reference-value quantities, so the MBO
+  reference price appears in both numerator and denominator and **cancels**.
+  The controller is therefore **price-invariant by construction**: a price
+  collapse changes its issuance by exactly nothing. This was verified by running
+  the scenario with and without a 90% price shock, and a test now asserts it.
+
+**This scenario must not be interpreted as a proposed Mbongo adaptive monetary
+policy.** It exists only to exercise the simulation framework. This RFC proposes
+no controller design, no on-chain measurement, and no governance mechanism.
 
 ---
 
@@ -273,6 +299,32 @@ Burn is subtracted in exactly one place, so it cannot be double-counted, and
 the fee pool is formed once from transaction fees plus the protocol's compute
 fee, so no revenue is counted twice.
 
+### Issuance, cap and supply are three different things
+
+| Term | Meaning |
+|---|---|
+| **Cumulative issuance** | Total MBO created by protocol issuance over the run |
+| **Cumulative issuance cap** | Upper bound on cumulative issuance in a hard-cap model |
+| **Ending / outstanding supply** | Issued MBO still outstanding after modelled burns |
+
+**A cumulative issuance cap is not an ending supply**, and the two must not be
+used interchangeably in this RFC, in `scenarios.json`, or in any future
+whitepaper drawing on them. A scenario capped at 31,536,000 can end far below
+that figure once burns apply: `historical_documented_partial` ends near 2.5M
+MBO precisely because it burns its entire fee pool.
+
+A further property of the documented schedule **as reconstructed by this
+model**: the halving series is geometric, so cumulative issuance approaches the
+cap asymptotically without reaching it. A 100-year run yields **31,535,969.92
+MBO**, not 31,536,000. This is a property of the modelled schedule, not a
+protocol guarantee.
+
+**Source-document arithmetic inconsistency.** `docs/supply_schedule.md` derives
+31,536,000 from "365.25 days × 24 × 60 × 60", but that product is 31,557,600.
+The figure 31,536,000 corresponds to a **365-day** year. This RFC records the
+discrepancy and does not resolve it; correcting the source document is left to
+a later documentation or tokenomics decision.
+
 ---
 
 ## 11. Adoption Scenarios
@@ -286,6 +338,29 @@ without assuming any of them.
 No scenario compounds indefinitely: every growth path flattens, and the
 pessimistic path declines. Perpetual exponential adoption is not modelled
 because it is not a defensible assumption over a century.
+
+### Current scenario-set scope
+
+The engine can parameterise several policy families, but **the scenario set in
+this RFC deliberately does not explore the complete MBO monetary-policy design
+space.**
+
+Every shipped scenario reuses the same primary issuance schedule —
+`initial_annual_issuance 3153600`, `step_years 5`, `step_factor 0.5` — which is
+the schedule documented in `docs/supply_schedule.md`. The set therefore
+compares what happens **after** that schedule (hard-cap termination, fixed
+tail, percentage tail, experimental adaptive tail) and how adoption and stress
+assumptions interact with it. It does not compare alternative primary-issuance
+designs, because none is configured.
+
+**The `base` scenario is therefore not a neutral monetary baseline.** It is an
+illustrative benchmark anchored on the documented historical schedule, varying
+fees, allocation, staking and adoption while holding issuance fixed.
+
+Future economic experiments must independently vary: initial issuance
+magnitude, primary issuance duration, decay interval, decay factor, issuance
+curve shape, hard cap, tail policy, fee structure, burn policy, and security
+allocation. This RFC assigns no values to any of them.
 
 ---
 
