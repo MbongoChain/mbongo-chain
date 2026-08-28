@@ -67,3 +67,43 @@ jobs:
 
       - name: Run devnet harness
         run: cargo run -p mbongo-node --bin devnet_harness
+
+  # ---------------------------------------------------------
+  # Docker Devnet Bootstrap (run on PR + push)
+  # ---------------------------------------------------------
+  # Exercises the SAME bootstrap developers run locally: make delegates to
+  # scripts/devnet/docker-devnet.sh, which drives Compose and lets the
+  # convergence_probe binary decide whether the devnet converged. No
+  # readiness polling, height or tip-hash comparison is reimplemented here.
+  #
+  # Deliberately independent of the native devnet job above: that one covers
+  # the process-mode harness, this one covers the Docker/Compose path.
+  docker-devnet:
+    name: Docker Devnet Bootstrap
+    runs-on: ubuntu-latest
+    # The bootstrap already bounds itself: docker-devnet.sh waits at most
+    # DEVNET_WAIT_TIMEOUT (420s) for the three nodes to become healthy, and
+    # .env.ci caps readiness and convergence at 240s each, so about 15
+    # minutes of bounded waiting. The remaining budget covers a cold,
+    # uncached Docker build of the Rust workspace (RocksDB included), which
+    # dominates the runtime on a fresh runner.
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # No Rust toolchain is installed on purpose: the workspace is compiled
+      # inside the devnet image, so this job only orchestrates Docker.
+      - name: Report available tooling
+        run: |
+          docker --version
+          docker compose version
+          make --version
+
+      - name: Boot the devnet and verify convergence
+        run: DEVNET_ENV=ci make devnet-up
+
+      - name: Tear down the devnet
+        if: always()
+        run: DEVNET_ENV=ci make devnet-down
