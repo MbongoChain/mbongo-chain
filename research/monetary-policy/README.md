@@ -177,6 +177,127 @@ The primary emission phase itself is a stepped schedule: an initial annual
 amount multiplied by `step_factor` every `step_years`. With factor `0.5` that
 is a halving schedule.
 
+## Primary-issuance sensitivity study
+
+`primary_sensitivity.py` answers one question: **how do long-run supply,
+dilution and security-budget outcomes change when the primary issuance
+schedule changes, while every non-issuance assumption is held constant?**
+
+It is sensitivity analysis, **not optimization**. It ranks nothing and
+recommends nothing.
+
+```bash
+python3 research/monetary-policy/primary_sensitivity.py --summary
+python3 research/monetary-policy/primary_sensitivity.py --output /tmp/ps.csv
+python3 research/monetary-policy/test_primary_sensitivity.py
+```
+
+The generated CSV (~1,650 rows) is deliberately **not committed**: the driver
+is deterministic, so the source plus the command above is the durable
+evidence.
+
+### The grid
+
+80 schedules, the Cartesian product of three independently varied dimensions:
+
+| Dimension | Values |
+|---|---|
+| initial annual issuance | 788,400 · 1,576,800 · **3,153,600** · 6,307,200 · 12,614,400 |
+| decay/step interval | 2 · **5** · 10 · 20 years |
+| decay factor | 0.25 · **0.50** · 0.75 · 0.90 |
+
+Bold marks the documented historical schedule, present exactly once as
+`historical_reference`. It is a reference point, **not** an optimum, a
+recommendation, or a neutral baseline.
+
+### Why two matrices
+
+A design audit run before the driver existed measured that holding the
+documented 31,536,000 cap constant would clamp 52 of the 80 schedules onto an
+**identical** cumulative total, leaving 36% of the resolution. The cause is
+structural, and is itself a research finding:
+
+> For the documented parameters, the infinite geometric issuance limit
+> `I × S / (1 − F)` = `3,153,600 × 5 / 0.5` = **31,536,000** — exactly the
+> documented cap. The historical schedule sits precisely on its own cap, so
+> any larger, slower-decaying or longer-stepped schedule exceeds it.
+
+This coupling is an observation about the documented figures. It is **not** an
+argument for keeping or removing the cap.
+
+Rather than raise the cap, drop the schedules that exceed it, or derive a cap
+per run — each of which would hide the effect or confound the comparison —
+the study runs the same 80 schedules twice:
+
+| Matrix | Cap | Measures |
+|---|---|---|
+| `uncapped_primary_mechanics` | none | the schedule itself, at full resolution |
+| `fixed_supply_cap_interaction` | 31,536,000 | how arbitrary schedules interact with the documented cap |
+
+**Their results are never combined into one range.** The uncapped matrix does
+not propose uncapped MBO issuance; it is a mathematical isolation device.
+
+### Cap semantics, as implemented
+
+`clamp_to_cap` computes headroom as `cap − supply`, using **current supply**
+rather than cumulative issuance. Burns lower supply and therefore reopen
+issuance capacity. With the controlled fee split, cumulative issuance in the
+capped matrix reaches up to **1.117×** the cap while outstanding supply stays
+at or below it.
+
+So the model implements a **supply cap, not a cumulative issuance cap**. The
+study reports the model as it is rather than inventing different semantics,
+which is why matrix B is named for a supply cap and why cumulative issuance
+and outstanding supply are reported as separate columns.
+
+### Controlled variables
+
+Everything except `monetary.primary_emission` and `monetary.cap` is inherited
+unchanged from the `base` scenario: fee split, burn share, compute
+assumptions, staking ratio, circulating fraction, adoption trajectory,
+reference-price trajectory and tail behaviour. A test asserts that paired runs
+differ in nothing else, so the comparison isolates the schedule.
+
+Price is held at the `base` trajectory across the core matrices and is an
+exogenous assumption throughout. No schedule is ranked by assumed price.
+
+### Dilution
+
+Two transparent metrics, both derived from quantities the model already
+produces:
+
+- `dilution_gross_rate` = `gross_issuance ÷ starting_supply` — the dilution
+  borne by a holder who receives none of the issuance;
+- `dilution_net_rate` = `(gross_issuance − burned) ÷ starting_supply`.
+
+Staker-specific dilution net of staking rewards is **NOT_MODELLED**: issuance
+is allocated to validators as an aggregate, never to stakers pro rata.
+
+### Security metrics
+
+The study reports validator issuance revenue, validator fee revenue, security
+budget in MBO, its reference value, and `security_value_at_risk` separately.
+It does **not** claim that more issuance means more security, and the model
+still contains no calibrated attack-cost or threat model.
+
+### Stress layer
+
+The existing shock mechanisms from `stress_price_shock`,
+`stress_compute_contraction` and `stress_combined` are applied to four
+schedules selected by **shape**, not by desirability: `low_fast_decay`,
+`historical_reference`, `high_front_loaded`, `slow_decay_long_duration`. The
+full 80 × stress product is deliberately not run.
+
+### Limitations
+
+- Sensitivity, not optimization: no schedule is preferred.
+- One controlled adoption/fee/price configuration; interactions with varying
+  adoption are out of scope.
+- Tail policy is fixed across the core matrices, so tails are not compared.
+- The cap is a supply cap, as described above.
+- Extreme low-issuance corners can burn supply to zero under the controlled
+  fee split; that is model-consistent behaviour, not a prediction.
+
 ## Adding a scenario
 
 Add an entry to `scenarios.json`; do not edit `model.py`. A scenario needs:
