@@ -3,7 +3,7 @@
 **Status:** DRAFT
 **Supersedes:** [rpc_v0.1.md](./rpc_v0.1.md) as the description of current node RPC behaviour
 **Derived from:** executable code at `206e2c73868864165d0717c770b37ac581f53f25`
-**Not frozen.** See §6 — three questions need a maintainer decision, and two methods have no executable contract coverage.
+**Not frozen.** Three questions from the first draft are now decided (§6.1); five remain open (§6.2), and two methods still have no executable contract coverage.
 
 > This document describes what the node **does**, derived from
 > `crates/mbongo-network/src/server.rs`, the `RpcBackend` trait, and the
@@ -58,7 +58,10 @@ Six methods are dispatched. Four were documented by v0.1; two were not.
 | Backend | `RpcBackend::ping`, default impl returns `"pong"` |
 | Coverage | tested — `jsonrpc_tests.rs` asserts `result == "pong"` |
 
-**Differs from v0.1**, which specified `{ ok: true }`.
+**Differs from v0.1**, which specified `{ ok: true }`. **Decided: align the
+spec to the runtime.** The behaviour is established and covered by an
+executable test, and no consumer of the `{ ok: true }` shape is evidenced.
+No runtime change.
 
 ### 2.2 `get_block_height`
 
@@ -88,19 +91,56 @@ Matches v0.1.
 result object. The runtime takes a structured JSON transaction and returns a
 bare string.
 
+**Decided for the request: align to the runtime.** The canonical v0.2 request
+is a structured `Transaction` JSON object matching the Rust serde wire
+representation. The historical `[signed_tx_hex]` interface is **not**
+restored: the structured form is the implemented path and matches both the
+current transaction model and the wallet tooling.
+
+**Response retained as-is for v0.2** — the bare transaction-hash string —
+unless an object envelope is deliberately chosen before v0.2 is frozen.
+
+Both shapes need executable contract tests before this document can be
+frozen. See §5 and §6.
+
 ### 2.4 `produce_block`
 
 | Field | Value |
 |---|---|
-| Params | ignored entirely |
+| Params | **none** — the method is parameterless (decided, see below) |
 | Returns | a JSON **string**: the hex-encoded block hash |
 | Mutates state | yes — produces a block and applies it |
 | Backend | `RpcBackend::produce_block` |
 | Coverage | **none** — see §5 |
 
 **Differs from v0.1**, which specified an optional `[max_txs: u32]` parameter
-and a `{ block_hash, height }` result object. The runtime accepts no
-parameter and returns only the hash.
+and a `{ block_hash, height }` result object.
+
+`max_txs` is **not** an intentional API requirement, and `produce_block` is
+therefore defined here as parameterless rather than as "accepts a parameter
+and ignores it". Three facts settle this, and none of them is a preference:
+
+1. `RpcBackend::produce_block(&self)` takes **no argument at all**. The
+   parameter is not ignored at the JSON layer while being plumbed underneath
+   — it is absent from the implementation entirely, and adding it would
+   change the trait signature.
+2. **No caller anywhere passes one.** Every call site — the block-producer
+   loop in `main.rs`, the harnesses, and roughly forty tests — calls
+   `produce_block()` with no argument.
+3. The concern `max_txs` would address is **already handled**:
+   `MAX_TX_PER_BLOCK = 1000` bounds every block at
+   `backend.rs` via `pool.drain_for_block(MAX_TX_PER_BLOCK)`.
+
+Blocks are therefore bounded, but bounded **node-side by a constant**, not by
+the caller. That constant is not currently declared as a public contract
+anywhere; whether it should be is a separate question from this method's
+signature, and is recorded in §6.
+
+Should a caller-supplied limit later be wanted, it is a deliberate runtime
+change — trait signature, handler, and tests — not a documentation edit.
+
+The result is a bare hash string rather than v0.1's
+`{ block_hash, height }` object. Retained as-is for v0.2; see §6.
 
 ### 2.5 `get_latest_block_hash`
 
@@ -223,33 +263,57 @@ and it is why this document is DRAFT rather than FROZEN.
 
 ---
 
-## 6. Open questions
+## 6. Decisions and remaining questions
 
-Each of these is a maintainer decision. This draft records the behaviour and
-declines to declare intent on its behalf.
+### 6.1 Resolved
 
-**Q1 — Is `produce_block` dropping `max_txs` intentional?**
-v0.1 specified an optional transaction limit; the runtime ignores parameters
-entirely. Either the parameter was dropped deliberately and v0.1 was never
-updated, or it was never implemented. `AMBIGUOUS_REQUIRES_MAINTAINER`.
+**`ping` result — align the spec to the runtime.** The canonical v0.2 result
+is the JSON string `"pong"`. The behaviour is established and covered by an
+executable test, and no consumer of v0.1's `{ ok: true }` is evidenced. No
+runtime change. `INTENTIONAL_PUBLIC_CONTRACT`.
 
-**Q2 — Is the dual parameter form of `get_block_by_height` a contract?**
+**`submit_transaction` request — align the spec to the runtime.** The
+canonical v0.2 request is a structured `Transaction` JSON object matching the
+Rust serde wire representation. The historical `[signed_tx_hex]` interface is
+not restored. `INTENTIONAL_PUBLIC_CONTRACT`.
+
+**`produce_block` is parameterless.** `max_txs` is not an intentional API
+requirement: the backend trait takes no argument, no caller passes one, and
+block size is already bounded node-side by `MAX_TX_PER_BLOCK = 1000`. The
+method is defined as parameterless rather than as accepting-and-ignoring a
+parameter, so v0.2 does not attribute semantics the code does not have.
+`INTENTIONAL_PUBLIC_CONTRACT`. Adding a caller-supplied limit later is a
+deliberate runtime change, not a documentation edit.
+
+### 6.2 Still open
+
+**Q-A — Should `get_latest_block_hash` and `get_block_by_height` become
+public contract?**
+They are implemented, dispatched and tested, but were never specified. Until
+this is answered they must not be described as stable to SDK consumers.
+`AMBIGUOUS_REQUIRES_MAINTAINER`.
+
+**Q-B — Is the dual parameter form of `get_block_by_height` a contract?**
 It accepts both `{"height": N}` and a bare `N`, via
 `params.get("height").cloned().unwrap_or(params.clone())`. Leniency of this
 kind is usually an implementation detail rather than a promise.
 `AMBIGUOUS_REQUIRES_MAINTAINER`.
 
-**Q3 — Should `get_latest_block_hash` and `get_block_by_height` become
-public contract?**
-They are implemented, dispatched and tested, but were never specified. Until
-this is answered they should not be described as stable to SDK consumers.
-`AMBIGUOUS_REQUIRES_MAINTAINER`.
+**Q-C — Should `submit_transaction` return an object envelope?**
+The runtime returns a bare hash string. Retained for v0.2 unless an envelope
+is deliberately chosen before freezing. The same question applies to
+`produce_block` and `get_latest_block_hash`, whose bare-string results also
+replace v0.1 objects. `CURRENT_IMPLEMENTATION_DETAIL` pending that choice.
 
-Two further behaviours are recorded as current implementation detail rather
-than promises, pending the same review: bare-string results for
-`submit_transaction`, `produce_block` and `get_latest_block_hash` where v0.1
-used objects; and `-32603` for a missing block rather than a distinct
-not-found signal.
+**Q-D — Should a missing block have a distinct signal?**
+`get_block_by_height` reports an absent block as `-32603` (internal error)
+rather than a null result or a dedicated code.
+`CURRENT_IMPLEMENTATION_DETAIL`.
+
+**Q-E — Should `MAX_TX_PER_BLOCK = 1000` be a declared public contract?**
+Blocks are bounded, but by a node-side constant that no specification
+declares. Distinct from the `produce_block` signature question resolved
+above. `AMBIGUOUS_REQUIRES_MAINTAINER`.
 
 ---
 
@@ -268,9 +332,9 @@ not-found signal.
 
 This document should not be frozen until:
 
-1. Q1, Q2 and Q3 are answered;
+1. Q-A through Q-E are answered;
 2. `submit_transaction` and `produce_block` have executable wire-shape tests;
-3. the two recorded implementation details in §6 are either promoted to
+3. the implementation details recorded in §6.2 are either promoted to
    contract or documented as unstable.
 
 Freezing it earlier would repeat the failure it exists to correct: a document
