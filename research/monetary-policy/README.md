@@ -298,6 +298,118 @@ full 80 × stress product is deliberately not run.
 - Extreme low-issuance corners can burn supply to zero under the controlled
   fee split; that is model-consistent behaviour, not a prediction.
 
+## Cap semantics comparative study
+
+`cap_semantics.py` runs the same 80 schedules under three readings of the
+documented figure 31,536,000, and measures how far apart they end up. It
+picks none of them.
+
+The question is not invented here. Historical documentation asserts both
+readings, in the same file:
+
+    docs/economic_security.md:137    Sigma (all MBO ever created)   <= 31,536,000
+    docs/economic_security.md:1205   for all t: Sigma(all MBO at t) <= 31,536,000
+
+Once burns exist those are different claims. Burn permanence is documented
+("ALL BURNS PERMANENTLY REDUCE SUPPLY"); whether a burn reopens issuance
+capacity is documented nowhere, in either direction. The runtime implements
+neither reading. The model had to pick one to run at all, and picked the
+outstanding reading. That was an implementation necessity, not a finding.
+
+### The three families
+
+With `C` = 31,536,000:
+
+| Family | Invariant | Headroom | Burn |
+|---|---|---|---|
+| `lifetime_cumulative_issuance_cap` | `cumulative_gross_issuance(t) <= C` | `C - cumulative_issued` | never restores headroom |
+| `outstanding_supply_cap` | `outstanding_supply(t) <= C` | `C - outstanding_supply` | may restore headroom |
+| `dual_cap` | both of the above | `min(both)` | may restore outstanding headroom only |
+
+The outstanding family is the model's existing behaviour, unchanged; a test
+asserts its trajectories are identical to what `hard_cap` already produces,
+so nothing measured in earlier work is silently redefined.
+
+### How the alternatives are expressed
+
+`clamp_to_cap(supply, issuance)` is called exactly once per period by every
+`gross_issuance` implementation, and its return value becomes that period's
+gross issuance. Overriding that one method is therefore enough, and no other
+part of the model moves.
+
+`model.MonetaryPolicy.clamp_to_cap` is not patched or replaced. Three new
+family names are added to `model.POLICY_FAMILIES`; the four original keys
+still point at the original classes, and a test asserts it. Lifetime and
+dual headroom need cumulative issuance during the run, which `clamp_to_cap`
+is not handed, so the subclass accumulates what it grants — and a test
+checks that accumulator against the externally summed `gross_issuance`.
+
+### Accounting order
+
+Audited rather than assumed. Per period `simulate` runs: starting supply,
+then issuance (where the clamp happens), then fees, then the burn, then the
+supply update, then security metrics. The cap is therefore evaluated against
+**beginning-of-period supply**, which is the previous period's post-burn
+ending supply. A burn in year `t` widens outstanding headroom in year `t+1`,
+never in year `t`. This study does not change that ordering.
+
+### The burn control
+
+Every comparison is run twice: once with the controlled fee split, once with
+the burn share moved to the treasury. It moves to the treasury and not to
+validators specifically so validator fee revenue — and therefore the
+security budget — is identical between the two, leaving burn as the only
+difference. That makes it a control on burn rather than a second,
+confounded experiment.
+
+### Results
+
+Divergence between families is entirely burn-driven in this model. Without
+burns all three families produce identical trajectories for all 80
+schedules. With burns, lifetime and outstanding differ on 52 of 80.
+
+The documented schedule is unaffected by the choice: `3,153,600 / 5 / 0.50`
+produces byte-identical 101-row trajectories under all three families, and
+clamps under none of them. Its cumulative issuance converges to
+31,535,969.92 — just under `C`, never touching it.
+
+`dual_cap` collapses onto `lifetime_cumulative_issuance_cap` here, and that
+is arithmetic rather than coincidence:
+
+    outstanding_headroom - lifetime_headroom = cumulative_burn - initial_supply
+
+With `initial_supply = 0` and non-negative burns the lifetime bound is
+always the binding one. A test constructs the opposite case — a non-zero
+starting supply with no burns — where dual instead tracks the outstanding
+bound and is strictly tighter than lifetime. So the two are not the same
+constraint; they coincide under this scenario set's starting conditions.
+
+That same constructed case shows a property worth stating plainly: a
+lifetime cap bounds what is created, not what exists. With a pre-existing
+supply it permits outstanding supply above `C`. Recorded as a property of
+the family, not as a defect and not as a preference.
+
+### Reproduction
+
+    python3 research/monetary-policy/cap_semantics.py --summary
+    python3 research/monetary-policy/cap_semantics.py --output /tmp/cap.csv
+    python3 research/monetary-policy/test_cap_semantics.py
+
+The CSV is 3,840 rows and is not committed; the driver is deterministic and
+byte-for-byte reproducible, so the file is regenerated rather than stored.
+
+### Limitations
+
+- Three candidate readings, not an exhaustive space of cap designs.
+- One controlled scenario supplies every non-cap assumption, so the
+  divergence magnitudes are specific to that fee split and activity path.
+- The `dual` and `lifetime` coincidence is contingent on `initial_supply = 0`;
+  a scenario set with a genesis allocation would separate them.
+- Checkpoints are sampled at 1, 5, 10, 20, 30, 50, 75 and 100 years, so
+  divergences that open and close entirely between two checkpoints are
+  visible in the clamp counters but not in the reported levels.
+- Nothing here measures whether a cap should exist, or at what magnitude.
+
 ## Adding a scenario
 
 Add an entry to `scenarios.json`; do not edit `model.py`. A scenario needs:

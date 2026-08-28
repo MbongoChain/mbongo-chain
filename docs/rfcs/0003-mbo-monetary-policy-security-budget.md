@@ -395,6 +395,58 @@ records the behaviour as implemented; whether a future policy should cap
 cumulative issuance, outstanding supply, or both is an open question, added
 to §15.
 
+### Cap semantics comparative study
+
+The ambiguity recorded above is not an artefact of the model. It is present
+in the historical documentation, in the same file:
+
+| Reading | Evidence | Language |
+|---|---|---|
+| Lifetime cumulative issuance | `docs/economic_security.md:137` | "Σ (all MBO **ever created**) ≤ 31,536,000", called "UNCONDITIONALLY TRUE for all time" |
+| Outstanding supply at time t | `docs/economic_security.md:1205` | "∀t: Σ(all MBO **at time t**) ≤ 31,536,000", under "CLAIM 1: SUPPLY INVARIANT" |
+
+Both readings are reinforced elsewhere — cumulative in
+`docs/supply_schedule.md:771` ("Sum all block rewards ≤ 31,536,000") and
+`docs/reward_mechanics.md:566`; outstanding in `docs/incentive_design.md:1219`
+("Compare total_supply to 31,536,000") and `docs/token_distribution.md:516`.
+Most of the remaining ~95 occurrences are simply "Total Supply: 31,536,000
+MBO" and settle nothing. **No document poses the question, so none resolves
+it.** These documents are evidence of the ambiguity and are deliberately
+left unedited by this RFC.
+
+Burn permanence *is* documented — `docs/economic_summary.md:276` ("ALL BURNS
+PERMANENTLY REDUCE SUPPLY"), `docs/incentive_design.md:1114`,
+`docs/economic_security.md:1029` ("No mechanism to recover burned MBO").
+Whether a burn reopens *issuance capacity* is documented nowhere, in either
+direction: a repository-wide search for reissue, remint, recycle, reopen or
+replenish returns nothing. Recorded as **NOT_SPECIFIED**, not filled in by
+convention.
+
+`cap_semantics.py` therefore runs the same 80 schedules under all three
+readings, with every non-cap assumption held constant, and with a no-burn
+control. It selects none of them. Three results bear on the baseline in §3:
+
+**Divergence between the readings is entirely burn-driven in this model.**
+Without burns, all three families produce identical trajectories across all
+80 schedules. With the controlled fee split, the lifetime and outstanding
+readings differ on 52 of 80 schedules, with a maximum year-100 gap of
+3,690,211 MBO in cumulative issuance and 63,901 MBO in security budget.
+
+**The documented schedule is unaffected by the choice.** `3,153,600 / 5 /
+0.50` produces byte-identical 101-row trajectories under all three families
+and clamps under none, converging to 31,535,969.92 — just under the cap,
+never touching it. The semantic question is therefore live for the space of
+*candidate* schedules, not for the documented one.
+
+**A lifetime cap and a dual cap are not the same constraint**, although they
+coincide here. The identity is exact:
+`outstanding_headroom − lifetime_headroom = cumulative_burn − initial_supply`.
+With `initial_supply = 0` the lifetime bound always binds, so dual collapses
+onto lifetime. Given a non-zero genesis allocation they separate, and a
+lifetime cap then permits outstanding supply above the cap, because it
+bounds what is created rather than what exists. Recorded as a property of
+the families; this RFC does not say which property is desirable.
+
 ## 12. Stress Scenarios
 
 Shocks are applied inside an explicit, inclusive year window and nowhere else —
@@ -456,7 +508,10 @@ Open questions only. This RFC designs no governance.
 - Tail emission at all? If so, fixed amount or percentage of supply?
 - Should fees be burned, redistributed, or split — and in what proportion?
 - Should a cap, if any, bound cumulative issuance, outstanding supply, or
-  both? The model currently caps supply, so burns reopen issuance capacity.
+  both? Historical documentation asserts both and settles neither; the model
+  currently caps supply, so burns reopen issuance capacity. Measured: the
+  readings diverge on 52 of 80 candidate schedules with burns and on none
+  without, and not at all for the documented schedule.
 - Should any issuance be allocated to a treasury?
 - What is the validator security floor, if any?
 - Should compute carry a protocol fee, and should it fund security?
