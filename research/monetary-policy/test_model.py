@@ -4,9 +4,8 @@
 These test the arithmetic, not the presence of files: accounting identities,
 policy-family behaviour, shock windowing, and input validation.
 
-Run from the repository root:
-    python3 -m unittest discover -s research/monetary-policy -t .
-or:
+Run the full suite from the repository root:
+
     python3 research/monetary-policy/test_model.py
 """
 

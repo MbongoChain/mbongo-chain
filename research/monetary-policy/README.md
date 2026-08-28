@@ -97,8 +97,6 @@ Exit code `0` means the run completed and every accounting identity held;
 
 ```bash
 python3 research/monetary-policy/test_model.py
-# or
-python3 -m unittest discover -s research/monetary-policy -t .
 ```
 
 The tests exercise the arithmetic — accounting identities, policy-family
