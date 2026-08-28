@@ -155,6 +155,11 @@ jobs:
       - name: Run primary sensitivity tests
         run: python research/monetary-policy/test_primary_sensitivity.py
 
+      # Registers extra policy families and subclasses clamp_to_cap, so it is
+      # the most exposed of the three suites to a change in the model.
+      - name: Run cap semantics tests
+        run: python research/monetary-policy/test_cap_semantics.py
+
       # The CLI exits non-zero when any accounting identity is violated, so
       # its exit status is the assertion.
       - name: Run deterministic 100-year simulation
