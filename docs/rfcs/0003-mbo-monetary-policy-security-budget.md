@@ -501,6 +501,10 @@ Open questions only. This RFC designs no governance.
 
 ## 15. Open Questions
 
+The criteria and decision gates these questions must pass through are defined
+in [RFC 0004](0004-mbo-monetary-decision-framework.md), which selects no
+policy either.
+
 - Hard cap or not?
 - If capped, at what magnitude — and derived from what, given that 31,536,000
   came from seconds-per-year rather than from a security requirement?
