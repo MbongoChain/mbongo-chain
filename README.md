@@ -228,6 +228,16 @@ or the Makefile re-implements that comparison. The container healthchecks
 only answer a narrower question — "does this node serve JSON-RPC yet?" — via
 the `ping` method.
 
+### Further reading
+
+- [Devnet Developer Guide](./docs/development/devnet.md) — day-to-day usage:
+  environment layers, inspecting the running network, troubleshooting, and
+  when to prefer the native harness.
+- [Deterministic Devnet Architecture](./docs/architecture/devnet-infrastructure.md)
+  — design and boundaries: topology, bootstrapping, readiness versus
+  convergence, what determinism does and does not guarantee, and the
+  invariants to preserve when changing this infrastructure.
+
 ---
 
 ## Documentation
