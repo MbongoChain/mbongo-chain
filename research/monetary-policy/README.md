@@ -464,3 +464,13 @@ everything else is MBO or a pure ratio.
 Arithmetic uses floating point, and identities are checked to a relative
 tolerance of 1e-9. Results are indicative at that precision, not exact
 settlement arithmetic.
+
+## Where the decision framework lives
+
+These studies measure; they decide nothing. The criteria a candidate policy
+would have to satisfy, the hard-versus-soft separation, the open decision
+gates and the minimum set of further experiments are in
+[RFC 0004](../../docs/rfcs/0004-mbo-monetary-decision-framework.md). Six of
+the seven experiments it identifies are blocked on mechanisms that do not
+exist yet — a staking design, a fee model, a compute market — rather than on
+simulation capacity.
