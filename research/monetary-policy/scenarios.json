@@ -1,0 +1,560 @@
+{
+  "_readme": [
+    "Scenario configurations for the MBO monetary policy model.",
+    "",
+    "EVERY NUMBER IN THIS FILE IS ILLUSTRATIVE AND NON-NORMATIVE. None of it is",
+    "a policy proposal, a recommendation, or a protocol parameter. The values",
+    "exist so the model can be exercised and so candidate policy families can",
+    "be compared on identical assumptions.",
+    "",
+    "The one exception in provenance (not in status) is 'historical_documented',",
+    "which reconstructs the emission schedule currently written in docs/. That",
+    "schedule is documentation, not implemented behaviour: see the RFC baseline",
+    "table. It is included so the documented plan can be compared against",
+    "alternatives rather than assumed."
+  ],
+
+  "scenarios": {
+    "historical_documented": {
+      "description": "Reconstruction of the emission schedule documented in docs/supply_schedule.md (documented, NOT implemented).",
+      "normative": false,
+      "provenance": "docs/supply_schedule.md, docs/monetary_policy.md, docs/token_distribution.md",
+      "monetary": {
+        "family": "hard_cap",
+        "initial_supply": 0,
+        "cap": 31536000,
+        "primary_emission": {
+          "initial_annual_issuance": 3153600,
+          "step_years": 5,
+          "step_factor": 0.5,
+          "phase_end_year": null
+        }
+      },
+      "supply_distribution": { "circulating_fraction": 0.85, "staking_ratio": 0.45 },
+      "issuance_allocation": { "validator_share": 0.4 },
+      "fees": { "validator_share": 0.0, "treasury_share": 0.0, "burn_share": 1.0 },
+      "activity": {
+        "transaction_fee_revenue_mbo": {
+          "initial": 500,
+          "phases": [
+            { "until_year": 10, "annual_growth": 0.4 },
+            { "until_year": 25, "annual_growth": 0.12 },
+            { "until_year": 100, "annual_growth": 0.02 }
+          ]
+        },
+        "compute_user_spend_mbo": {
+          "initial": 1000,
+          "phases": [
+            { "until_year": 10, "annual_growth": 0.45 },
+            { "until_year": 25, "annual_growth": 0.15 },
+            { "until_year": 100, "annual_growth": 0.02 }
+          ]
+        },
+        "worker_revenue_share": 0.8,
+        "protocol_compute_fee_rate": 0.05
+      },
+      "price": {
+        "initial": 1.0,
+        "phases": [
+          { "until_year": 10, "annual_growth": 0.1 },
+          { "until_year": 100, "annual_growth": 0.0 }
+        ]
+      },
+      "shocks": []
+    },
+
+    "base": {
+      "description": "Illustrative mid-case adoption with a hard-cap emission family.",
+      "normative": false,
+      "monetary": {
+        "family": "hard_cap",
+        "initial_supply": 0,
+        "cap": 31536000,
+        "primary_emission": {
+          "initial_annual_issuance": 3153600,
+          "step_years": 5,
+          "step_factor": 0.5,
+          "phase_end_year": null
+        }
+      },
+      "supply_distribution": { "circulating_fraction": 0.8, "staking_ratio": 0.4 },
+      "issuance_allocation": { "validator_share": 0.6 },
+      "fees": { "validator_share": 0.6, "treasury_share": 0.2, "burn_share": 0.2 },
+      "activity": {
+        "transaction_fee_revenue_mbo": {
+          "initial": 500,
+          "phases": [
+            { "until_year": 10, "annual_growth": 0.35 },
+            { "until_year": 30, "annual_growth": 0.1 },
+            { "until_year": 60, "annual_growth": 0.02 },
+            { "until_year": 100, "annual_growth": 0.0 }
+          ]
+        },
+        "compute_user_spend_mbo": {
+          "initial": 1000,
+          "phases": [
+            { "until_year": 10, "annual_growth": 0.4 },
+            { "until_year": 30, "annual_growth": 0.12 },
+            { "until_year": 60, "annual_growth": 0.03 },
+            { "until_year": 100, "annual_growth": 0.0 }
+          ]
+        },
+        "worker_revenue_share": 0.8,
+        "protocol_compute_fee_rate": 0.05
+      },
+      "price": {
+        "initial": 1.0,
+        "phases": [
+          { "until_year": 15, "annual_growth": 0.08 },
+          { "until_year": 100, "annual_growth": 0.0 }
+        ]
+      },
+      "shocks": []
+    },
+
+    "pessimistic": {
+      "description": "Illustrative weak adoption: early growth stalls, then contracts.",
+      "normative": false,
+      "monetary": {
+        "family": "hard_cap",
+        "initial_supply": 0,
+        "cap": 31536000,
+        "primary_emission": {
+          "initial_annual_issuance": 3153600,
+          "step_years": 5,
+          "step_factor": 0.5,
+          "phase_end_year": null
+        }
+      },
+      "supply_distribution": { "circulating_fraction": 0.75, "staking_ratio": 0.2 },
+      "issuance_allocation": { "validator_share": 0.6 },
+      "fees": { "validator_share": 0.6, "treasury_share": 0.2, "burn_share": 0.2 },
+      "activity": {
+        "transaction_fee_revenue_mbo": {
+          "initial": 200,
+          "phases": [
+            { "until_year": 5, "annual_growth": 0.1 },
+            { "until_year": 20, "annual_growth": 0.0 },
+            { "until_year": 100, "annual_growth": -0.03 }
+          ]
+        },
+        "compute_user_spend_mbo": {
+          "initial": 400,
+          "phases": [
+            { "until_year": 5, "annual_growth": 0.1 },
+            { "until_year": 20, "annual_growth": -0.02 },
+            { "until_year": 100, "annual_growth": -0.04 }
+          ]
+        },
+        "worker_revenue_share": 0.8,
+        "protocol_compute_fee_rate": 0.05
+      },
+      "price": {
+        "initial": 1.0,
+        "phases": [
+          { "until_year": 5, "annual_growth": 0.0 },
+          { "until_year": 100, "annual_growth": -0.02 }
+        ]
+      },
+      "shocks": []
+    },
+
+    "conservative": {
+      "description": "Illustrative modest adoption reaching an early plateau.",
+      "normative": false,
+      "monetary": {
+        "family": "hard_cap",
+        "initial_supply": 0,
+        "cap": 31536000,
+        "primary_emission": {
+          "initial_annual_issuance": 3153600,
+          "step_years": 5,
+          "step_factor": 0.5,
+          "phase_end_year": null
+        }
+      },
+      "supply_distribution": { "circulating_fraction": 0.78, "staking_ratio": 0.3 },
+      "issuance_allocation": { "validator_share": 0.6 },
+      "fees": { "validator_share": 0.6, "treasury_share": 0.2, "burn_share": 0.2 },
+      "activity": {
+        "transaction_fee_revenue_mbo": {
+          "initial": 300,
+          "phases": [
+            { "until_year": 10, "annual_growth": 0.2 },
+            { "until_year": 30, "annual_growth": 0.05 },
+            { "until_year": 100, "annual_growth": 0.0 }
+          ]
+        },
+        "compute_user_spend_mbo": {
+          "initial": 600,
+          "phases": [
+            { "until_year": 10, "annual_growth": 0.22 },
+            { "until_year": 30, "annual_growth": 0.06 },
+            { "until_year": 100, "annual_growth": 0.0 }
+          ]
+        },
+        "worker_revenue_share": 0.8,
+        "protocol_compute_fee_rate": 0.05
+      },
+      "price": {
+        "initial": 1.0,
+        "phases": [{ "until_year": 100, "annual_growth": 0.0 }]
+      },
+      "shocks": []
+    },
+
+    "high_adoption": {
+      "description": "Illustrative strong adoption that still saturates rather than compounding forever.",
+      "normative": false,
+      "monetary": {
+        "family": "hard_cap",
+        "initial_supply": 0,
+        "cap": 31536000,
+        "primary_emission": {
+          "initial_annual_issuance": 3153600,
+          "step_years": 5,
+          "step_factor": 0.5,
+          "phase_end_year": null
+        }
+      },
+      "supply_distribution": { "circulating_fraction": 0.82, "staking_ratio": 0.55 },
+      "issuance_allocation": { "validator_share": 0.6 },
+      "fees": { "validator_share": 0.6, "treasury_share": 0.2, "burn_share": 0.2 },
+      "activity": {
+        "transaction_fee_revenue_mbo": {
+          "initial": 800,
+          "phases": [
+            { "until_year": 10, "annual_growth": 0.6 },
+            { "until_year": 25, "annual_growth": 0.2 },
+            { "until_year": 45, "annual_growth": 0.05 },
+            { "until_year": 100, "annual_growth": 0.0 }
+          ]
+        },
+        "compute_user_spend_mbo": {
+          "initial": 2000,
+          "phases": [
+            { "until_year": 10, "annual_growth": 0.65 },
+            { "until_year": 25, "annual_growth": 0.22 },
+            { "until_year": 45, "annual_growth": 0.05 },
+            { "until_year": 100, "annual_growth": 0.0 }
+          ]
+        },
+        "worker_revenue_share": 0.8,
+        "protocol_compute_fee_rate": 0.05
+      },
+      "price": {
+        "initial": 1.0,
+        "phases": [
+          { "until_year": 20, "annual_growth": 0.12 },
+          { "until_year": 100, "annual_growth": 0.0 }
+        ]
+      },
+      "shocks": []
+    },
+
+    "fixed_tail_illustrative": {
+      "description": "Same adoption as base, but a fixed number of MBO is issued every year after the primary phase. Amount is illustrative only.",
+      "normative": false,
+      "monetary": {
+        "family": "fixed_tail",
+        "initial_supply": 0,
+        "cap": null,
+        "primary_emission": {
+          "initial_annual_issuance": 3153600,
+          "step_years": 5,
+          "step_factor": 0.5,
+          "phase_end_year": null
+        },
+        "tail": { "start_year": 21, "annual_amount": 30000 }
+      },
+      "supply_distribution": { "circulating_fraction": 0.8, "staking_ratio": 0.4 },
+      "issuance_allocation": { "validator_share": 0.6 },
+      "fees": { "validator_share": 0.6, "treasury_share": 0.2, "burn_share": 0.2 },
+      "activity": {
+        "transaction_fee_revenue_mbo": {
+          "initial": 500,
+          "phases": [
+            { "until_year": 10, "annual_growth": 0.35 },
+            { "until_year": 30, "annual_growth": 0.1 },
+            { "until_year": 60, "annual_growth": 0.02 },
+            { "until_year": 100, "annual_growth": 0.0 }
+          ]
+        },
+        "compute_user_spend_mbo": {
+          "initial": 1000,
+          "phases": [
+            { "until_year": 10, "annual_growth": 0.4 },
+            { "until_year": 30, "annual_growth": 0.12 },
+            { "until_year": 60, "annual_growth": 0.03 },
+            { "until_year": 100, "annual_growth": 0.0 }
+          ]
+        },
+        "worker_revenue_share": 0.8,
+        "protocol_compute_fee_rate": 0.05
+      },
+      "price": {
+        "initial": 1.0,
+        "phases": [
+          { "until_year": 15, "annual_growth": 0.08 },
+          { "until_year": 100, "annual_growth": 0.0 }
+        ]
+      },
+      "shocks": []
+    },
+
+    "percentage_tail_illustrative": {
+      "description": "Same adoption as base, but a fixed fraction of supply is issued every year after the primary phase. Rate is illustrative only.",
+      "normative": false,
+      "monetary": {
+        "family": "percentage_tail",
+        "initial_supply": 0,
+        "cap": null,
+        "primary_emission": {
+          "initial_annual_issuance": 3153600,
+          "step_years": 5,
+          "step_factor": 0.5,
+          "phase_end_year": null
+        },
+        "tail": { "start_year": 21, "annual_rate": 0.002 }
+      },
+      "supply_distribution": { "circulating_fraction": 0.8, "staking_ratio": 0.4 },
+      "issuance_allocation": { "validator_share": 0.6 },
+      "fees": { "validator_share": 0.6, "treasury_share": 0.2, "burn_share": 0.2 },
+      "activity": {
+        "transaction_fee_revenue_mbo": {
+          "initial": 500,
+          "phases": [
+            { "until_year": 10, "annual_growth": 0.35 },
+            { "until_year": 30, "annual_growth": 0.1 },
+            { "until_year": 60, "annual_growth": 0.02 },
+            { "until_year": 100, "annual_growth": 0.0 }
+          ]
+        },
+        "compute_user_spend_mbo": {
+          "initial": 1000,
+          "phases": [
+            { "until_year": 10, "annual_growth": 0.4 },
+            { "until_year": 30, "annual_growth": 0.12 },
+            { "until_year": 60, "annual_growth": 0.03 },
+            { "until_year": 100, "annual_growth": 0.0 }
+          ]
+        },
+        "worker_revenue_share": 0.8,
+        "protocol_compute_fee_rate": 0.05
+      },
+      "price": {
+        "initial": 1.0,
+        "phases": [
+          { "until_year": 15, "annual_growth": 0.08 },
+          { "until_year": 100, "annual_growth": 0.0 }
+        ]
+      },
+      "shocks": []
+    },
+
+    "adaptive_bounded_illustrative": {
+      "description": "RESEARCH ONLY. Issuance moves inside an explicit band depending on modelled security coverage. Not a governance design and not a recommendation.",
+      "normative": false,
+      "monetary": {
+        "family": "adaptive_bounded",
+        "initial_supply": 0,
+        "cap": null,
+        "primary_emission": {
+          "initial_annual_issuance": 3153600,
+          "step_years": 5,
+          "step_factor": 0.5,
+          "phase_end_year": null
+        },
+        "tail": { "start_year": 21 },
+        "adaptive": {
+          "min_rate": 0.0005,
+          "max_rate": 0.004,
+          "target_security_ratio": 0.02
+        }
+      },
+      "supply_distribution": { "circulating_fraction": 0.8, "staking_ratio": 0.4 },
+      "issuance_allocation": { "validator_share": 0.6 },
+      "fees": { "validator_share": 0.6, "treasury_share": 0.2, "burn_share": 0.2 },
+      "activity": {
+        "transaction_fee_revenue_mbo": {
+          "initial": 500,
+          "phases": [
+            { "until_year": 10, "annual_growth": 0.35 },
+            { "until_year": 30, "annual_growth": 0.1 },
+            { "until_year": 60, "annual_growth": 0.02 },
+            { "until_year": 100, "annual_growth": 0.0 }
+          ]
+        },
+        "compute_user_spend_mbo": {
+          "initial": 1000,
+          "phases": [
+            { "until_year": 10, "annual_growth": 0.4 },
+            { "until_year": 30, "annual_growth": 0.12 },
+            { "until_year": 60, "annual_growth": 0.03 },
+            { "until_year": 100, "annual_growth": 0.0 }
+          ]
+        },
+        "worker_revenue_share": 0.8,
+        "protocol_compute_fee_rate": 0.05
+      },
+      "price": {
+        "initial": 1.0,
+        "phases": [
+          { "until_year": 15, "annual_growth": 0.08 },
+          { "until_year": 100, "annual_growth": 0.0 }
+        ]
+      },
+      "shocks": []
+    },
+
+    "stress_price_shock": {
+      "description": "Base assumptions with an illustrative sustained 80% drop in the MBO reference price.",
+      "normative": false,
+      "monetary": {
+        "family": "hard_cap",
+        "initial_supply": 0,
+        "cap": 31536000,
+        "primary_emission": {
+          "initial_annual_issuance": 3153600,
+          "step_years": 5,
+          "step_factor": 0.5,
+          "phase_end_year": null
+        }
+      },
+      "supply_distribution": { "circulating_fraction": 0.8, "staking_ratio": 0.4 },
+      "issuance_allocation": { "validator_share": 0.6 },
+      "fees": { "validator_share": 0.6, "treasury_share": 0.2, "burn_share": 0.2 },
+      "activity": {
+        "transaction_fee_revenue_mbo": {
+          "initial": 500,
+          "phases": [
+            { "until_year": 10, "annual_growth": 0.35 },
+            { "until_year": 30, "annual_growth": 0.1 },
+            { "until_year": 100, "annual_growth": 0.0 }
+          ]
+        },
+        "compute_user_spend_mbo": {
+          "initial": 1000,
+          "phases": [
+            { "until_year": 10, "annual_growth": 0.4 },
+            { "until_year": 30, "annual_growth": 0.12 },
+            { "until_year": 100, "annual_growth": 0.0 }
+          ]
+        },
+        "worker_revenue_share": 0.8,
+        "protocol_compute_fee_rate": 0.05
+      },
+      "price": {
+        "initial": 1.0,
+        "phases": [
+          { "until_year": 15, "annual_growth": 0.08 },
+          { "until_year": 100, "annual_growth": 0.0 }
+        ]
+      },
+      "shocks": [
+        { "metric": "mbo_reference_price", "start_year": 20, "end_year": 100, "multiplier": 0.2 }
+      ]
+    },
+
+    "stress_compute_contraction": {
+      "description": "Base assumptions with an illustrative multi-year 50% contraction in compute activity.",
+      "normative": false,
+      "monetary": {
+        "family": "hard_cap",
+        "initial_supply": 0,
+        "cap": 31536000,
+        "primary_emission": {
+          "initial_annual_issuance": 3153600,
+          "step_years": 5,
+          "step_factor": 0.5,
+          "phase_end_year": null
+        }
+      },
+      "supply_distribution": { "circulating_fraction": 0.8, "staking_ratio": 0.4 },
+      "issuance_allocation": { "validator_share": 0.6 },
+      "fees": { "validator_share": 0.6, "treasury_share": 0.2, "burn_share": 0.2 },
+      "activity": {
+        "transaction_fee_revenue_mbo": {
+          "initial": 500,
+          "phases": [
+            { "until_year": 10, "annual_growth": 0.35 },
+            { "until_year": 30, "annual_growth": 0.1 },
+            { "until_year": 100, "annual_growth": 0.0 }
+          ]
+        },
+        "compute_user_spend_mbo": {
+          "initial": 1000,
+          "phases": [
+            { "until_year": 10, "annual_growth": 0.4 },
+            { "until_year": 30, "annual_growth": 0.12 },
+            { "until_year": 100, "annual_growth": 0.0 }
+          ]
+        },
+        "worker_revenue_share": 0.8,
+        "protocol_compute_fee_rate": 0.05
+      },
+      "price": {
+        "initial": 1.0,
+        "phases": [
+          { "until_year": 15, "annual_growth": 0.08 },
+          { "until_year": 100, "annual_growth": 0.0 }
+        ]
+      },
+      "shocks": [
+        { "metric": "compute_user_spend_mbo", "start_year": 25, "end_year": 32, "multiplier": 0.5 }
+      ]
+    },
+
+    "stress_combined": {
+      "description": "Illustrative combination: price shock, compute contraction, reduced fee revenue, lower staking participation and a larger illiquid share.",
+      "normative": false,
+      "monetary": {
+        "family": "hard_cap",
+        "initial_supply": 0,
+        "cap": 31536000,
+        "primary_emission": {
+          "initial_annual_issuance": 3153600,
+          "step_years": 5,
+          "step_factor": 0.5,
+          "phase_end_year": null
+        }
+      },
+      "supply_distribution": { "circulating_fraction": 0.6, "staking_ratio": 0.4 },
+      "issuance_allocation": { "validator_share": 0.6 },
+      "fees": { "validator_share": 0.6, "treasury_share": 0.2, "burn_share": 0.2 },
+      "activity": {
+        "transaction_fee_revenue_mbo": {
+          "initial": 500,
+          "phases": [
+            { "until_year": 10, "annual_growth": 0.35 },
+            { "until_year": 30, "annual_growth": 0.1 },
+            { "until_year": 100, "annual_growth": 0.0 }
+          ]
+        },
+        "compute_user_spend_mbo": {
+          "initial": 1000,
+          "phases": [
+            { "until_year": 10, "annual_growth": 0.4 },
+            { "until_year": 30, "annual_growth": 0.12 },
+            { "until_year": 100, "annual_growth": 0.0 }
+          ]
+        },
+        "worker_revenue_share": 0.8,
+        "protocol_compute_fee_rate": 0.05
+      },
+      "price": {
+        "initial": 1.0,
+        "phases": [
+          { "until_year": 15, "annual_growth": 0.08 },
+          { "until_year": 100, "annual_growth": 0.0 }
+        ]
+      },
+      "shocks": [
+        { "metric": "mbo_reference_price", "start_year": 30, "end_year": 100, "multiplier": 0.2 },
+        { "metric": "compute_user_spend_mbo", "start_year": 30, "end_year": 40, "multiplier": 0.5 },
+        { "metric": "transaction_fee_revenue_mbo", "start_year": 30, "end_year": 40, "multiplier": 0.4 },
+        { "metric": "staking_ratio", "start_year": 30, "end_year": 100, "multiplier": 0.5 }
+      ]
+    }
+  }
+}
