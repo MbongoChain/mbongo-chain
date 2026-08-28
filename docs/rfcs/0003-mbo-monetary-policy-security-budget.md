@@ -364,6 +364,37 @@ allocation. This RFC assigns no values to any of them.
 
 ---
 
+### Primary-issuance sensitivity study
+
+The first experiment run on this framework varies the primary issuance
+schedule itself, across 80 combinations of initial annual issuance, decay
+interval and decay factor, holding every non-issuance assumption constant.
+It is sensitivity analysis, not optimization, and it selects no policy. See
+[research/monetary-policy/README.md](../../research/monetary-policy/README.md)
+for the grid, controls and reproduction command.
+
+Two findings from that study belong in this RFC because they bear on the
+baseline recorded in §3, not on any policy choice:
+
+**The documented cap and the documented schedule are structurally coupled.**
+For the documented parameters the infinite geometric issuance limit is
+`I × S / (1 − F)` = `3,153,600 × 5 / 0.5` = **31,536,000** — exactly the
+documented cap. The historical schedule therefore sits precisely on its own
+cap, and any larger, slower-decaying or longer-stepped schedule exceeds it.
+Measured consequence: holding that cap constant clamps 52 of 80 schedules
+onto an identical total, which is why the study runs an uncapped matrix and a
+fixed-cap matrix separately rather than one blended matrix. This is an
+observation about the documented figures, **not** an argument for keeping or
+removing the cap.
+
+**The model implements a supply cap, not a cumulative issuance cap.**
+`clamp_to_cap` derives headroom from current supply, so burns reopen issuance
+capacity. Under the controlled fee split, cumulative issuance reaches up to
+1.117× the cap while outstanding supply stays at or below it. This RFC
+records the behaviour as implemented; whether a future policy should cap
+cumulative issuance, outstanding supply, or both is an open question, added
+to §15.
+
 ## 12. Stress Scenarios
 
 Shocks are applied inside an explicit, inclusive year window and nowhere else —
@@ -424,6 +455,8 @@ Open questions only. This RFC designs no governance.
 - How large should the primary emission phase be, and over how long?
 - Tail emission at all? If so, fixed amount or percentage of supply?
 - Should fees be burned, redistributed, or split — and in what proportion?
+- Should a cap, if any, bound cumulative issuance, outstanding supply, or
+  both? The model currently caps supply, so burns reopen issuance capacity.
 - Should any issuance be allocated to a treasury?
 - What is the validator security floor, if any?
 - Should compute carry a protocol fee, and should it fund security?
