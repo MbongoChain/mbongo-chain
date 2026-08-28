@@ -107,3 +107,62 @@ jobs:
       - name: Tear down the devnet
         if: always()
         run: DEVNET_ENV=ci make devnet-down
+
+  # ---------------------------------------------------------
+  # Monetary Policy Model (run on PR + push)
+  # ---------------------------------------------------------
+  # Covers the off-runtime research model under research/monetary-policy.
+  # Until now nothing in CI executed it, so its accounting identities,
+  # scenario guards and determinism could regress while every Rust and
+  # devnet check stayed green.
+  #
+  # This job runs the model rather than re-implementing any of it: no
+  # monetary arithmetic, no expected supply or reward figures, and no
+  # invariant is duplicated in YAML. Locking today's illustrative numbers
+  # into CI would freeze assumptions the RFC deliberately leaves open.
+  monetary-model:
+    name: Monetary Policy Model
+    runs-on: ubuntu-latest
+    # A stdlib-only model over 100 simulated years runs in well under a
+    # second; five minutes is generous and still bounds a hang.
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Pinned to an exact minor version so a new CPython release cannot
+      # change CI behaviour without a repository change. The model is
+      # standard-library only: no pip install, no requirements file, no
+      # virtualenv.
+      - name: Install Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Report Python version
+        run: python --version
+
+      # The package directory name contains a hyphen and carries no
+      # __init__.py, so `unittest discover` cannot import it. Running the
+      # test file directly is the working stdlib form.
+      - name: Run model unit tests
+        run: python research/monetary-policy/test_model.py
+
+      # The CLI exits non-zero when any accounting identity is violated, so
+      # its exit status is the assertion.
+      - name: Run deterministic 100-year simulation
+        run: |
+          python research/monetary-policy/model.py \
+            --scenario base --years 100 \
+            --output "$RUNNER_TEMP/base-run1.csv"
+
+      # Same scenario, same horizon, same config: the two CSVs must be
+      # byte-identical. Compared directly rather than by hash, and never
+      # uploaded as an artifact -- this is test evidence, not a release.
+      - name: Verify byte-for-byte reproducibility
+        run: |
+          python research/monetary-policy/model.py \
+            --scenario base --years 100 \
+            --output "$RUNNER_TEMP/base-run2.csv"
+          cmp "$RUNNER_TEMP/base-run1.csv" "$RUNNER_TEMP/base-run2.csv"
