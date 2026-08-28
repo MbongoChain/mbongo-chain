@@ -1,0 +1,37 @@
+# Build context for the devnet image. The build needs only the Cargo
+# manifests and the workspace crates; everything else is excluded so the
+# context stays small and no runtime state or local override leaks into an
+# image layer.
+
+# Rust build output (huge, and rebuilt inside the image anyway)
+target/
+**/*.rs.bk
+*.pdb
+
+# VCS and CI metadata
+.git/
+.github/
+.cursor/
+.claude/
+
+# Committed RocksDB state at the repo root: runtime data, never a build input
+data/
+
+# Local, non-versioned developer overrides
+.env.local
+
+# Non-Rust subprojects and documentation: not part of the node build
+docs/
+website/
+sdk/
+mbongo-explorer/
+scripts/
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+
+# Logs and scratch files
+*.log
+tmp_*.txt
+*.zip

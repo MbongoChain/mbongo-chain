@@ -129,6 +129,107 @@ See [DEV_ONBOARDING.md](./docs/DEV_ONBOARDING.md) for full CLI reference.
 
 ---
 
+## Dockerised Devnet (3 nodes)
+
+A reproducible 1-producer + 2-follower devnet that boots from a clean
+checkout with one command, on any machine that runs Docker. It is the
+cross-platform counterpart of the PowerShell devnet under `scripts/devnet/`,
+which remains the tool for long-running Windows soaks.
+
+### Prerequisites
+
+- Docker Engine 24+ (Docker Desktop on Windows/macOS)
+- Docker Compose v2+ (`docker compose version`)
+- GNU Make, only if you want the `make` shortcuts
+
+### Boot it
+
+```bash
+make devnet-up
+```
+
+Or, without Make (identical behaviour — the target only delegates):
+
+```bash
+./scripts/devnet/docker-devnet.sh up
+```
+
+That command builds the devnet image, starts the three nodes on a dedicated
+Compose network, waits until each one reports healthy, then runs the
+`convergence_probe` binary against all three. It exits `0` only if the nodes
+agree on the same height and tip hash **and** the chain produced a new block
+while the probe was watching. On failure it prints container state, health
+status and recent per-node logs, then exits non-zero.
+
+### Tear it down
+
+```bash
+make devnet-down            # or ./scripts/devnet/docker-devnet.sh down
+```
+
+This removes the containers, the network and any volumes. It is safe to run
+when nothing is up, and safe to run twice. Node state lives in the container
+writable layer, so every boot starts from a fresh genesis.
+
+### Configuration
+
+Three layers, applied in order:
+
+| File | Versioned | Purpose |
+|------|-----------|---------|
+| `.env.base` | yes | Deterministic defaults. A fresh checkout boots with this file alone. |
+| `.env.local` | **no** (gitignored) | Your personal overrides. Optional — never required. |
+| `.env.ci` | yes | Deterministic overrides for automated runs (`DEVNET_ENV=ci`). |
+
+To override something locally, create `.env.local` with only the keys you
+want to change — never edit `.env.base`:
+
+```bash
+echo "MBONGO_HOST_RPC_PORT=31944" > .env.local
+echo "MBONGO_BLOCK_TIME=2"       >> .env.local
+```
+
+To use the CI layer instead:
+
+```bash
+DEVNET_ENV=ci ./scripts/devnet/docker-devnet.sh up
+```
+
+### Exposed host ports
+
+Only one: the producer JSON-RPC, published on **loopback only** at
+`127.0.0.1:${MBONGO_HOST_RPC_PORT}` (default `29944`, chosen to avoid the
+operational devnet on 9944-9946 and the in-process harness on 19944-19946).
+Followers and the REST APIs are reachable only from inside the Compose
+network. Set `MBONGO_HOST_RPC_PORT=0` to let Docker pick a free port.
+
+```bash
+curl -X POST -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"get_block_height","id":1}' \
+  http://127.0.0.1:29944/rpc
+```
+
+### About `0.0.0.0`
+
+Inside the containers the node is started with `--rpc-host 0.0.0.0` and
+`--rest-host 0.0.0.0` so the services can reach each other across the
+Compose network. **This is a devnet-only setting, not a production
+default.** The node itself still binds `127.0.0.1` when those flags are not
+passed, and the RPC surface has no authentication — never expose it on an
+untrusted network.
+
+### One source of truth for convergence
+
+The verdict comes from `convergence_probe`
+([crates/mbongo-node/src/bin/convergence_probe.rs](./crates/mbongo-node/src/bin/convergence_probe.rs)),
+which shares its height/tip-hash rules with `devnet_harness` through
+`mbongo_node::convergence`. Nothing in the Compose file, the healthchecks
+or the Makefile re-implements that comparison. The container healthchecks
+only answer a narrower question — "does this node serve JSON-RPC yet?" — via
+the `ping` method.
+
+---
+
 ## Documentation
 
 | Document | Purpose |

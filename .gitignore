@@ -36,3 +36,6 @@ tmp_*.txt
 
 # Build artifacts
 target/
+
+# Local devnet overrides (layered on top of the versioned .env.base)
+.env.local

@@ -1,7 +1,7 @@
 # Mbongo Chain - Makefile
 # Convenient commands for development
 
-.PHONY: help check lint test build clean fmt clippy audit docs dev-setup
+.PHONY: help check lint test build clean fmt clippy audit docs dev-setup devnet-up devnet-down
 
 help: ## Show this help message
 	@echo "Mbongo Chain - Development Commands"
@@ -45,3 +45,13 @@ dev-setup: ## Set up development environment
 
 ci: check test build ## Run CI checks locally
 
+
+# --- Dockerised devnet (issue #53) -------------------------------------
+# Both targets delegate to one script, so the local path and the CI path
+# run exactly the same bootstrap and cannot drift apart.
+
+devnet-up: ## Boot the deterministic 3-node Docker devnet and verify convergence
+	@./scripts/devnet/docker-devnet.sh up
+
+devnet-down: ## Stop the Docker devnet and remove its containers and network
+	@./scripts/devnet/docker-devnet.sh down
