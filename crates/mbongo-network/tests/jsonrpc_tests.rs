@@ -207,3 +207,95 @@ async fn test_get_latest_block_hash() {
     assert_eq!(v["result"], json!("0xmocktiphash"));
     assert_eq!(v["id"], json!("tip"));
 }
+
+// ── Reserved compute RPC surface (COMPUTE_INTERFACE_v0.1 §3) ──────────
+//
+// These five names are reserved, not implemented. The point of the tests
+// is the reservation: if someone later adds a real handler for one of
+// them, the corresponding assertion fails and the change becomes
+// deliberate. They assert unavailability, never compute semantics.
+
+/// The reserved names, in the order COMPUTE_INTERFACE_v0.1 §3 lists them.
+const RESERVED_COMPUTE_METHODS: [&str; 5] = [
+    "submit_compute_task",
+    "get_compute_task",
+    "get_compute_receipt",
+    "list_compute_tasks",
+    "get_compute_node_status",
+];
+
+async fn call_method(method: &str, params: Value, id: Value) -> Value {
+    let app = router(MockBackend);
+    let body = json!({"jsonrpc": "2.0", "method": method, "params": params, "id": id});
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/rpc")
+                .method("POST")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method}");
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+#[tokio::test]
+async fn reserved_compute_methods_return_method_not_found() {
+    for (i, method) in RESERVED_COMPUTE_METHODS.iter().enumerate() {
+        let id = json!(100 + i as u64);
+        let v = call_method(method, json!({}), id.clone()).await;
+        assert_eq!(v["jsonrpc"], json!("2.0"), "{method}");
+        assert_eq!(v["error"]["code"], json!(-32601), "{method}");
+        assert_eq!(v["id"], id, "{method} must preserve the request id");
+        assert!(v["result"].is_null(), "{method} must not return a result");
+    }
+}
+
+#[tokio::test]
+async fn reserved_compute_methods_ignore_their_documented_params() {
+    // COMPUTE_INTERFACE_v0.1 §3 documents parameter shapes for the eventual
+    // implementations. In v0.3 the reservation is decided before any
+    // parameter is examined, so well-formed, malformed and absent params all
+    // produce the same unavailability.
+    let cases = [
+        json!({"task_id": "0xdeadbeef"}),
+        json!({"unexpected": 1}),
+        json!(null),
+        json!([]),
+    ];
+    for method in RESERVED_COMPUTE_METHODS {
+        for params in &cases {
+            let v = call_method(method, params.clone(), json!(7)).await;
+            assert_eq!(v["error"]["code"], json!(-32601), "{method} / {params}");
+            assert_eq!(v["id"], json!(7), "{method} / {params}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn reserved_compute_methods_do_not_shadow_implemented_methods() {
+    // Guards the arm's placement: adding the reserved names must not have
+    // captured any existing method.
+    let app = router(MockBackend);
+    let body = json!({"jsonrpc": "2.0", "method": "ping", "params": {}, "id": 9});
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/rpc")
+                .method("POST")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(v["error"].is_null(), "ping must still succeed");
+    assert_eq!(v["id"], json!(9));
+}
