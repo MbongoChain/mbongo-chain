@@ -61,3 +61,28 @@ export class MbongoTransportError extends Error {
     this.status = status;
   }
 }
+
+/**
+ * A numeric value could not be represented losslessly as a JavaScript
+ * number, so the SDK refused to send or return it.
+ *
+ * This is a **local SDK restriction**, raised before any network call on the
+ * outbound path and before returning data on the inbound path. It is not an
+ * RPC rule: `rpc_v0.2.md` represents these fields as JSON numbers, and the
+ * Rust types behind them (`u128` for `amount`, `u64` elsewhere) accept a
+ * larger domain than JavaScript can hold exactly. The SDK fails closed
+ * rather than transmit or return a silently rounded value.
+ */
+export class MbongoNumericRangeError extends Error {
+  /** Dotted path of the offending field, e.g. `transaction.amount`. */
+  readonly field: string;
+  /** The value as the SDK saw it — already rounded, if rounding occurred. */
+  readonly value: unknown;
+
+  constructor(field: string, value: unknown, reason: string) {
+    super(`${field}: ${reason} (received ${String(value)})`);
+    this.name = "MbongoNumericRangeError";
+    this.field = field;
+    this.value = value;
+  }
+}

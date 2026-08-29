@@ -117,17 +117,51 @@ The client always sends `{"height": N}`. The node also tolerates a bare
 number, but that is an implementation detail of the current runtime rather
 than contract, so this client never emits it.
 
-## Numeric precision
+## Numeric range: the SDK accepts only safe integers
 
-`Transaction.amount` is a `u128` and `nonce`, `height` and `timestamp` are
-`u64`, all specified as JSON numbers by the frozen RPC contract. JavaScript
-numbers are exact only to `Number.MAX_SAFE_INTEGER` (2^53 − 1), so an
-`amount` above that bound cannot round-trip through these types.
+`@mbongo/sdk` 0.1 supports integer values in **`0 .. 2^53 - 1`** for the RPC
+fields carried as JSON numbers: `Transaction.amount`, `Transaction.nonce`,
+`BlockHeader.height`, `BlockHeader.timestamp`, the `get_block_height` result
+and the `getBlockByHeight` argument.
 
-This is a property of the wire contract, and it is not papered over here: the
-types describe the actual JSON. Heights and timestamps are unaffected in
-practice; `amount` is the field to watch if large denominations are ever
-used.
+Values outside that range are **rejected**, with `MbongoNumericRangeError`
+naming the field:
+
+```typescript
+await client.submitTransaction({ ...tx, amount: 9007199254740992 });
+// MbongoNumericRangeError: transaction.amount: exceeds the JavaScript
+// safe-integer range (max 9007199254740991)
+```
+
+Outbound values are checked **before any network call**. Inbound values are
+checked before being returned, including every transaction inside a block
+body.
+
+### Why
+
+`rpc_v0.2.md` represents these fields as JSON numbers, and the Rust types
+behind them are wider than JavaScript can hold exactly — `amount` is a
+`u128`, the rest are `u64`. JavaScript is integer-exact only through
+`Number.MAX_SAFE_INTEGER`, so a larger literal is rounded **when JavaScript
+parses it**, before this package ever sees the value. The original cannot be
+recovered.
+
+What can be detected is that the value in hand is not a safe integer. The SDK
+fails closed on that: it will not transmit a value it cannot vouch for, and
+will not hand one back as though it were trustworthy. A rounded `amount`
+would otherwise be signed for and settled as a different number than
+intended.
+
+### What this is not
+
+This is an **SDK restriction**, not a protocol rule. The node accepts the
+full Rust domain, and `rpc_v0.2.md` is unchanged and remains FROZEN. Nothing
+here narrows the protocol; it narrows what this client is willing to vouch
+for.
+
+Supporting the full range across languages would need a different wire
+representation and therefore a versioned RPC decision. No such format has
+been selected.
 
 ## Tests
 

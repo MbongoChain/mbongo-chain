@@ -8,6 +8,11 @@
  */
 
 import { MbongoRpcError, MbongoTransportError } from "./errors.js";
+import {
+  assertSafeBlock,
+  assertSafeTransaction,
+  assertSafeUnsignedInteger,
+} from "./numeric.js";
 import type {
   Block,
   Hash,
@@ -61,7 +66,9 @@ export class MbongoClient {
    * `u64` on the wire; see the precision note in `types.ts`.
    */
   async getBlockHeight(): Promise<number> {
-    return this.call<number>(RPC_METHODS.getBlockHeight);
+    const height = await this.call<number>(RPC_METHODS.getBlockHeight);
+    assertSafeUnsignedInteger("get_block_height result", height);
+    return height;
   }
 
   /**
@@ -74,6 +81,9 @@ export class MbongoClient {
    * does not accept it.
    */
   async submitTransaction(transaction: Transaction): Promise<Hash> {
+    // Before any network call: a rounded amount would be signed for and
+    // settled as a different value than the caller meant.
+    assertSafeTransaction("transaction", transaction);
     return this.call<Hash>(RPC_METHODS.submitTransaction, transaction);
   }
 
@@ -100,7 +110,15 @@ export class MbongoClient {
    * runtime rather than contract, so this client never emits it.
    */
   async getBlockByHeight(height: number): Promise<Block> {
-    return this.call<Block>(RPC_METHODS.getBlockByHeight, { height });
+    assertSafeUnsignedInteger("height", height);
+    const block = await this.call<Block>(RPC_METHODS.getBlockByHeight, {
+      height,
+    });
+    // JSON.parse may already have rounded a value in the response. The
+    // original cannot be recovered, so the block is not handed back as
+    // trustworthy data.
+    assertSafeBlock("block", block);
+    return block;
   }
 
   /**
