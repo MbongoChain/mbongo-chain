@@ -109,6 +109,8 @@ struct ComputeTask {
     /// The account committing the task. Must equal the carrying
     /// transaction's sender.
     submitter: Address,
+    /// The one executor authorised to answer this task.
+    executor: Address,
     /// Client-chosen opaque uniqueness value.
     salt: [u8; 32],
     /// Commitment to the input data. The data itself is off-chain.
@@ -119,16 +121,18 @@ struct ComputeTask {
 }
 ```
 
-Five fields, in this canonical order. `task_id` is **not** a field — it is
+Six fields, in this canonical order. `task_id` is **not** a field — it is
 derived (§2.2). Adding, removing or reordering fields is a protocol change.
 
 Every field justified:
 
 - **`version`** — mirrors `Receipt.version`. Lets a future envelope change
   fail closed rather than be misread.
-- **`submitter`** — makes task identity per-client (§2.5). Consensus requires
-  it to equal `tx.sender`, so it carries no independent authority; it is in the
-  envelope so that identical work requested by two clients yields two tasks.
+- **`submitter`** — makes task identity per-client (§2.6), and makes the
+  stored task self-describing (§2.11). Consensus requires it to equal
+  `tx.sender`, so it carries no independent authority.
+- **`executor`** — the client names who may answer. This is the authorisation
+  model of §2.5, and it is what makes task squatting impossible (§9.1).
 - **`salt`** — lets a client deliberately repeat the same computation (§2.6).
   Deliberately **not** the transaction nonce: coupling task identity to replay
   protection would change the `task_id` whenever a transaction is resubmitted
@@ -139,6 +143,7 @@ Every field justified:
   do with it. Opaque bytes rather than an enum of task kinds: an
   `AIInference | ZKProof | Rendering | Generic` enum bakes today's product
   guesses into consensus, and the chain cannot act on the distinction anyway.
+  See §2.12 for what "opaque" does and does not promise.
 
 Deliberately absent: `deadline` / expiry (§2.9), `max_fee` and every other
 economic field (§6), `task_type`, `model_id`.
@@ -151,15 +156,25 @@ task_id = BLAKE3( DOMAIN_TASK || SCALE(ComputeTask) )
 DOMAIN_TASK = b"mbongo:compute-task:v1"   (22 bytes, ASCII, no terminator)
 ```
 
-`SCALE(ComputeTask)` is the five fields above in canonical order:
-`version` as one byte, `submitter` as 32 transparent bytes, `salt` as 32
-transparent bytes, `input_commitment` as 32 transparent bytes, then
-`execution_spec` as a SCALE compact length prefix followed by its raw bytes.
+`SCALE(ComputeTask)` is the six fields above in canonical order: `version` as
+one byte, then `submitter`, `executor`, `salt` and `input_commitment` as 32
+transparent bytes each, then `execution_spec` as a SCALE compact length prefix
+followed by its raw bytes.
+
+`DOMAIN_TASK` is the literal ASCII bytes
+`6d 62 6f 6e 67 6f 3a 63 6f 6d 70 75 74 65 2d 74 61 73 6b 3a 76 31` — 22
+bytes, prepended raw. **No NUL terminator and no SCALE string encoding:** the
+tag is concatenated as bytes, not encoded as a `Vec<u8>` with a length prefix.
 
 **No circularity.** `task_id` is not a field of the envelope, so the preimage
 never contains it.
 
 The hash is over raw bytes, never over a hexadecimal rendering of them.
+
+Note what `task_id` therefore commits to: the submitter, the authorised
+executor, the salt, the input commitment **and the execution specification**.
+Changing what was asked changes the task identity even when the input bytes
+are identical.
 
 ### 2.3 Domain separation, and an honest asymmetry
 
@@ -202,35 +217,75 @@ chain has never seen the output and never will. Stating the convention lets
 two parties disagree about a result in a way that is checkable *between them*;
 it gives consensus nothing, and this RFC does not pretend otherwise.
 
-### 2.5 Submitter authentication
+### 2.5 Authority: who submits, and who may answer
 
-A `ComputeTask` is carried by an ordinary signed `Transaction`. The
-transaction signature already authenticates the submission, so **the envelope
-carries no second signature**.
-
-Consensus requires `task.submitter == tx.sender`, exactly mirroring the
-`sender == receipt.executor` rule (g) that v0.3 established for anchoring. One
-key, one signature, one authority.
+**Submission.** A `ComputeTask` is carried by an ordinary signed
+`Transaction`. The transaction signature already authenticates the submission,
+so **the envelope carries no second signature**. Consensus requires
+`task.submitter == tx.sender`, mirroring the `sender == receipt.executor` rule
+(g) that v0.3 established for anchoring.
 
 This is a deliberate refusal to add a third Ed25519 signature domain. The
 chain already has two — the receipt's over a hash, the transaction's over raw
 bytes — and confusing them was the single most expensive mistake of the v0.3
 SDK work. A third would be worse.
 
+**Answering.** The task names exactly one authorised executor, and consensus
+requires `receipt.executor == task.executor` (rule s). A receipt from anyone
+else is rejected however well-formed it is.
+
+Three models were considered:
+
+| | Model | Verdict |
+|---|---|---|
+| A | permissionless — any executor may answer, first anchored wins | rejected |
+| B | one authorised executor named in the task | **chosen** |
+| C | a general authorisation policy commitment | deferred |
+
+**A is rejected because it is not actually permissionless — it is
+unguarded.** There is no discovery mechanism, no assignment, and no reward, so
+nothing draws an honest stranger to a task. What it does allow is a third
+party to consume a task by anchoring a worthless receipt first (§9.1). A
+competition model with no competitors and an open denial-of-service is not a
+model.
+
+**B is chosen** because it matches how the first vertical actually works.
+Input data reaches the executor off-protocol, which means the client already
+knows who they asked. Naming that executor commits a fact the client already
+holds, and costs one 32-byte field.
+
+Naming an executor is **not** a marketplace. It authenticates "this client
+asked *this* executor to perform *this* task." It defines no discovery, no
+bidding, no pricing and no selection algorithm, and the chain performs no
+matching.
+
+**C is deferred** to whichever RFC introduces assignment. Widening
+authorisation later — a policy commitment, or a sentinel meaning "anyone" — is
+a change confined to `ComputeTask` semantics and leaves `Receipt` v1 untouched
+(§2.13). Narrowing later would not be safe, so starting narrow is the
+reversible direction.
+
 ### 2.6 Duplicate and repeated tasks
 
-`task_id` is content-derived and includes `submitter` and `salt`. Therefore:
+`task_id` is content-derived over all six fields. The full matrix:
 
-- Two clients requesting identical work get **different** task ids. Neither
-  can occupy the other's identity.
-- One client repeating identical work with a **different `salt`** gets a
-  different task id, so legitimate repetition is possible.
-- One client resubmitting the **same** envelope gets the same `task_id`. The
-  second registration is **rejected**: first-registered-wins, mirroring
-  first-anchored-wins for receipts.
-- Resubmitting the carrying transaction with a different transaction nonce
-  leaves `task_id` unchanged, because the transaction nonce is not in the
-  envelope.
+| Varying | `task_id` | Outcome |
+|---|---|---|
+| nothing — identical envelope | same | second registration **rejected**, first-registered-wins |
+| `salt` | different | allowed — this is how a client repeats the same computation |
+| `submitter` | different | allowed — two clients cannot collide, whatever their salts |
+| `executor` | different | allowed — a client may ask two executors the same work |
+| `input_commitment` or `execution_spec` | different | a different task, as it should be |
+| only the carrying transaction's nonce | **unchanged** | the tx nonce is not in the envelope, so a resubmission after a nonce race keeps its identity |
+
+Replaying a receipt for an already-completed task is rejected by
+first-anchored-wins, unchanged from v0.3. Replaying it under a *different*
+executor is additionally rejected by rule (s).
+
+`salt` is `[u8; 32]`, client-chosen and opaque. It need not be random — a
+client may derive it from an internal job identifier — and **a zero salt is
+legal**. Its only job is to let the same submitter ask the same executor for
+the same work twice, deliberately.
 
 ### 2.7 Transaction representation
 
@@ -287,7 +342,26 @@ MAX_EXECUTION_SPEC_BYTES = 1024
 ```
 
 `execution_spec` is the only variable-length field, so this bounds the whole
-envelope: a maximal task encodes to `1 + 32 + 32 + 32 + 2 + 1024 = 1123` bytes.
+envelope. At the maximum, with the two-byte SCALE compact prefix that 1024
+requires:
+
+```
+version           1
+submitter        32
+executor         32
+salt             32
+input_commitment 32
+compact(1024)     2
+execution_spec 1024
+                ----
+canonical task  1155 bytes
+
+DOMAIN_TASK      22
+task_id preimage 1177 bytes
+```
+
+**This is a protocol safety bound, not an optimum.** No calculation produces
+1024; it is a judgement, and the RFC says so rather than dressing it up.
 
 **Not 4096.** The receipt's metadata bound was sized for an application-layer
 commitment pointer. An execution specification is a short identifier or
@@ -299,6 +373,50 @@ justified.
 Every task is committed to permanently, by every node, and is never pruned.
 The bound is what stops task submission from being a cheap way to write
 arbitrary data into every full node's storage.
+
+### 2.11 The stored task is self-describing
+
+Storage holds `task_id → canonical ComputeTask` and nothing else — no back
+reference to the registering transaction. Keeping `submitter` in the envelope
+means the stored task fully answers who asked, who may answer, what input was
+committed and what was requested, without retrieving the block that carried
+it.
+
+That is why `submitter` stays in the envelope even though consensus requires
+it to equal `tx.sender` and it is therefore redundant *within a transaction*.
+The alternative — dropping the field and folding `tx.sender` into the
+`task_id` preimage — is 32 bytes smaller and makes the task meaningless on its
+own.
+
+### 2.12 What "opaque" promises, and what it does not
+
+The chain never interprets `execution_spec`. It commits to it, stores it, and
+includes it in `task_id`; it forms no opinion about its contents.
+
+This means the protocol **cannot** guarantee that two parties read a
+specification the same way. Applications should therefore version their own
+specification format inside `execution_spec` — a leading version byte or a
+self-describing encoding — so that a reader can tell which convention applies.
+That is a convention for interoperability, not a consensus rule, and the chain
+enforces none of it.
+
+The ambiguity has no consensus consequence under §2.5: exactly one executor is
+authorised, so there is no second party whose differing interpretation could
+produce a competing receipt.
+
+An enum of task kinds would not have helped. It fixes today's product guesses
+in consensus and the chain still could not act on the distinction.
+
+### 2.13 Room to widen later
+
+`Receipt` v1 is untouched by this RFC and should stay untouched by the RFCs
+that follow it. Everything a future assignment or marketplace design needs to
+change lives in `ComputeTask`: authorisation may widen from one named executor
+to a policy commitment or an explicit "anyone" sentinel, and expiry, payment
+or bidding fields may appear, all without altering the receipt, its hash, its
+signature domain or its anchoring rules.
+
+The one rule such an RFC must revisit is (s). That is the intended seam.
 
 ---
 
@@ -323,13 +441,21 @@ For an `AnchorReceipt` transaction, rules (a)–(j) are unchanged, plus:
   state or earlier in the same block.
 - **(r) Input binding.** `receipt.input_commitment` equals that task's
   `input_commitment`.
+- **(s) Executor authorisation.** `receipt.executor` equals that task's
+  `executor`.
 
-Rule (r) is the whole point of this RFC. Everything else exists to make it
-mean something.
+Rules (r) and (s) are the point of this RFC. Everything else exists to make
+them mean something: (r) ties the answer to the committed question, (s) ties
+it to the party the client asked.
 
-Note what (q) and (r) deliberately do **not** say: nothing constrains *who*
-may answer a task. Any executor may anchor a receipt for any registered task,
-and first-anchored-wins decides. See §9 for the consequence.
+Rule (g) — `tx.sender == receipt.executor` — is unchanged and does different
+work. It authenticates *whoever is anchoring*. Rule (s) authenticates that
+they were *authorised to answer*. Neither implies the other: before this RFC a
+receipt was authenticated but unauthorised.
+
+"Task already completed" needs no rule of its own. First-anchored-wins on
+`task_id` — rules (i) and (j), unchanged from RFC 0002 — already rejects a
+second receipt for the same task.
 
 ---
 
@@ -461,11 +587,13 @@ name is not a reason to implement it.
 4. A receipt cannot claim an input the submitter did not commit to (rule r).
 5. After activation, a receipt cannot complete a task that does not exist
    (rule q).
-6. At most one task per `task_id` and at most one anchored receipt per
+6. **Only the executor the submitter named can complete a task (rule s).**
+7. At most one task per `task_id` and at most one anchored receipt per
    `task_id`.
-7. Executor identity remains authenticated by rule (g).
-8. Task payloads are bounded (§2.10).
-9. **No correctness claim is made or implied.**
+8. Executor identity remains authenticated by rule (g), which is distinct from
+   authorisation by rule (s).
+9. Task payloads are bounded (§2.10).
+10. **No correctness claim is made or implied** (§9.2).
 
 ---
 
@@ -482,6 +610,7 @@ Addressed:
 | duplicate registration | rule (p) |
 | receipt for a nonexistent task | rule (q) |
 | receipt/task mismatch | rule (r) |
+| **task squatting / unauthorised completion** | **rule (s)** — §9.1 |
 | duplicate receipt | rule (i)/(j), unchanged |
 | malformed task | rules (k)–(n) |
 | resource exhaustion | §2.10 |
@@ -489,24 +618,50 @@ Addressed:
 Explicitly deferred: a malicious-but-valid wrong computation, colluding
 executors, economic attacks, and every advanced verification strategy.
 
-### 9.1 Task squatting — an accepted limitation
+### 9.1 Task squatting — resolved by rule (s)
 
-Rules (q) and (r) do not constrain **who** may answer a task, and
-first-anchored-wins is global. A third party who sees a registered task can
-therefore compute any output, anchor a receipt for that `task_id` first, and
-permanently occupy it. The legitimate executor's receipt is then rejected as a
-duplicate.
+The first draft of this RFC left tasks answerable by anyone, and that was a
+denial-of-service hole rather than a competition model.
 
-The squatter gains nothing — no payment exists, and their receipt carries their
-own executor identity, so the submitter can see it is not the answer they
-wanted. But the task is consumed and the submitter must re-register with a new
-`salt`.
+The attack: a submitter registers task T; `task_id` and `input_commitment`
+become public in a block; before the intended executor anchors, an attacker
+builds a receipt with T's `task_id`, T's `input_commitment`, an arbitrary
+`output_commitment` and their own executor key, signs it, and anchors it.
+Every step satisfied the draft's rules. First-anchored-wins then consumed T,
+and the legitimate executor's receipt was rejected as a duplicate.
 
-This is **not solved here**, and pretending otherwise would be worse than
-naming it. Solving it means constraining who may answer, which is assignment —
-the marketplace question this RFC exists to avoid. It is recorded as the
-principal known limitation of the first vertical and belongs to whichever RFC
-introduces assignment.
+Notably the attacker never had to compute anything: `output_commitment` is
+opaque to consensus, so any 32 bytes would do. The attack cost one transaction
+and denied the submitter their task permanently.
+
+**Rule (s) eliminates it.** Only the executor the submitter named can produce
+an acceptable receipt for that task; an unauthorised receipt fails validation
+and never consumes the task. The submitter is no longer exposed to a stranger
+burning their `task_id`.
+
+What remains is not squatting: the **authorised** executor can still anchor a
+wrong `output_commitment`, because nothing here verifies computation (§9.2).
+That is a correctness question, not an availability one.
+
+### 9.2 What an authorised executor can still do
+
+Rule (s) fixes *who* may answer. It says nothing about *what* they answer
+with. The named executor can sign a receipt committing to any output at all,
+and consensus will accept it: the chain has never seen the output and cannot
+check it.
+
+So the properties this RFC delivers are, precisely:
+
+- **task correspondence** — the receipt answers a committed task
+- **input correspondence** — over the input the submitter committed to
+- **executor authorisation** — by the party the submitter named
+- **executor attribution** — signed by that party's key
+
+and the property it does **not** deliver, in any form:
+
+- **output correctness**
+
+Saying "verified receipt" of anything this RFC produces would be false.
 
 ---
 
@@ -524,11 +679,13 @@ Normative for the first vertical:
    `input_commitment`, and its own `output_commitment`.
 8. Executor signs the receipt over the raw 32-byte `receipt_hash`.
 9. Executor builds and signs an `AnchorReceipt` transaction.
-10. Chain validates (a)–(j) plus (q) and (r).
+10. Chain validates (a)–(j) plus (q), (r) and (s).
 11. Chain stores the receipt atomically with the block.
 12. Client reads the receipt back from the height it recorded.
 
-Step 5 is the only step with no protocol content, and that is the design.
+Step 5 is the only step with no protocol content, and that is the design. The
+client already knows which executor they asked — that is how the input reached
+them — which is precisely what step 3 commits and step 10 enforces.
 
 ---
 
@@ -558,10 +715,14 @@ implementation must ship a neutral cross-language fixture pinning:
 - `task_id`, including the domain tag in the preimage
 - the `ComputeTask` transaction signing payload, signature, full encoding and
   transaction hash
-- the `AnchorReceipt` binding: a receipt whose `input_commitment` matches its
-  task, and one whose does not
-- boundary vectors: empty `execution_spec`, the 1024-byte maximum, and 1025
-  rejected
+- the `AnchorReceipt` binding, one vector per outcome: a receipt whose
+  `input_commitment` matches its task and whose executor is the authorised
+  one; a receipt whose `input_commitment` does not match (rule r); and a
+  receipt from an executor the task did not name (rule s)
+- boundary vectors: empty `execution_spec`, the 1024-byte maximum with its
+  two-byte compact prefix, and 1025 rejected
+- the domain tag as literal bytes, so a fixture catches an implementation that
+  SCALE-encodes it or appends a NUL
 
 **Anti-circularity is mandatory**, as in #83 and #94: expected values are
 derived from the protocol rules, not by encoding with production Rust. Both
@@ -588,15 +749,21 @@ this RFC while its status is Draft.
 
 | Question | Decision |
 |---|---|
-| Canonical task representation | five-field envelope, §2.1 |
+| Canonical task representation | six-field envelope, §2.1 |
 | `task_id` derivation | `BLAKE3(DOMAIN_TASK ‖ SCALE(envelope))`, envelope excludes `task_id` |
+| **Execution authorisation** | **Model B — the task names one authorised executor (§2.5)** |
+| Submitter field | retained in the envelope; makes the stored task self-describing and identity per-client (§2.11) |
+| `salt` | `[u8; 32]`, client-chosen, opaque, zero permitted (§2.6) |
+| `execution_spec` | opaque bounded bytes, application-versioned by convention (§2.12) |
+| `MAX_EXECUTION_SPEC_BYTES` | 1024 — a safety bound, not an optimum (§2.10) |
+| Maximal canonical task / preimage | 1155 / 1177 bytes (§2.10) |
 | Input commitment | consensus checks **equality** with the task's; derivation is convention |
 | Output commitment | unchanged, opaque to consensus |
 | Submitter authentication | transaction signature only; no second envelope signature |
 | `amount` / `receiver` | must be `0` and the zero address, as consensus rules |
 | Legacy `ComputeTask` + `None` | rejected after activation |
 | Task storage | `tasks` column family, `task_id` → canonical bytes, schema 3 |
-| Receipt binding | rules (q) and (r) |
+| Receipt binding | rules (q), (r) and (s) |
 | Backward compatibility | clean version boundary; no height gating |
 | RPC activation | **none** |
 | Worker | external, no consensus role |
@@ -605,27 +772,36 @@ this RFC while its status is Draft.
 
 ---
 
-## 15. Unresolved design questions
+## 15. Design questions, resolved
 
-Recorded rather than hidden. None blocks review; each needs a decision before
-acceptance.
+The first draft carried four open questions. All four are now closed
+normatively; none is left for the implementer to decide.
 
-1. **Task squatting** (§9.1). Accepted as a limitation of the first vertical.
-   Confirm that is acceptable, or accept that assignment must land in the same
-   protocol version.
-2. **`MAX_EXECUTION_SPEC_BYTES = 1024`** is a judgement, not a derivation. It
-   bounds the envelope at 1123 bytes. If a real execution specification format
-   is chosen later and does not fit, the bound is a protocol change.
-3. **`execution_spec` as opaque bytes** gives consensus no way to reject a
-   nonsensical specification, and no two clients need agree on its meaning. A
-   versioned specification hash would be stricter and less flexible. This RFC
-   chooses flexibility because no specification format exists yet to be strict
-   about.
-4. **Whether `submitter` belongs in the envelope at all.** Consensus requires
-   it to equal `tx.sender`, so it is redundant *within a transaction* — its
-   only load-bearing role is making `task_id` per-client (§2.6). An alternative
-   is dropping the field and folding `tx.sender` into the `task_id` preimage,
-   which is smaller but makes the envelope non-self-describing.
+1. **Task squatting → RESOLVED by rule (s)** (§2.5, §9.1). Permissionless
+   answering was rejected: with no discovery, assignment or reward, it offered
+   no competition and a cheap denial of service. The task names one authorised
+   executor.
+2. **`MAX_EXECUTION_SPEC_BYTES` → RESOLVED at 1024**, with the maximal
+   canonical task at 1155 bytes and the `task_id` preimage at 1177 (§2.10).
+   The RFC states plainly that this is a safety bound and not an optimum. If a
+   real specification format later does not fit, raising it is a protocol
+   change — which is the correct cost.
+3. **`execution_spec` → RESOLVED as opaque, application-versioned bytes**
+   (§2.12). Consensus commits to it and never interprets it; applications
+   version their own format. Under rule (s) the interpretive ambiguity has no
+   consensus consequence, because only one party may answer.
+4. **`submitter` → RESOLVED: retained in the envelope** (§2.11). It is
+   redundant for authentication and load-bearing for two other reasons — the
+   stored task is self-describing without its registering transaction, and
+   task identity is separated per client structurally rather than by relying
+   on salt hygiene.
+
+### Remaining non-blocking questions
+
+None that change consensus semantics. Two matters are deliberately left to
+later RFCs and are named here so they are not mistaken for oversights:
+widening authorisation beyond a single executor (§2.13), and verifying output
+correctness (§9.2). Neither is required by the first implementation.
 
 ---
 
