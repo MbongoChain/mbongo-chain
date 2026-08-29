@@ -116,6 +116,31 @@ No exceptions. A red CI blocks merge regardless of tier.
 | Tier 1 — Devnet | 1 reviewer | Core Maintainer or experienced contributor |
 | Tier 2 — Tooling | 1 reviewer | Any contributor with merge rights |
 
+### When no second reviewer exists
+
+The table above assumes more than one active contributor. When the repository
+is operating in **SINGLE_MAINTAINER** mode — as defined in
+[RFC_PROCESS.md](RFC_PROCESS.md#governance-modes), meaning no eligible
+reviewer other than the PR's author exists — peer approval on an ordinary code
+PR is not obtainable, and the requirement is **suspended for that PR**. CI is
+then the gate: `fmt`, `clippy`, tests and the devnet harness must pass, with
+no exceptions.
+
+The suspension is narrow and does not extend to protocol changes:
+
+- **Tier 0 changes to a locked surface still require an RFC**, and that RFC
+  still goes through the full process — including its cooling period and
+  acceptance record. Code review being unavailable never shortens protocol
+  governance.
+- The requirement returns automatically the moment a second eligible reviewer
+  exists. Nobody selects this mode; it is derived from the roster.
+
+Note the two are different things. **Code review** asks whether a change is
+well made. **Protocol approval** asks whether a change to a locked surface
+should exist at all, and is granted only by the Core Maintainer roster in
+`RFC_PROCESS.md`. Merge rights confer the ability to do the first and never
+the second.
+
 ### Commit conventions
 
 Follow [Conventional Commits](https://www.conventionalcommits.org/) as defined in [CONTRIBUTING.md](CONTRIBUTING.md). Scope must reflect the tier: `core`, `storage`, `network` for Tier 0; `node`, `harness`, `metrics` for Tier 1; `docs`, `ci`, `sdk`, `cli` for Tier 2.
