@@ -2,8 +2,8 @@
 
 **Status:** DRAFT
 **Supersedes:** [rpc_v0.1.md](./rpc_v0.1.md) as the description of current node RPC behaviour
-**Derived from:** executable code at `206e2c73868864165d0717c770b37ac581f53f25`
-**Not frozen.** Three questions from the first draft are now decided (§6.1); five remain open (§6.2), and two methods still have no executable contract coverage.
+**Derived from:** executable code and tests at `1adf15e7d8c4f1877ffa895deef4c50093fe42b4`
+**Not frozen.** All contract questions are decided (§6) and all six methods have executable coverage (§5). The DRAFT to FROZEN transition is a separate, independent audit against this document — see §8.
 
 > This document describes what the node **does**, derived from
 > `crates/mbongo-network/src/server.rs`, the `RpcBackend` trait, and the
@@ -84,7 +84,7 @@ Matches v0.1.
 | Mutates state | yes — mempool admission |
 | Backend | `RpcBackend::submit_transaction` |
 | Errors | `-32602` on missing params (`"missing params"`) or on a payload that does not deserialise (`"invalid transaction: …"`); `-32603` on backend rejection |
-| Coverage | **none for the wire shape** — see §5 |
+| Coverage | tested — object params, string result, id, reaches backend; hex form rejected (§5) |
 
 **Differs from v0.1** on both sides. v0.1 specified params
 `[signed_tx: string]` (a hex-encoded SCALE blob) and a `{ tx_hash: string }`
@@ -97,11 +97,9 @@ representation. The historical `[signed_tx_hex]` interface is **not**
 restored: the structured form is the implemented path and matches both the
 current transaction model and the wallet tooling.
 
-**Response retained as-is for v0.2** — the bare transaction-hash string —
-unless an object envelope is deliberately chosen before v0.2 is frozen.
-
-Both shapes need executable contract tests before this document can be
-frozen. See §5 and §6.
+**Response retained as a bare transaction-hash string**, not wrapped in an
+envelope (§6.2). Both the accepted object form and the rejection of the
+historical hex form are pinned by tests (§5).
 
 ### 2.4 `produce_block`
 
@@ -111,7 +109,7 @@ frozen. See §5 and §6.
 | Returns | a JSON **string**: the hex-encoded block hash |
 | Mutates state | yes — produces a block and applies it |
 | Backend | `RpcBackend::produce_block` |
-| Coverage | **none** — see §5 |
+| Coverage | tested — no params, string result, id, mutating path exercised (§5) |
 
 **Differs from v0.1**, which specified an optional `[max_txs: u32]` parameter
 and a `{ block_hash, height }` result object.
@@ -133,42 +131,62 @@ and ignores it". Three facts settle this, and none of them is a preference:
 
 Blocks are therefore bounded, but bounded **node-side by a constant**, not by
 the caller. That constant is not currently declared as a public contract
-anywhere; whether it should be is a separate question from this method's
-signature, and is recorded in §6.
+anywhere, and v0.2 does not promise caller control over it (§6.3).
 
 Should a caller-supplied limit later be wanted, it is a deliberate runtime
 change — trait signature, handler, and tests — not a documentation edit.
 
 The result is a bare hash string rather than v0.1's
-`{ block_hash, height }` object. Retained as-is for v0.2; see §6.
+`{ block_hash, height }` object. Retained (§6.2).
 
 ### 2.5 `get_latest_block_hash`
 
 | Field | Value |
 |---|---|
-| Params | ignored |
+| Params | none |
 | Returns | a JSON **string**: the hex-encoded tip block hash |
 | Mutates state | no |
 | Backend | `RpcBackend::get_latest_block_hash` |
-| Coverage | tested — asserts a string result |
+| Coverage | tested — asserts a string result and id preservation |
 
-**Not documented by v0.1.** See §3.
+**Not documented by v0.1**, and **adopted as public contract by v0.2.** See
+§3. The bare string result is retained rather than wrapped in an envelope.
 
 ### 2.6 `get_block_by_height`
 
 | Field | Value |
 |---|---|
-| Params | `{"height": <u64>}` **or** a bare `<u64>` — both accepted |
-| Returns | the serialised `Block` (§4.2) |
+| Params | **canonical:** `{"height": <u64>}` |
+| Returns | the serialised `Block` (§4.2), nested `{header, body}` |
 | Mutates state | no |
 | Backend | `RpcBackend::get_block_by_height` |
 | Errors | `-32602` on missing params or an unparseable height; `-32603` when no block exists at that height |
-| Coverage | tested — asserts `result.header.height` |
+| Coverage | tested — asserts `result.header.height` and id preservation |
 
-**Not documented by v0.1.** See §3.
+**Not documented by v0.1**, and **adopted as public contract by v0.2.** See
+§3.
 
-Note that a missing block is reported as `-32603` (internal error), not as a
-null result or a dedicated not-found code.
+#### Canonical form versus runtime tolerance
+
+The canonical v0.2 request form is the object `{"height": N}`, and that is
+the only form clients should emit.
+
+The runtime **also** accepts a bare numeric `N`, because the handler reads
+`params.get("height").cloned().unwrap_or(params.clone())`. That is
+**runtime compatibility tolerance, not a second canonical form.** It is not
+promised, it is not removed here, and a client relying on it is relying on an
+implementation detail.
+
+The distinction is already reflected in the test suite: the existing contract
+test emits `{"height": 5}`, and no test asserts the bare-number form.
+
+#### Missing block
+
+An absent block surfaces as `-32603` (internal error), not as a null result
+or a dedicated not-found code. Documented here as **observed v0.2 behaviour**,
+retained deliberately rather than redesigned in this revision. It is
+versioned behaviour that a later RPC revision may improve; nothing in this
+document argues it is the right long-term design.
 
 ### 2.7 Everything else
 
@@ -186,16 +204,21 @@ not found.
 
 ## 3. Method status classification
 
-Not every dispatched method carries the same weight.
+All six dispatched methods are **intentional public v0.2 contract**. How they
+got there differs, and the distinction is worth keeping:
 
-| Method | Status |
+| Method | Origin |
 |---|---|
 | `ping`, `get_block_height`, `submit_transaction`, `produce_block` | documented by v0.1 — a public contract, however inaccurately described |
-| `get_latest_block_hash`, `get_block_by_height` | **implemented but never documented** by a spec |
+| `get_latest_block_hash`, `get_block_by_height` | **implemented but never documented** by any spec; **adopted** by v0.2 |
 
-The last two are dispatched and tested, but no specification ever declared
-them. This draft records their behaviour; it does not by itself promote them
-to stable public API. That promotion is one of the decisions in §6.
+Adoption is not a claim of history. The last two were never frozen and never
+specified; v0.2 deliberately takes them into the public contract now that
+each has executable coverage (§5). Nothing here retroactively asserts they
+were stable before.
+
+The reserved compute methods are **not** in this table and are not
+implemented. See §2.7.
 
 ---
 
@@ -248,72 +271,98 @@ So a client needs SCALE to **sign**, not to **transport**.
 
 ## 5. Contract coverage
 
-| Method | Executable coverage |
-|---|---|
-| `ping` | result shape asserted |
-| `get_block_height` | result shape asserted |
-| `get_latest_block_hash` | result shape asserted |
-| `get_block_by_height` | result shape asserted |
-| `submit_transaction` | **TEST_GAP** — no wire-shape test |
-| `produce_block` | **TEST_GAP** — no wire-shape test |
+Every method in §2 has an executable contract test at the JSON-RPC boundary,
+in `crates/mbongo-network/tests/jsonrpc_tests.rs`. Methods are mapped to the
+tests that pin them rather than to a test count, which would go stale.
 
-The two uncovered methods are the two that mutate state, and the two whose
-v0.1 contract diverges most. That is the least comfortable place for a gap,
-and it is why this document is DRAFT rather than FROZEN.
+| Method | Test | What it pins |
+|---|---|---|
+| `ping` | `test_ping` | string result `"pong"`, id preserved |
+| `get_block_height` | `test_get_block_height` | numeric result, id preserved |
+| `submit_transaction` | `submit_transaction_accepts_a_structured_transaction_object` | object params, string result, id preserved, and the transaction reaches the backend with a still-valid signature |
+| | `submit_transaction_does_not_accept_the_historical_hex_string_form` | the v0.1 `[signed_tx_hex]` form yields `-32602` and never reaches the backend |
+| `produce_block` | `produce_block_takes_no_parameters_and_returns_a_hash_string` | no params, string result, id preserved, mutating backend path exercised once |
+| `get_latest_block_hash` | `test_get_latest_block_hash` | string result, id preserved |
+| `get_block_by_height` | `test_get_block_by_height` | canonical `{"height": N}` params, nested `{header, body}` result, id preserved |
+
+What this coverage does **not** claim:
+
+- It exercises the **wire boundary**, not consensus. Signature validity,
+  mempool admission rules and block application are covered by their own
+  suites elsewhere.
+- The bare-number tolerance on `get_block_by_height` (§2.6) is asserted by no
+  test, deliberately — it is tolerance, not contract.
+- Error **messages** are not pinned anywhere. Only codes are.
+- `-32601` for every reserved and unknown method is pinned separately, in the
+  reserved-compute tests.
 
 ---
 
-## 6. Decisions and remaining questions
+## 6. Decisions
 
-### 6.1 Resolved
+Every question raised by earlier drafts of this document is now decided. The
+decisions and their reasons are recorded here so that a later reader sees
+what was chosen deliberately rather than inherited by accident.
 
-**`ping` result — align the spec to the runtime.** The canonical v0.2 result
-is the JSON string `"pong"`. The behaviour is established and covered by an
-executable test, and no consumer of v0.1's `{ ok: true }` is evidenced. No
-runtime change. `INTENTIONAL_PUBLIC_CONTRACT`.
+| | Decision |
+|---|---|
+| `ping` result | the JSON string `"pong"` — align the spec to the runtime |
+| `submit_transaction` request | a structured `Transaction` JSON object — align the spec to the runtime |
+| `produce_block` params | none; the method is parameterless |
+| `get_latest_block_hash`, `get_block_by_height` | adopted as public v0.2 contract |
+| `get_block_by_height` params | `{"height": N}` canonical; bare `N` is tolerance |
+| string results | retained as strings; no envelopes introduced |
+| missing block | `-32603` retained as observed v0.2 behaviour |
+| `MAX_TX_PER_BLOCK` | node implementation limit, **not** RPC contract |
 
-**`submit_transaction` request — align the spec to the runtime.** The
-canonical v0.2 request is a structured `Transaction` JSON object matching the
-Rust serde wire representation. The historical `[signed_tx_hex]` interface is
-not restored. `INTENTIONAL_PUBLIC_CONTRACT`.
+### 6.1 Aligned to the runtime rather than to v0.1
 
-**`produce_block` is parameterless.** `max_txs` is not an intentional API
-requirement: the backend trait takes no argument, no caller passes one, and
-block size is already bounded node-side by `MAX_TX_PER_BLOCK = 1000`. The
-method is defined as parameterless rather than as accepting-and-ignoring a
-parameter, so v0.2 does not attribute semantics the code does not have.
-`INTENTIONAL_PUBLIC_CONTRACT`. Adding a caller-supplied limit later is a
-deliberate runtime change, not a documentation edit.
+**`ping` returns `"pong"`.** v0.1 described `{ ok: true }`. The runtime
+behaviour is established and covered by a test, and no consumer of the object
+form is evidenced. No runtime change.
 
-### 6.2 Still open
+**`submit_transaction` takes a structured `Transaction` object.** v0.1
+described `[signed_tx: string]`, a hex-encoded SCALE blob. That form is not
+restored: the structured representation is the implemented path, matches the
+current transaction model and the wallet tooling, and its rejection is now
+pinned by a test.
 
-**Q-A — Should `get_latest_block_hash` and `get_block_by_height` become
-public contract?**
-They are implemented, dispatched and tested, but were never specified. Until
-this is answered they must not be described as stable to SDK consumers.
-`AMBIGUOUS_REQUIRES_MAINTAINER`.
+### 6.2 Results and errors retained as they are
 
-**Q-B — Is the dual parameter form of `get_block_by_height` a contract?**
-It accepts both `{"height": N}` and a bare `N`, via
-`params.get("height").cloned().unwrap_or(params.clone())`. Leniency of this
-kind is usually an implementation detail rather than a promise.
-`AMBIGUOUS_REQUIRES_MAINTAINER`.
+**String results stay strings.** `submit_transaction`, `produce_block` and
+`get_latest_block_hash` each return a bare hex hash string where v0.1 used an
+object. No envelope is introduced for aesthetic consistency, and no runtime
+change is made. A future envelope migration would require its own RPC
+version.
 
-**Q-C — Should `submit_transaction` return an object envelope?**
-The runtime returns a bare hash string. Retained for v0.2 unless an envelope
-is deliberately chosen before freezing. The same question applies to
-`produce_block` and `get_latest_block_hash`, whose bare-string results also
-replace v0.1 objects. `CURRENT_IMPLEMENTATION_DETAIL` pending that choice.
+**A missing block stays `-32603`.** Documented faithfully as observed
+behaviour rather than redesigned here. No new error code is invented, and no
+claim is made that this is the right long-term shape — it is versioned
+behaviour a later revision may improve.
 
-**Q-D — Should a missing block have a distinct signal?**
-`get_block_by_height` reports an absent block as `-32603` (internal error)
-rather than a null result or a dedicated code.
-`CURRENT_IMPLEMENTATION_DETAIL`.
+### 6.3 Boundaries held
 
-**Q-E — Should `MAX_TX_PER_BLOCK = 1000` be a declared public contract?**
-Blocks are bounded, but by a node-side constant that no specification
-declares. Distinct from the `produce_block` signature question resolved
-above. `AMBIGUOUS_REQUIRES_MAINTAINER`.
+**`get_latest_block_hash` and `get_block_by_height` are adopted, not
+retroactively frozen.** They were implemented and dispatched but never
+specified. v0.2 takes them into the public contract now that each has
+executable coverage. See §3.
+
+**The bare-number form of `get_block_by_height` is tolerance, not contract.**
+See §2.6. It is not promised, not tested, and not removed from the runtime
+here.
+
+**`MAX_TX_PER_BLOCK = 1000` is not an RPC guarantee.** It is a node-side
+block-production limit. It does not become a property of the `produce_block`
+interface merely because the backend uses it, and this document promises no
+caller control over it. `produce_block` remains parameterless, and
+`MAX_TX_PER_BLOCK`, the `RpcBackend::produce_block` signature, the handler
+and consensus behaviour are untouched. Whether that limit deserves normative
+protocol documentation is a separate concern, and not an RPC one.
+
+**Reserved compute methods are not implemented.** The five names from
+COMPUTE_INTERFACE_v0.1 §3, and `submit_receipt` / `get_receipt`, return
+`-32601` and are pinned there by tests. Nothing in this document presents
+them as available.
 
 ---
 
@@ -330,12 +379,24 @@ above. `AMBIGUOUS_REQUIRES_MAINTAINER`.
 
 ## 8. Path to FROZEN
 
-This document should not be frozen until:
+The three preconditions this document set for itself are now met:
 
-1. Q-A through Q-E are answered;
-2. `submit_transaction` and `produce_block` have executable wire-shape tests;
-3. the implementation details recorded in §6.2 are either promoted to
-   contract or documented as unstable.
+1. **Every contract question is decided** (§6) — nothing is left as
+   `AMBIGUOUS_REQUIRES_MAINTAINER`.
+2. **Every method has an executable wire-shape test** (§5), including
+   `submit_transaction` and `produce_block`, which were the gap.
+3. **The retained implementation details are documented as such** rather than
+   silently promoted: bare string results (§6.2), `-32603` for a missing
+   block (§6.2), and the bare-number tolerance on `get_block_by_height`
+   (§2.6).
 
-Freezing it earlier would repeat the failure it exists to correct: a document
-declared authoritative while the node does something else.
+**It is nevertheless still DRAFT.** The transition to FROZEN needs its own
+independent audit of this document against the runtime and the tests, run
+after this text exists and reviewed on its own terms. Folding the freeze into
+the edit that resolved the governance questions would hide the moment the
+document became authoritative inside a change about something else — which is
+close to how the v0.1 divergence went unnoticed in the first place.
+
+Freezing prematurely would repeat exactly the failure this document exists to
+correct: a specification declared authoritative while the node does something
+different.
