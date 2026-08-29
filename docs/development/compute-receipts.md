@@ -48,8 +48,15 @@ dependency was unavoidable.
 | `anchorReceiptTransactionToWire(tx)` | the JSON object the node expects |
 | `submitAnchorReceipt(client, tx)` | the transaction hash the node reports |
 
-Plus `MbongoAnchorError`, `MAX_RECEIPT_METADATA_BYTES`, `RECEIPT_VERSION` and
-`ANCHOR_RECEIPT_PAYLOAD_PREFIX_BYTES`.
+### Reading back — offline, synchronous, pure
+
+| Function | Returns |
+|---|---|
+| `receiptsInBlock(block)` | the canonical receipts anchored in that block, in transaction order |
+| `wireReceiptToReceipt(wire)` | one wire receipt converted to canonical bytes |
+
+Plus `MbongoAnchorError`, `MbongoReceiptError`, `MAX_RECEIPT_METADATA_BYTES`,
+`RECEIPT_VERSION` and `ANCHOR_RECEIPT_PAYLOAD_PREFIX_BYTES`.
 
 Receipt fields are `Uint8Array`, not hex. These values are hashed and signed,
 and carrying them as text invites signing the text instead of the bytes.
@@ -207,27 +214,77 @@ transaction hash and the block height at submission time instead.
 ## 8. Reading a receipt back
 
 There is no `getReceipt(taskId)`, and there will not be a naive one: no
-`task_id → height` index exists. Retrieval from a **known** height is
-[#86](https://github.com/MbongoChain/mbongo-chain/issues/86) and is not
-implemented.
-
-Today you scan a block you already identified:
+`task_id → height` index exists. What you can do is read receipts out of a
+block whose height you already know — because you recorded it when you
+anchored.
 
 ```typescript
-const block = await client.getBlockByHeight(height);
-for (const tx of block.body.transactions) {
-  if (tx.payload !== "None" && tx.payload.AnchorReceipt) {
-    tx.payload.AnchorReceipt.task_id;   // number[], not hex
-    tx.payload.AnchorReceipt.executor;  // "0x…" string
-  }
-}
+import { receiptsInBlock, verifyReceiptSignature } from "@mbongo/sdk";
+
+const block    = await client.getBlockByHeight(knownHeight);  // 1 RPC call
+const receipts = receiptsInBlock(block);                      // 0 calls
 ```
 
-That mixed representation is not a mistake in your code. Within one receipt
-object, `task_id`, `input_commitment`, `output_commitment` and `metadata` are
-**arrays of numbers**, while `executor` and `signature` are `0x` hex strings.
-The `WireReceipt` type models it exactly. See
+| Function | Returns |
+|---|---|
+| `receiptsInBlock(block)` | the canonical receipts anchored in that block, in transaction order |
+| `wireReceiptToReceipt(wire)` | one wire receipt converted to canonical bytes |
+
+`receiptsInBlock` is pure and offline. It takes a `Block` rather than a
+height, deliberately: a function accepting a bare `task_id` would read as a
+chain-side lookup, and there is none.
+
+### 0, 1 or many
+
+A block may anchor any number of receipts — consensus only forbids repeating
+one `task_id` within a block — so the result is always an array. An empty
+array means the block anchored nothing, which is ordinary and not an error.
+
+Filtering by `task_id` inside a block you already have is one line, and is
+deliberately not an API:
+
+```typescript
+const mine = receipts.find((r) => r.taskId.every((b, i) => b === taskId[i]));
+```
+
+### Decoding is not verification
+
+The receipts come back decoded, not verified. The block passed the node's
+consensus validation, which already checked each receipt — but this package
+checked nothing. Verify yourself if you need your own proof:
+
+```typescript
+const verified = receipts.filter(verifyReceiptSignature);
+```
+
+### It fails closed
+
+A transaction that claims to carry a receipt whose payload cannot be decoded
+**throws** `MbongoReceiptError` naming the offending transaction, rather than
+being skipped — silently under-reporting what a block contains is worse than
+failing. Every field is checked: version, the four fixed widths, the 4096-byte
+metadata bound, `0x` lowercase hex, and every number-array element within
+`0..=255`. A byte outside that range would be silently truncated by
+`Uint8Array` into a receipt whose hash no longer matches the chain's.
+
+### The mixed representation, handled for you
+
+`WireReceipt` carries `task_id`, `input_commitment`, `output_commitment` and
+`metadata` as **arrays of numbers**, and `executor` and `signature` as `0x`
+hex strings — that is the node's actual serde output, not a mistake in your
+code. `wireReceiptToReceipt` is the boundary that turns it into the
+`Uint8Array` form the receipt primitives operate on. See
 [architecture §7.2](../architecture/compute-receipts.md#72-json-representation-of-a-nested-receipt).
+
+### One limitation to know
+
+`getBlockByHeight` validates the **whole** block before returning it,
+including the `amount` and `nonce` of every transaction. A block containing a
+value outside the JavaScript safe-integer range is therefore unreadable rather
+than partially readable, and its receipts unreachable through this path. No
+such value can currently exist — supply is bounded well below 2^53 and there
+is no minting — but the structural limit is tracked in
+[#91](https://github.com/MbongoChain/mbongo-chain/issues/91).
 
 ---
 
@@ -289,7 +346,8 @@ production key.
 - sign a receipt
 - sign a non-`AnchorReceipt` transaction — full-range `u128` support is
   [#91](https://github.com/MbongoChain/mbongo-chain/issues/91)
-- look up a receipt by `task_id` or by `receipt_hash`
+- look up a receipt by `task_id` or by `receipt_hash` — extraction needs a
+  block you already have
 - tell you the computation was correct
 
 ---

@@ -86,7 +86,7 @@ To produce one today, see
 
 ## Compute RPC methods: not wrapped
 
-There is no compute client and no receipt **query** here. The five reserved
+There is no compute client and no lookup by `task_id` here. The five reserved
 compute RPC methods and `submit_receipt` / `get_receipt` are **unavailable on
 the node** and return `-32601`; wrapping them would only wrap an error.
 
@@ -262,8 +262,8 @@ prefix is **two** bytes, not one.
 
 These four functions are offline only. Building, signing and submitting an
 anchoring transaction is a separate surface — see
-[Anchoring a receipt](#anchoring-a-receipt) — and reading a receipt back is
-not in this package at all.
+[Anchoring a receipt](#anchoring-a-receipt), and reading receipts back out of
+a block is [Reading receipts back](#reading-receipts-back).
 
 ## Anchoring a receipt
 
@@ -362,7 +362,74 @@ does not mean the transaction is in a block, that the receipt is anchored, or
 that the computation the receipt describes was performed correctly. The chain
 validates structure, signature and uniqueness — and nothing about the work.
 
-Reading an anchored receipt back is not part of this package.
+Reading anchored receipts back out of a block you already identified is
+[below](#reading-receipts-back).
+
+## Reading receipts back
+
+Two pure, offline functions. Neither touches the network, and neither takes a
+client.
+
+```typescript
+import { receiptsInBlock, verifyReceiptSignature } from "@mbongo/sdk";
+
+const block    = await client.getBlockByHeight(knownHeight);  // 1 RPC call
+const receipts = receiptsInBlock(block);                      // 0 calls
+```
+
+| Function | Returns |
+|---|---|
+| `receiptsInBlock(block)` | the canonical receipts anchored in that block, in transaction order |
+| `wireReceiptToReceipt(wire)` | one wire receipt converted to canonical bytes |
+
+### Known height only
+
+There is no `task_id` to height index anywhere in the chain, so this works
+only when you already know the height — because you recorded it when you
+anchored. Nothing here discovers a height, scans the chain, or looks a receipt
+up by `task_id`.
+
+`receiptsInBlock` takes a `Block` rather than a height on purpose: a function
+accepting a bare `task_id` would read as a chain-side lookup, and there is
+none. Filtering within a block you already have is one line and deliberately
+not an API:
+
+```typescript
+const mine = receipts.find((r) => r.taskId.every((b, i) => b === taskId[i]));
+```
+
+### 0, 1 or many
+
+A block may anchor any number of receipts — consensus only forbids repeating
+one `task_id` within a block — so the result is always an array, in
+transaction order. An empty array means the block anchored nothing, which is
+ordinary and not an error.
+
+### Decoding is not verification
+
+Receipts come back decoded, not verified. The block passed the node's
+consensus validation, which already checked each one — but this package
+checked nothing:
+
+```typescript
+const verified = receipts.filter(verifyReceiptSignature);
+```
+
+### Fail closed
+
+A transaction claiming to carry a receipt whose payload cannot be decoded
+**throws** `MbongoReceiptError` naming the offending transaction, rather than
+being skipped. Version, the four fixed widths, the 4096-byte metadata bound,
+`0x` lowercase hex and every number-array element in `0..=255` are all
+checked — a byte outside that range would be silently truncated into a receipt
+whose hash no longer matches the chain's.
+
+### One limitation
+
+`getBlockByHeight` validates the **whole** block, including every
+transaction's `amount` and `nonce`. A block containing a value outside the
+safe-integer range is unreadable rather than partially readable. No such value
+can currently exist on chain; the structural limit is tracked separately.
 
 ## Tests
 
