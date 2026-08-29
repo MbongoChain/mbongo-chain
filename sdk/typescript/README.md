@@ -75,16 +75,20 @@ await client.submitTransaction({
 To produce one today, see
 `cargo run -p mbongo-wallet --example sign_tx`.
 
-## Receipt and compute helpers: not included
+## Compute helpers: not included
 
-There is no `Receipt` type, no `receipt_hash`, no `verifyReceipt`, no
-`AnchorReceipt` construction and no compute client here. The five reserved
-compute RPC methods and `submit_receipt` / `get_receipt` are **unavailable on
-the node** and return `-32601`; wrapping them would only wrap an error.
+There is no compute client, no `AnchorReceipt` transaction construction and
+no receipt submission or query here. The five reserved compute RPC methods
+and `submit_receipt` / `get_receipt` are **unavailable on the node** and
+return `-32601`; wrapping them would only wrap an error.
 
-Blocks containing anchored receipts still decode: the receipt body inside
-`TransactionPayload` is typed `unknown`, so the wire shape is modelled
-without implementing receipt semantics.
+Offline receipt primitives — encoding, hashing and signature verification —
+**are** included; see [Receipt primitives](#receipt-primitives).
+
+Blocks containing anchored receipts decode through the RPC types with the
+receipt body typed `unknown`: those types model the JSON wire shape, while
+the receipt primitives work in canonical bytes. The two are deliberately
+separate.
 
 ## Errors
 
@@ -162,6 +166,92 @@ for.
 Supporting the full range across languages would need a different wire
 representation and therefore a versioned RPC decision. No such format has
 been selected.
+
+## Receipt primitives
+
+Offline, synchronous, pure. Nothing here touches the network.
+
+```typescript
+import {
+  encodeReceiptSigningPayload,
+  encodeReceipt,
+  receiptHash,
+  verifyReceiptSignature,
+} from "@mbongo/sdk";
+
+const hash = receiptHash(receipt);          // Uint8Array(32)
+const ok   = verifyReceiptSignature(receipt); // boolean
+```
+
+| Function | Returns |
+|---|---|
+| `encodeReceiptSigningPayload(r)` | SCALE of fields 1–6, signature excluded |
+| `encodeReceipt(r)` | signing payload followed by the 64-byte signature |
+| `receiptHash(r)` | `BLAKE3` of the signing payload, 32 bytes |
+| `verifyReceiptSignature(r)` | executor signature over the **raw** hash |
+
+### Fields are bytes, not hex
+
+```typescript
+interface Receipt {
+  version: number;            // must be 1
+  taskId: Uint8Array;         // 32
+  inputCommitment: Uint8Array;  // 32
+  outputCommitment: Uint8Array; // 32
+  executor: Uint8Array;       // 32, Ed25519 public key
+  metadata: Uint8Array;       // at most 4096
+  signature: Uint8Array;      // 64
+}
+```
+
+The RPC types carry hex because that is their wire form. Receipt fields are
+`Uint8Array` because they are hashed and signed, and carrying them as text
+invites signing the text instead of the bytes.
+
+None of these functions mutate the arrays you pass them.
+
+### What `verifyReceiptSignature` proves
+
+That the receipt is structurally canonical, its version is supported, its
+metadata is within bound, and the key in `executor` signed **this exact
+receipt**.
+
+It does **not** prove that the computation was performed correctly, that the
+receipt is anchored on chain, that the task exists, that the executor was
+authorised to run it, or that anything was settled. The chain itself
+validates structure, signature and uniqueness — and nothing about the work.
+The name is deliberately narrow for that reason.
+
+### Fail closed
+
+- **Version 1 only.** Any other version throws rather than being hashed as
+  though understood.
+- **Metadata over 4096 bytes throws**, before any encoding or hashing. The
+  bound is normative through RFC 0002 §3 and frozen by `PROTOCOL_LOCK_v0.3`,
+  though `RECEIPT_SPEC_v0.1` omits it. Producing a canonical-looking hash for
+  a receipt consensus can never anchor would be the worst possible output,
+  because it looks right.
+- **Wrong field widths throw.** TypeScript types do not survive to runtime,
+  so widths are checked there.
+
+A structurally sound receipt whose signature simply does not match is not an
+error: `verifyReceiptSignature` returns `false`. `MbongoReceiptError` is for
+receipts that cannot be canonically encoded at all.
+
+### Correctness
+
+These primitives are checked against `test-vectors/receipt/receipt-v1.json`,
+the shared fixture the Rust node also reads. No expected value is duplicated
+in TypeScript — a copied constant would only prove the copy was faithful.
+
+The fixture's five valid vectors sit on the SCALE compact-length boundaries
+that matter: at 4096 bytes of metadata, the consensus maximum, the length
+prefix is **two** bytes, not one.
+
+### Not included
+
+No transaction construction, no signing, no submission, no receipt query. The
+package exposes no private-key API at all.
 
 ## Tests
 

@@ -86,3 +86,22 @@ export class MbongoNumericRangeError extends Error {
     this.value = value;
   }
 }
+
+/**
+ * A receipt is not canonically encodable: a field has the wrong width, the
+ * version is unsupported, or the metadata exceeds the consensus bound.
+ *
+ * This is a **structural** failure, raised before any encoding or hashing. A
+ * well-formed receipt whose signature simply does not verify is not an error
+ * — `verifyReceiptSignature` returns `false` for that.
+ */
+export class MbongoReceiptError extends Error {
+  /** The offending field, e.g. `metadata` or `taskId`. */
+  readonly field: string;
+
+  constructor(field: string, reason: string) {
+    super(`${field}: ${reason}`);
+    this.name = "MbongoReceiptError";
+    this.field = field;
+  }
+}
