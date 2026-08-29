@@ -496,7 +496,7 @@ verification and economic layers this RFC excludes.
 
 ---
 
-## 5. Compatibility and activation
+## 5. Compatibility
 
 ### 5.1 The legacy `ComputeTask` fall-through
 
@@ -531,7 +531,7 @@ has.
 
 ---
 
-## 6. What this RFC refuses to add
+## 6. Non-Goals
 
 **Economics.** No worker payment, no reward, no staking, no slashing, no
 compute fee market. `max_fee` from `COMPUTE_INTERFACE_v0.1` is deliberately
@@ -576,7 +576,7 @@ name is not a reason to implement it.
 
 ---
 
-## 8. Security invariants
+## 8. Security
 
 1. `task_id` is deterministic under the canonical encoding, and its preimage
    is domain-separated and unambiguous.
@@ -703,7 +703,7 @@ them â€” which is precisely what step 3 commits and step 10 enforces.
 
 ---
 
-## 12. Test plan
+## 12. Testing
 
 Following the precedent set by
 [`test-vectors/receipt/receipt-v1.json`](../../test-vectors/receipt/receipt-v1.json)
@@ -732,7 +732,7 @@ Vectors are not generated in this RFC.
 
 ---
 
-## 13. Protocol version
+## 13. Rollout
 
 Per [RFC_PROCESS.md](../RFC_PROCESS.md) and the v0.2â†’v0.3 precedent, a change
 to locked surfaces requires a protocol version bump and a new lock document.
@@ -742,6 +742,28 @@ naming this RFC as its authority, superseding `PROTOCOL_LOCK_v0.3.md`.
 
 The proposal is not the activation. No lock document is created or amended by
 this RFC while its status is Draft.
+
+### 13.1 Deployment sequence
+
+Restating decisions already made above, in the order they apply:
+
+1. **Acceptance precedes implementation.** No code lands while this RFC is in
+   Draft or Review.
+2. **Implement against v0.4 rules**: the new `TransactionPayload` variant and
+   its codec index, rules (k)-(p) for tasks, rules (q)-(s) for anchoring, and
+   the `tasks` column family at storage schema 3 (§2.7, §3, §4).
+3. **Clean version boundary.** There is no height gating: blocks are validated
+   under v0.4 rules throughout (§5.3).
+4. **Fresh state.** Schema 3 is not downgradable, and activation requires a new
+   genesis and a wiped data directory  the same coordination the v0.3
+   migration already required (§5.3).
+5. **Release.** A new `PROTOCOL_LOCK_v0.4.md` naming this RFC supersedes
+   `PROTOCOL_LOCK_v0.3.md`, and the release is tagged. Per
+   [RFC_PROCESS.md](../RFC_PROCESS.md) the lock is created at **Released**, not
+   at Accepted.
+
+**Rollback** is wiping the data directory and running a v0.3 binary against a
+fresh genesis. No in-place downgrade exists, and none is proposed.
 
 ---
 
