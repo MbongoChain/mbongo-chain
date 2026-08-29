@@ -177,3 +177,45 @@ jobs:
             --scenario base --years 100 \
             --output "$RUNNER_TEMP/base-run2.csv"
           cmp "$RUNNER_TEMP/base-run1.csv" "$RUNNER_TEMP/base-run2.csv"
+
+  # The SDK had no CI at all: its tests could pass locally and rot on dev
+  # unnoticed. They matter more than usual here because they pin the numeric
+  # safety guard, which exists to stop a silently rounded transaction amount
+  # from ever reaching the wire.
+  sdk-typescript:
+    name: TypeScript SDK
+    runs-on: ubuntu-latest
+    # Install, typecheck and a stdlib test runner over one small package.
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Pinned to a major version so a new Node release cannot change CI
+      # behaviour without a repository change. Node 20+ is required for the
+      # built-in test runner the suite uses; no test framework is installed.
+      - name: Install Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Report Node version
+        run: node --version
+        working-directory: sdk/typescript
+
+      # `npm ci` rather than `npm install`: it honours the lockfile exactly
+      # and fails if the lockfile and manifest disagree.
+      - name: Install dependencies
+        run: npm ci
+        working-directory: sdk/typescript
+
+      - name: Typecheck
+        run: npm run typecheck
+        working-directory: sdk/typescript
+
+      # `npm test` builds first and runs against dist/ — the artifact a
+      # consumer installs, not the sources.
+      - name: Run SDK tests
+        run: npm test
+        working-directory: sdk/typescript
