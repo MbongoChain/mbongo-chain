@@ -6,9 +6,16 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test"
   },
   "devDependencies": {
     "typescript": "^5.0.0"
-  }
+  },
+  "description": "TypeScript client for the Mbongo Chain JSON-RPC surface (RPC v0.2)",
+  "files": [
+    "dist",
+    "README.md"
+  ]
 }

@@ -5,6 +5,17 @@
 > **Status:** Official Reference  
 > **Audience:** Frontend Developers, Full-Stack Engineers, DApp Builders
 
+> [!WARNING]
+> **This document is aspirational and does not describe the shipped package.**
+> It documents `Wallet`, `ComputeClient`, `GovernanceClient`, `MempoolClient`,
+> `ValidatorClient`, providers and helpers that `@mbongo/sdk` does not
+> implement.
+>
+> For what the package actually provides, see
+> [`sdk/typescript/README.md`](../sdk/typescript/README.md). The implemented
+> surface is the six JSON-RPC methods of
+> [`docs/specs/rpc_v0.2.md`](specs/rpc_v0.2.md) (FROZEN), and nothing else.
+
 ---
 
 ## Table of Contents
