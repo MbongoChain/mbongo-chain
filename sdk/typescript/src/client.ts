@@ -138,7 +138,7 @@ export class MbongoClient {
       body = await response.json();
     } catch {
       // A JSON-RPC error is still delivered with a non-2xx status, so the
-      // status alone is not the failure; an unparseable body is.
+      // status alone is not the failure; an unparsable body is.
       throw new MbongoTransportError(
         `response from ${this.rpcUrl} was not valid JSON`,
         response.status,
