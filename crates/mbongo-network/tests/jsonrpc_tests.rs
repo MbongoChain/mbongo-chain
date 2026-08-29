@@ -299,3 +299,185 @@ async fn reserved_compute_methods_do_not_shadow_implemented_methods() {
     assert!(v["error"].is_null(), "ping must still succeed");
     assert_eq!(v["id"], json!(9));
 }
+
+// ── Mutating JSON-RPC wire contracts ─────────────────────────────────
+//
+// `submit_transaction` and `produce_block` are the two dispatched methods
+// that mutate state, and until now neither had a wire-shape test. They are
+// also the two whose shapes diverge most from the historical rpc_v0.1
+// description, so what the node actually accepts and returns was pinned
+// nowhere. These tests record the current boundary behaviour. They assert
+// no new behaviour and change none.
+
+/// A backend that remembers what the RPC layer handed it, so a test can
+/// prove a request reached the backend rather than merely producing a
+/// plausible response.
+#[derive(Clone, Default)]
+struct RecordingBackend {
+    submitted: std::sync::Arc<std::sync::Mutex<Vec<Transaction>>>,
+    blocks_produced: std::sync::Arc<std::sync::Mutex<usize>>,
+}
+
+impl RpcBackend for RecordingBackend {
+    async fn get_block_height(&self) -> Result<u64, BackendError> {
+        Ok(0)
+    }
+
+    async fn submit_transaction(&self, tx: Transaction) -> Result<String, BackendError> {
+        self.submitted.lock().unwrap().push(tx);
+        Ok("0xrecordedtxhash".to_string())
+    }
+
+    async fn produce_block(&self) -> Result<String, BackendError> {
+        *self.blocks_produced.lock().unwrap() += 1;
+        Ok("0xrecordedblockhash".to_string())
+    }
+
+    async fn get_latest_block_hash(&self) -> Result<String, BackendError> {
+        Ok("0xrecordedtiphash".to_string())
+    }
+
+    async fn get_block_by_height(&self, _height: u64) -> Result<Value, BackendError> {
+        Ok(json!(null))
+    }
+}
+
+/// The canonical signed transaction used by these tests, as the node
+/// serialises it. Produced by `cargo run -p mbongo-wallet --example
+/// sign_tx`, which signs with the fixed key `[0xAA; 32]`, so the bytes are
+/// deterministic and the signature is genuinely valid — the fixture is not
+/// weakened to make construction easier.
+fn signed_transaction_params() -> Value {
+    json!({
+        "tx_type": "Transfer",
+        "sender": "0xe734ea6c2b6257de72355e472aa05a4c487e6b463c029ed306df2f01b5636b58",
+        "receiver": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "amount": 100,
+        "nonce": 0,
+        "payload": "None",
+        "signature": "0x1c37e5d2236bba0eb9017ca49cf67ead73a8e30fa7a5afa982aeedb3c4b20485c9031e974dad586e9e4e9134d22ef003541018101c877867170fd568984cee0a"
+    })
+}
+
+/// Sends one JSON-RPC request against `backend` and returns
+/// (HTTP status, parsed body).
+async fn post_rpc<B: RpcBackend + Clone + Send + Sync + 'static>(
+    backend: B,
+    body: Value,
+) -> (StatusCode, Value) {
+    let response = router(backend)
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/rpc")
+                .method("POST")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+#[tokio::test]
+async fn submit_transaction_accepts_a_structured_transaction_object() {
+    let backend = RecordingBackend::default();
+    let (status, v) = post_rpc(
+        backend.clone(),
+        json!({
+            "jsonrpc": "2.0",
+            "method": "submit_transaction",
+            "params": signed_transaction_params(),
+            "id": 41
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["jsonrpc"], json!("2.0"));
+    assert_eq!(v["id"], json!(41), "request id must be preserved");
+    assert!(
+        v["error"].is_null(),
+        "a well-formed transaction must be accepted"
+    );
+    // The current result is a bare hash string, not an envelope object.
+    assert_eq!(v["result"], json!("0xrecordedtxhash"));
+
+    // The transaction reached the backend, intact and still verifiable.
+    let submitted = backend.submitted.lock().unwrap();
+    assert_eq!(
+        submitted.len(),
+        1,
+        "exactly one transaction must reach the backend"
+    );
+    let tx = &submitted[0];
+    assert_eq!(tx.amount, 100);
+    assert_eq!(tx.nonce, 0);
+    assert_eq!(tx.receiver, mbongo_core::Address([0x22u8; 32]));
+    assert!(matches!(tx.tx_type, mbongo_core::TransactionType::Transfer));
+    assert!(matches!(tx.payload, mbongo_core::TransactionPayload::None));
+    assert!(
+        tx.verify_signature(),
+        "the fixture must be a genuinely signed transaction, not a placeholder"
+    );
+}
+
+#[tokio::test]
+async fn submit_transaction_does_not_accept_the_historical_hex_string_form() {
+    // rpc_v0.1 described params as `[signed_tx: string]`, a hex-encoded
+    // SCALE blob. That is not the shape the node accepts. Both the bare
+    // string and the single-element array form are rejected, and neither
+    // reaches the backend.
+    let backend = RecordingBackend::default();
+    let hex_blob = json!("0x00e734ea6c2b6257de72355e472aa05a4c487e6b463c029ed306df2f01b5636b58");
+
+    for params in [hex_blob.clone(), json!([hex_blob])] {
+        let (_, v) = post_rpc(
+            backend.clone(),
+            json!({
+                "jsonrpc": "2.0",
+                "method": "submit_transaction",
+                "params": params,
+                "id": 42
+            }),
+        )
+        .await;
+        // The code is what matters; the message text is not a contract.
+        assert_eq!(v["error"]["code"], json!(-32602), "params: {params}");
+        assert_eq!(v["id"], json!(42));
+        assert!(v["result"].is_null());
+    }
+
+    assert!(
+        backend.submitted.lock().unwrap().is_empty(),
+        "a rejected request must not reach the backend"
+    );
+}
+
+#[tokio::test]
+async fn produce_block_takes_no_parameters_and_returns_a_hash_string() {
+    // The canonical request carries no params. This test deliberately does
+    // not exercise passing one: the backend method takes no argument, so
+    // accepting-and-ignoring a parameter is not part of the contract.
+    let backend = RecordingBackend::default();
+    let (status, v) = post_rpc(
+        backend.clone(),
+        json!({"jsonrpc": "2.0", "method": "produce_block", "id": 43}),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["jsonrpc"], json!("2.0"));
+    assert_eq!(v["id"], json!(43), "request id must be preserved");
+    assert!(v["error"].is_null());
+    // The current result is a bare hash string, not an envelope object.
+    assert_eq!(v["result"], json!("0xrecordedblockhash"));
+
+    assert_eq!(
+        *backend.blocks_produced.lock().unwrap(),
+        1,
+        "the state-mutating backend path must be exercised exactly once"
+    );
+}
