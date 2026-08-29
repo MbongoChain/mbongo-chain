@@ -1,9 +1,9 @@
 # Mbongo Chain RPC Specification v0.2
 
-**Status:** DRAFT
+**Status:** FROZEN
 **Supersedes:** [rpc_v0.1.md](./rpc_v0.1.md) as the description of current node RPC behaviour
 **Derived from:** executable code and tests at `1adf15e7d8c4f1877ffa895deef4c50093fe42b4`
-**Not frozen.** All contract questions are decided (§6) and all six methods have executable coverage (§5). The DRAFT to FROZEN transition is a separate, independent audit against this document — see §8.
+**Frozen.** All contract questions are decided (§6), all six methods have executable coverage (§5), and an independent audit against the runtime and the tests found no divergence — see §8. Breaking changes require a new RPC version.
 
 > This document describes what the node **does**, derived from
 > `crates/mbongo-network/src/server.rs`, the `RpcBackend` trait, and the
@@ -390,13 +390,23 @@ The three preconditions this document set for itself are now met:
    block (§6.2), and the bare-number tolerance on `get_block_by_height`
    (§2.6).
 
-**It is nevertheless still DRAFT.** The transition to FROZEN needs its own
-independent audit of this document against the runtime and the tests, run
-after this text exists and reviewed on its own terms. Folding the freeze into
-the edit that resolved the governance questions would hide the moment the
-document became authoritative inside a change about something else — which is
-close to how the v0.1 divergence went unnoticed in the first place.
+The document was deliberately kept DRAFT through the change that resolved
+those questions, so the freeze could not be hidden inside an edit about
+something else — close to how the v0.1 divergence went unnoticed in the first
+place.
 
-Freezing prematurely would repeat exactly the failure this document exists to
-correct: a specification declared authoritative while the node does something
-different.
+**The independent audit has since been run**, deriving the contract afresh
+from `server.rs`, the `RpcBackend` trait, the serde types and
+`jsonrpc_tests.rs`, and comparing that derivation against this text. All six
+methods matched on runtime behaviour, on test coverage and on documentation:
+no divergence. This document is therefore **FROZEN**.
+
+Breaking changes now require a new RPC version. That includes anything that
+would alter a canonical parameter form, a result shape, or the public method
+set — and, specifically, promoting the `get_block_by_height` bare-number
+tolerance (§2.6) to canonical, introducing result envelopes (§6.2), or
+exposing `max_txs` (§6.3).
+
+What is **not** frozen by this document: the reserved compute RPC surface,
+which remains deferred and unavailable, and node-side implementation limits
+such as `MAX_TX_PER_BLOCK`, which are not RPC contract.
