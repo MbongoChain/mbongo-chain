@@ -84,7 +84,7 @@ await client.submitTransaction({
 To produce one today, see
 `cargo run -p mbongo-wallet --example sign_tx`.
 
-## Compute helpers: not included
+## Compute RPC methods: not wrapped
 
 There is no compute client and no receipt **query** here. The five reserved
 compute RPC methods and `submit_receipt` / `get_receipt` are **unavailable on
@@ -95,10 +95,10 @@ Offline receipt primitives — encoding, hashing and signature verification —
 anchoring a receipt through the generic `submit_transaction`; see
 [Anchoring a receipt](#anchoring-a-receipt).
 
-Blocks containing anchored receipts decode through the RPC types with the
-receipt body typed `unknown`: those types model the JSON wire shape, while
-the receipt primitives work in canonical bytes. The two are deliberately
-separate.
+Blocks containing anchored receipts decode through the RPC types, whose
+receipt body is typed `WireReceipt`: those types model the JSON wire shape,
+while the receipt primitives work in canonical bytes. The two are deliberately
+separate, and `anchorReceiptTransactionToWire` is the boundary between them.
 
 ## Errors
 
@@ -258,10 +258,12 @@ The fixture's five valid vectors sit on the SCALE compact-length boundaries
 that matter: at 4096 bytes of metadata, the consensus maximum, the length
 prefix is **two** bytes, not one.
 
-### Not included
+### Not included here
 
-No transaction construction, no signing, no submission, no receipt query. The
-package exposes no private-key API at all.
+These four functions are offline only. Building, signing and submitting an
+anchoring transaction is a separate surface — see
+[Anchoring a receipt](#anchoring-a-receipt) — and reading a receipt back is
+not in this package at all.
 
 ## Anchoring a receipt
 

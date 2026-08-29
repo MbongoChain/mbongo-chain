@@ -112,6 +112,8 @@ This index provides a structured, hierarchical view of all Mbongo Chain document
 │   └── Fundamental transaction schema, serialization, signatures
 ├── block_structure.md [L2]
 │   └── Block header/body schema, roots, and serialization
+├── architecture/compute-receipts.md [L2] [PRIMARY]
+│   └── Compute receipts, anchoring, cryptographic domains, validation
 ├── compute_engine_overview.md [L3]
 │   └── GPU compute execution runtime
 ├── mempool_overview.md [L3]
@@ -243,11 +245,15 @@ This index provides a structured, hierarchical view of all Mbongo Chain document
 │   ├── Core types and traits
 │   ├── Transaction building
 │   └── Code examples
-└── ts_sdk_overview.md [L2]
-    ├── TypeScript SDK installation
-    ├── Client initialization
-    ├── Wallet integration
-    └── Code examples
+├── ts_sdk_overview.md [L2]
+│   ├── TypeScript SDK installation
+│   ├── Client initialization
+│   ├── Wallet integration
+│   └── Code examples
+└── development/compute-receipts.md [L2] [PRIMARY]
+    ├── Receipt primitives and anchoring API
+    ├── Nonce, errors and retry semantics
+    └── Testing against the shared fixtures
 ```
 
 ---
