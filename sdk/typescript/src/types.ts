@@ -40,12 +40,39 @@ export type TransactionType =
  * The unit variant serialises as the bare string `"None"`; the receipt
  * variant serialises as `{ "AnchorReceipt": <receipt> }`.
  *
- * The receipt body is typed `unknown` on purpose. This package models the
- * wire so that blocks containing anchored receipts decode correctly, but it
- * implements no receipt primitives — no canonical SCALE encoding, no
- * `receipt_hash`, no signature verification. Those belong to a later slice.
+ * The receipt body is {@link WireReceipt}: the exact JSON shape the node's
+ * serde produces, pinned by
+ * `test-vectors/transaction/anchor-receipt-v1.json`.
  */
-export type TransactionPayload = "None" | { AnchorReceipt: unknown };
+
+/**
+ * A receipt as it crosses the wire, inside an `AnchorReceipt` payload.
+ *
+ * Three byte representations coexist here, and that is the runtime's actual
+ * serde output rather than a choice this package makes. Hex appears exactly
+ * where the Rust type has a custom serializer: `Address` has its own
+ * `impl Serialize`, and the 64-byte signature uses `serde_arr64`. The three
+ * commitment fields and `metadata` are plain `[u8; 32]` and `Vec<u8>` with no
+ * annotation, so they serialise as arrays of numbers.
+ *
+ * The general byte-encoding sentence in `rpc_v0.2.md` does not describe these
+ * four fields; reconciling that wording is tracked separately.
+ */
+export interface WireReceipt {
+  version: number;
+  /** Array of 32 byte values, not hex. */
+  task_id: number[];
+  /** Array of 32 byte values, not hex. */
+  input_commitment: number[];
+  /** Array of 32 byte values, not hex. */
+  output_commitment: number[];
+  executor: Address;
+  /** Array of byte values, not hex. */
+  metadata: number[];
+  signature: Signature;
+}
+
+export type TransactionPayload = "None" | { AnchorReceipt: WireReceipt };
 
 /**
  * A transaction as it crosses the wire.

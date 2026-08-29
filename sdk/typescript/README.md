@@ -51,11 +51,20 @@ block.header.height;                  // 0
 block.body.transactions;              // []
 ```
 
-## Signing: not included
+## Signing: only `AnchorReceipt`
 
-`submitTransaction` sends an **already-signed** transaction. This package
-does not sign anything — no SCALE encoding, no BLAKE3, no Ed25519. The caller
+`submitTransaction` sends an **already-signed** transaction: the caller
 supplies a complete `Transaction` object and the client serialises it as-is.
+It signs nothing.
+
+The one transaction this package can build and sign for you is
+`AnchorReceipt` — see [Anchoring a receipt](#anchoring-a-receipt). There is
+deliberately no general `signTransaction`: a generic signer would have to
+encode arbitrary `u128` amounts, and this package refuses to vouch for values
+outside the JavaScript safe-integer range. `AnchorReceipt` sidesteps that
+entirely, because consensus pins its amount to `0`.
+
+For any other transaction type the caller still supplies a signed object:
 
 The node expects a structured JSON object, not the historical
 `[signed_tx_hex]` form, and byte fields cross the wire as `0x` hex strings:
@@ -77,13 +86,14 @@ To produce one today, see
 
 ## Compute helpers: not included
 
-There is no compute client, no `AnchorReceipt` transaction construction and
-no receipt submission or query here. The five reserved compute RPC methods
-and `submit_receipt` / `get_receipt` are **unavailable on the node** and
-return `-32601`; wrapping them would only wrap an error.
+There is no compute client and no receipt **query** here. The five reserved
+compute RPC methods and `submit_receipt` / `get_receipt` are **unavailable on
+the node** and return `-32601`; wrapping them would only wrap an error.
 
 Offline receipt primitives — encoding, hashing and signature verification —
-**are** included; see [Receipt primitives](#receipt-primitives).
+**are** included; see [Receipt primitives](#receipt-primitives). So is
+anchoring a receipt through the generic `submit_transaction`; see
+[Anchoring a receipt](#anchoring-a-receipt).
 
 Blocks containing anchored receipts decode through the RPC types with the
 receipt body typed `unknown`: those types model the JSON wire shape, while
@@ -252,6 +262,105 @@ prefix is **two** bytes, not one.
 
 No transaction construction, no signing, no submission, no receipt query. The
 package exposes no private-key API at all.
+
+## Anchoring a receipt
+
+Anchoring puts a signed receipt inside a transaction that is itself signed,
+and submits it through the ordinary `submit_transaction` method. No new RPC is
+involved.
+
+```typescript
+import {
+  signAnchorReceiptTransaction,
+  submitAnchorReceipt,
+  MbongoAnchorError,
+} from "@mbongo/sdk";
+
+const tx = signAnchorReceiptTransaction(receipt, nonce, executorSecretKey);
+
+try {
+  const txHash = await submitAnchorReceipt(client, tx);
+} catch (err) {
+  if (err instanceof MbongoAnchorError) {
+    err.reason;             // "duplicate-task-id", "invalid-nonce", …
+    err.isDuplicateTaskId;
+  }
+}
+```
+
+| Function | Returns |
+|---|---|
+| `anchorReceiptSigningPayload(receipt, nonce)` | the bytes that get signed |
+| `signAnchorReceiptTransaction(receipt, nonce, secretKey)` | a signed transaction |
+| `anchorReceiptTransactionHash(tx)` | `BLAKE3` of the full signed encoding |
+| `anchorReceiptTransactionToWire(tx)` | the JSON object the node expects |
+| `submitAnchorReceipt(client, tx)` | the transaction hash the node reports |
+
+### Two signatures, one key
+
+Consensus requires `tx.sender == receipt.executor`, so the same Ed25519 key
+produces both signatures. They are **different signatures**, because the
+messages differ:
+
+| Signature | Key | Message |
+|---|---|---|
+| `receipt.signature` | executor | the raw 32 bytes of `receiptHash(receipt)` |
+| transaction signature | sender | the **raw** transaction signing payload |
+
+The transaction signature has **no prehash**. It is over the payload bytes
+themselves, never over a digest of them — applying the receipt's
+hash-then-sign pattern here produces a transaction the node rejects.
+
+Three values are easy to confuse and are not interchangeable:
+
+| | Covers | Hashed? |
+|---|---|---|
+| `receiptHash(receipt)` | the receipt, signature excluded | yes |
+| the transaction signing payload | the whole transaction, signature excluded | **no** |
+| `anchorReceiptTransactionHash(tx)` | the whole transaction, signature **included** | yes |
+
+The last one is what `submit_transaction` returns, so you can check the node
+answered about the transaction you actually signed.
+
+### What is fixed, and what you choose
+
+`sender` is derived from `receipt.executor` rather than accepted as an
+argument, so the two cannot contradict each other. `receiver` is the zero
+address and `amount` is `0`; consensus requires both, so neither is a
+parameter. **`nonce` is the only field you choose.**
+
+The secret key is a 32-byte Ed25519 seed, used once and discarded. If it does
+not derive `receipt.executor`, signing fails immediately rather than producing
+a transaction that could never be anchored. This package has no key storage,
+no derivation, no mnemonics and no keystore.
+
+### You supply the nonce
+
+`nonce` must equal the sender account's current nonce. **This package does not
+fetch it**, and does not assume `0`: JSON-RPC v0.2 exposes no account method.
+The account lookup lives on the REST surface, which this client does not
+model. A freshly generated key has no account at all and cannot anchor.
+
+### Retrying
+
+Before the task is anchored, re-submitting the **identical signed
+transaction** is safe — same receipt, same nonce, therefore the same bytes,
+and the node treats an unanchored duplicate as idempotent.
+
+Once the `task_id` is anchored, any further submission is rejected as
+`duplicate-task-id`. That reason **cannot tell you whether you anchored it or
+someone else did**. Nothing in the response distinguishes the two, and there
+is no public query API that would. Record the transaction hash and block
+height at submission time if you need to know.
+
+### What anchoring does not mean
+
+A returned hash means the node accepted the transaction into its mempool. It
+does not mean the transaction is in a block, that the receipt is anchored, or
+that the computation the receipt describes was performed correctly. The chain
+validates structure, signature and uniqueness — and nothing about the work.
+
+Reading an anchored receipt back is not part of this package.
 
 ## Tests
 

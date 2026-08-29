@@ -105,3 +105,53 @@ export class MbongoReceiptError extends Error {
     this.field = field;
   }
 }
+
+/**
+ * Why the node refused to anchor a receipt, or why a transaction could not be
+ * built locally.
+ *
+ * The node answers `-32603` with a message for every anchoring rule, so these
+ * are derived from that message. `"unknown"` means the rejection did not match
+ * any rule this package recognises — treat it as a rejection, not as success.
+ */
+export type AnchorRejection =
+  | "duplicate-task-id"
+  | "task-id-pending"
+  | "metadata-too-large"
+  | "unsupported-receipt-version"
+  | "sender-executor-mismatch"
+  | "invalid-receipt-signature"
+  | "invalid-transaction-signature"
+  | "invalid-nonce"
+  | "invalid-anchor-fields"
+  | "sender-account-unusable"
+  | "unknown";
+
+/**
+ * An `AnchorReceipt` transaction could not be built, or the node refused it.
+ *
+ * `reason` is absent for local construction failures — a wrong key width, a
+ * key that does not derive the receipt's executor — and present when the
+ * failure came back from the node.
+ */
+export class MbongoAnchorError extends Error {
+  /** The offending field, or `submit` when the node rejected the attempt. */
+  readonly field: string;
+  /** Set only when the node rejected the attempt. */
+  readonly reason?: AnchorRejection;
+  /** The underlying JSON-RPC error, when there was one. */
+  readonly cause?: unknown;
+
+  constructor(field: string, reason: string, rejection?: AnchorRejection, cause?: unknown) {
+    super(`${field}: ${reason}`);
+    this.name = "MbongoAnchorError";
+    this.field = field;
+    this.reason = rejection;
+    this.cause = cause;
+  }
+
+  /** True when the task id was already anchored, by anyone. */
+  get isDuplicateTaskId(): boolean {
+    return this.reason === "duplicate-task-id";
+  }
+}
