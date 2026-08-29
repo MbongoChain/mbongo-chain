@@ -338,10 +338,12 @@ subsystem.
   [#91](https://github.com/MbongoChain/mbongo-chain/issues/91) and unresolved.
 - **No wallet.** No key storage, derivation, mnemonics or keystore anywhere in
   the SDK.
-- **Duplicate attribution is impossible.** A `task_id already anchored`
-  rejection cannot distinguish "I anchored it" from "someone else did", and no
-  public query API exists to tell them apart. Record the transaction hash and
-  height at submission time if you need to know.
+- **Duplicate attribution is not directly answerable.** A
+  `task_id already anchored` rejection cannot distinguish "I anchored it" from
+  "someone else did". Neither the JSON-RPC surface nor the REST surface exposes
+  a receipt lookup, so short of scanning every block for the `task_id`, nothing
+  answers it. Record the transaction hash and height at submission time
+  instead.
 - **`rpc_v0.2` byte-encoding wording** is inaccurate for the nested receipt;
   see §7.2 and #96.
 

@@ -197,9 +197,10 @@ the node treats an unanchored duplicate as idempotent.
 
 Once it is anchored, any further submission is rejected as
 `duplicate-task-id` — and that reason **cannot tell you whether you anchored it
-or someone else did**. Nothing in the response distinguishes the two, and no
-public query API exists. If you need to know, record the transaction hash and
-the block height at submission time.
+or someone else did**. Nothing in the response distinguishes the two, and
+neither the JSON-RPC nor the REST surface offers a receipt lookup, so short of
+scanning every block for the `task_id` there is nothing to ask. Record the
+transaction hash and the block height at submission time instead.
 
 ---
 
