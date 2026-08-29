@@ -247,6 +247,8 @@ the `ping` method.
 | [DEVNET_STABILITY_REPORT.md](./docs/DEVNET_STABILITY_REPORT.md) | Freeze documentation, test matrix |
 | [DEV_ONBOARDING.md](./docs/DEV_ONBOARDING.md) | Quick start, CLI reference, devnet commands |
 | [ARCHITECTURE_OVERVIEW_FOR_NEW_DEVS.md](./docs/ARCHITECTURE_OVERVIEW_FOR_NEW_DEVS.md) | Layer separation and block flow |
+| [architecture/compute-receipts.md](./docs/architecture/compute-receipts.md) | Receipt anchoring: data model, cryptographic domains, validation, storage |
+| [development/compute-receipts.md](./docs/development/compute-receipts.md) | Building, signing, anchoring and verifying receipts with the SDK |
 | [PROTOCOL_LOCK_v0.3.md](./docs/specs/PROTOCOL_LOCK_v0.3.md) | Current frozen surfaces, migration, versioning rules |
 | [PROTOCOL_LOCK_v0.2.md](./docs/specs/PROTOCOL_LOCK_v0.2.md) | Superseded v0.2 lock (historical) |
 | [COMPUTE_INTERFACE_v0.1.md](./docs/specs/COMPUTE_INTERFACE_v0.1.md) | Future receipt spec (no implementation in v0.2) |

@@ -14,7 +14,10 @@
 > For what the package actually provides, see
 > [`sdk/typescript/README.md`](../sdk/typescript/README.md). The implemented
 > surface is the six JSON-RPC methods of
-> [`docs/specs/rpc_v0.2.md`](specs/rpc_v0.2.md) (FROZEN), and nothing else.
+> [`docs/specs/rpc_v0.2.md`](specs/rpc_v0.2.md) (FROZEN), plus offline receipt
+> primitives and `AnchorReceipt` construction, signing and submission — see
+> [development/compute-receipts.md](development/compute-receipts.md). There is
+> no wallet, no key management and no generic transaction signing.
 
 ---
 
