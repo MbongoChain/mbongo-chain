@@ -36,12 +36,37 @@ Node's `zlib` and a small header walk instead.
 
 ## Counting carriage returns
 
+Say which quantity you want before choosing a command. Two different things
+get confused here:
+
+| | |
+|---|---|
+| **lines matching a pattern** | what `grep -c` returns |
+| **bytes equal to `0x0D`** | what a carriage-return count means |
+
+For the byte count, use a byte-oriented command on the exact bytes:
+
 ```bash
-tr -cd '\r' < file | wc -c        # counts real CR bytes
+tr -cd '\r' < file | wc -c
 ```
 
-`grep -c $'\r'` strips CR before matching under MSYS and reports **0** on a
-CRLF file. It will tell you a file is clean when it is not.
+**Do not use `grep -c $'\r'` as evidence of a CR byte count.** How the shell
+expands `$'\r'` and how grep then treats it are not dependable here, and the
+output is a line count either way. Measured on this repository:
+
+| file | lines | CR bytes | `grep -c $'\r'` |
+|---|---|---|---|
+| `LICENSE` (CRLF on disk) | 201 | 201 | 201 |
+| a LF-only `SKILL.md` | 193 | 0 | 193 |
+
+On the CRLF file the two agree — one CR per line makes them numerically
+equal. On the LF file the same probe reports 193 carriage returns in a file
+that has none.
+
+**The coincidence is the trap.** A plausible number matching your expectation
+does not establish that the command measured the quantity you wanted. Check
+the probe against a case whose answer you already know — here, a file you
+know is LF-only should report 0.
 
 ## Node path resolution differs from the shell's
 

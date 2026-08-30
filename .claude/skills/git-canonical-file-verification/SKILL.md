@@ -72,8 +72,12 @@ stores.
 tr -cd '\r' < file | wc -c
 ```
 
-Do **not** use `grep -c $'\r'` under MSYS: it strips CR before matching and
-reports 0 on a CRLF file.
+That counts bytes equal to `0x0D`. `grep -c` counts **matching lines**, which
+is a different quantity, so `grep -c $'\r'` is not evidence of a CR byte
+count — on a LF-only file here it reports the file's line count while the
+byte count is 0. See
+[`windows-shell-safety`](../windows-shell-safety/SKILL.md) for the
+measurement.
 
 ### Tell a real change from a line-ending rewrite
 
