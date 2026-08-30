@@ -36,7 +36,8 @@
     "build": "tsc",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test"
+    "test": "npm run build && node --test",
+    "test:consumer": "npm run build && node scripts/consumer-smoke.mjs"
   },
   "dependencies": {
     "@noble/curves": "2.4.0",

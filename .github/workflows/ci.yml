@@ -219,3 +219,12 @@ jobs:
       - name: Run SDK tests
         run: npm test
         working-directory: sdk/typescript
+
+      # Packs the SDK and installs the resulting tarball into a throwaway
+      # project outside the repository, then imports it by package name from
+      # both JavaScript and TypeScript. This is the gate that would catch a
+      # `files` or `exports` change making the package uninstallable — the
+      # suite above only ever sees dist/ in place.
+      - name: Packed consumer smoke
+        run: npm run test:consumer
+        working-directory: sdk/typescript
