@@ -295,9 +295,9 @@ closing it — the normal case for one slice of a larger tracked effort — writ
 This matters most for umbrella issues that track several pieces of work: a
 closing keyword in one slice's pull request ends the whole tracking issue.
 
-Note that [`../.github/pull_request_template.md`](../.github/pull_request_template.md)
-currently prints `Closes #` under **Linked Issue**. Change it to `Refs #` when
-the issue should stay open.
+[`../.github/pull_request_template.md`](../.github/pull_request_template.md)
+prints `Refs #` under **Linked Issue** for that reason. Replace it with a
+closing keyword only when closing the issue is the intent.
 
 ---
 
