@@ -4,7 +4,7 @@ Short description of the change.
 
 ## Linked Issue
 
-Closes #
+Refs #
 
 ## Scope Confirmation
 
