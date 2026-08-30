@@ -25,6 +25,21 @@ use crate::mempool::{Mempool, MempoolError};
 /// Maximum transactions per block.
 const MAX_TX_PER_BLOCK: usize = 1000;
 
+/// Maximum transactions one sender may hold pending in this node's mempool.
+///
+/// Node-local admission policy, not a consensus rule and not a protocol
+/// surface: nothing in `apply_block` or the anchoring spec knows about it,
+/// and two nodes may disagree on it without disagreeing on any block.
+///
+/// It exists because issue #100 removed an incidental bound. While a sender
+/// could hold only one pending transaction, per-sender memory was bounded at
+/// one; a pending chain has no such limit, and the balance check bounds
+/// nothing for `AnchorReceipt` transactions, whose amount is always zero.
+///
+/// Kept well below [`MAX_TX_PER_BLOCK`] so one sender's full chain always
+/// fits in a single block. It carries no economic meaning.
+const MAX_PENDING_PER_SENDER: usize = 64;
+
 /// Maximum `receipt.metadata` length in bytes (RFC 0002 §3, maintainer-
 /// approved value). This is a consensus validity rule of the anchoring
 /// protocol, not intrinsic receipt validity: raising it is a protocol
@@ -638,6 +653,24 @@ impl<S: Storage + Send + Sync + 'static> RpcBackend for NodeBackend<S> {
                 return Err(BackendError::Internal("invalid signature".to_string()));
             }
 
+            // ── Pending-aware admission (issue #100) ──────────────────
+            // The mempool write guard is taken here rather than just
+            // before insertion, and held to the end. The expected nonce is
+            // now a function of pending state, so computing it outside the
+            // guard would let two concurrent same-node submissions each
+            // conclude they own the same nonce slot. Everything from here
+            // to insertion is one critical section.
+            let mut pool = mempool.write().await;
+
+            // Idempotent re-submission of an already pending transaction.
+            // This moved ahead of the nonce rules: the transaction
+            // occupying this nonce slot is this very transaction, so a
+            // pending-aware check would otherwise reject a byte-identical
+            // retry that previously succeeded.
+            if pool.contains_hash(&tx_hash) {
+                return Ok(tx_hash.to_string());
+            }
+
             // Load sender account for validation (nonce, balance).
             let sender_addr = tx.sender;
             let sender = storage
@@ -645,14 +678,44 @@ impl<S: Storage + Send + Sync + 'static> RpcBackend for NodeBackend<S> {
                 .map_err(|_| BackendError::Internal("storage error".to_string()))?
                 .ok_or_else(|| BackendError::Internal("insufficient balance".to_string()))?;
 
-            // Validate nonce (do not mutate; we only check).
-            if sender.nonce != tx.nonce {
-                return Err(BackendError::Internal("invalid nonce".to_string()));
+            let pending = pool.sender_pending(&sender_addr, sender.nonce);
+
+            // Validate nonce against committed state *and* what is already
+            // pending. Consensus is untouched: apply_block still runs
+            // `validate_and_increment_nonce` against its own advancing
+            // account view (RFC 0002 rule d). This only stops admission
+            // from rejecting a correct successor while its predecessor is
+            // still waiting for a block.
+            let Some(expected_nonce) = pending.expected_nonce else {
+                return Err(BackendError::Internal(
+                    "invalid nonce: sender nonce space exhausted".to_string(),
+                ));
+            };
+            if tx.nonce != expected_nonce {
+                // On a gap this reports the *missing* nonce, which is what
+                // the client has to submit to make progress again.
+                return Err(BackendError::Internal(format!(
+                    "invalid nonce: expected {expected_nonce}"
+                )));
             }
 
-            // Validate balance. (Vacuous for AnchorReceipt: amount is 0.)
-            if sender.balance < tx.amount {
-                return Err(BackendError::Internal("insufficient balance".to_string()));
+            // Validate balance against committed balance less what the
+            // pending chain already spends. (Vacuous for AnchorReceipt:
+            // amount is 0.) Pending *incoming* credits are not counted, so
+            // admission stays conservative and block application remains
+            // the authority on validity.
+            match pending.pending_debit.checked_add(tx.amount) {
+                Some(total) if sender.balance >= total => {}
+                _ => {
+                    return Err(BackendError::Internal("insufficient balance".to_string()));
+                }
+            }
+
+            // Bound per-sender pending growth (node-local resource policy).
+            if pending.len >= MAX_PENDING_PER_SENDER {
+                return Err(BackendError::Internal(format!(
+                    "too many pending transactions for sender (max {MAX_PENDING_PER_SENDER})"
+                )));
             }
 
             // Anchor-specific admission (rules e–i; RFC 0002 §2).
@@ -692,11 +755,6 @@ impl<S: Storage + Send + Sync + 'static> RpcBackend for NodeBackend<S> {
                 }
             }
 
-            // Insert into mempool. Idempotent: if already in mempool, return hash.
-            let mut pool = mempool.write().await;
-            if pool.contains_hash(&tx_hash) {
-                return Ok(tx_hash.to_string());
-            }
             // Mempool-pending duplicate task_id guard: without it, two
             // pending receipts for one task_id would be drained into the
             // same block and rule (j) would reject the whole block.
@@ -757,10 +815,28 @@ impl<S: Storage + Send + Sync + 'static> RpcBackend for NodeBackend<S> {
             let parent_hash = compute_block_hash(&parent_block);
             let new_height = current_height + 1;
 
-            // Drain transactions from mempool (insertion order).
-            let mut pool = mempool.write().await;
-            let txs = pool.drain_for_block(MAX_TX_PER_BLOCK);
-            drop(pool);
+            // Select transactions from the mempool (insertion order),
+            // WITHOUT removing them. They are removed further down, only
+            // once the block has actually been applied.
+            //
+            // Issue #100: a destructive drain here would lose the whole
+            // batch whenever application failed, and a pending chain turns
+            // that from one transaction into a sender's entire chain.
+            // Peeking makes the failure path mutate nothing at all, which
+            // is a stronger guarantee than restoring state afterwards and
+            // needs no restore logic to get right.
+            //
+            // The guard is released before application rather than held
+            // across it. It is not needed for correctness: `sender_pending`
+            // walks upward from the *committed* nonce, so an entry that
+            // this block commits is simply below the walk's starting point
+            // and cannot be counted twice. Holding it would block every
+            // submission for the duration of a storage write for no gain.
+            let selected = {
+                let pool = mempool.read().await;
+                pool.peek_for_block(MAX_TX_PER_BLOCK)
+            };
+            let txs: Vec<Transaction> = selected.iter().map(|(_, tx)| tx.clone()).collect();
 
             // Build the block.
             let block = Block {
@@ -775,8 +851,17 @@ impl<S: Storage + Send + Sync + 'static> RpcBackend for NodeBackend<S> {
             };
 
             // Delegate to apply_block (shared validation + atomic commit).
+            // On failure this returns early and the mempool is untouched:
+            // every selected transaction is still pending.
             let block_hash =
                 backend.apply_block(&block).map_err(|e| BackendError::Internal(e.to_string()))?;
+
+            // Applied and committed — only now do the included transactions
+            // leave the mempool.
+            {
+                let hashes: Vec<Hash> = selected.into_iter().map(|(h, _)| h).collect();
+                mempool.write().await.remove_included(&hashes);
+            }
 
             // Broadcast the newly produced block to connected peers.
             if let Some(ref broadcaster) = backend.broadcaster {
@@ -2824,6 +2909,556 @@ mod tests {
         assert_eq!(executor.balance, 100, "anchoring moves no balance");
 
         assert_eq!(backend.storage.get_last_included_tx_seq().unwrap(), 2);
+    }
+
+    // ── Issue #100: pending-aware admission ────────────────────────────
+    //
+    // Admission accepts a contiguous pending chain from one sender on one
+    // node. Scope is deliberately same-node: transactions are not gossiped,
+    // only blocks are, so nothing here claims anything about a sender
+    // submitting to two different nodes.
+
+    /// Funds an account and sets its committed nonce.
+    fn fund_with_nonce(
+        backend: &NodeBackend<InMemoryStorage>,
+        sk: &SigningKey,
+        balance: u128,
+        nonce: u64,
+    ) -> Address {
+        let addr = Address(sk.verifying_key().to_bytes());
+        let mut acc = Account::new(addr);
+        acc.balance = balance;
+        acc.nonce = nonce;
+        backend.storage.put_account(&addr, &acc).unwrap();
+        addr
+    }
+
+    // Case 1: committed C, pending empty, submit C → ACCEPT.
+    #[tokio::test]
+    async fn submit_accepts_first_nonce_with_empty_pending() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[80u8; 32]);
+        fund(&backend, &sk, 10_000);
+
+        backend
+            .submit_transaction(signed_transfer(&sk, Address([1u8; 32]), 10, 0))
+            .await
+            .unwrap();
+        assert_eq!(backend.mempool.read().await.len(), 1);
+    }
+
+    // Case 2: pending C, submit C+1 → ACCEPT. This is issue #100 itself.
+    #[tokio::test]
+    async fn submit_accepts_successor_while_predecessor_pending() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[81u8; 32]);
+        fund(&backend, &sk, 10_000);
+
+        backend
+            .submit_transaction(signed_transfer(&sk, Address([1u8; 32]), 10, 0))
+            .await
+            .unwrap();
+        // No block produced in between: this is what #100 reported failing.
+        backend
+            .submit_transaction(signed_transfer(&sk, Address([1u8; 32]), 20, 1))
+            .await
+            .unwrap();
+
+        assert_eq!(backend.mempool.read().await.len(), 2);
+    }
+
+    // Case 3: pending C, C+1, submit C+2 → ACCEPT.
+    #[tokio::test]
+    async fn submit_accepts_three_deep_pending_chain() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[82u8; 32]);
+        let addr = fund(&backend, &sk, 10_000);
+
+        for nonce in 0..3u64 {
+            backend
+                .submit_transaction(signed_transfer(&sk, Address([1u8; 32]), 10, nonce))
+                .await
+                .unwrap();
+        }
+
+        assert_eq!(backend.mempool.read().await.len(), 3);
+        let pending = backend.mempool.read().await.sender_pending(&addr, 0);
+        assert_eq!(pending.expected_nonce, Some(3));
+        assert_eq!(pending.len, 3);
+    }
+
+    // Case 4: pending empty, submit C+1 → REJECT (gap).
+    #[tokio::test]
+    async fn submit_rejects_gap_with_empty_pending() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[83u8; 32]);
+        fund(&backend, &sk, 10_000);
+
+        let err = backend
+            .submit_transaction(signed_transfer(&sk, Address([1u8; 32]), 10, 1))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("invalid nonce"), "got: {err}");
+        assert!(
+            err.contains("expected 0"),
+            "must name the missing nonce: {err}"
+        );
+        assert_eq!(backend.mempool.read().await.len(), 0);
+    }
+
+    // Case 5: pending C, submit C+2 → REJECT (gap). The error must report
+    // the hole (C+1), not one past the highest pending nonce.
+    #[tokio::test]
+    async fn submit_rejects_gap_beyond_pending_chain() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[84u8; 32]);
+        fund(&backend, &sk, 10_000);
+
+        backend
+            .submit_transaction(signed_transfer(&sk, Address([1u8; 32]), 10, 0))
+            .await
+            .unwrap();
+        let err = backend
+            .submit_transaction(signed_transfer(&sk, Address([1u8; 32]), 10, 2))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("invalid nonce"), "got: {err}");
+        assert!(err.contains("expected 1"), "must name the hole: {err}");
+        assert_eq!(backend.mempool.read().await.len(), 1);
+    }
+
+    // Case 6: stale nonce below committed → REJECT.
+    #[tokio::test]
+    async fn submit_rejects_stale_nonce_below_committed() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[85u8; 32]);
+        fund(&backend, &sk, 10_000);
+
+        backend
+            .submit_transaction(signed_transfer(&sk, Address([1u8; 32]), 10, 0))
+            .await
+            .unwrap();
+        backend.produce_block().await.unwrap();
+
+        // Committed nonce is now 1. A different transaction reusing nonce 0
+        // is stale.
+        let err = backend
+            .submit_transaction(signed_transfer(&sk, Address([2u8; 32]), 10, 0))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("invalid nonce"), "got: {err}");
+        assert!(err.contains("expected 1"), "got: {err}");
+    }
+
+    // Case 7: exact re-submission stays idempotent. The pending-aware nonce
+    // check would otherwise reject a byte-identical retry, because the
+    // transaction already occupies its own nonce slot.
+    #[tokio::test]
+    async fn submit_exact_resubmission_stays_idempotent() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[86u8; 32]);
+        fund(&backend, &sk, 10_000);
+
+        let tx = signed_transfer(&sk, Address([1u8; 32]), 10, 0);
+        let first = backend.submit_transaction(tx.clone()).await.unwrap();
+        let second = backend.submit_transaction(tx).await.unwrap();
+
+        assert_eq!(first, second, "same hash returned");
+        assert_eq!(
+            backend.mempool.read().await.len(),
+            1,
+            "no duplicate entry created"
+        );
+    }
+
+    // Case 8: same sender, same nonce, different transaction → REJECT.
+    #[tokio::test]
+    async fn submit_same_nonce_different_transaction_rejected() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[87u8; 32]);
+        fund(&backend, &sk, 10_000);
+
+        backend
+            .submit_transaction(signed_transfer(&sk, Address([1u8; 32]), 10, 0))
+            .await
+            .unwrap();
+        // Different receiver → different hash, same (sender, nonce).
+        let err = backend
+            .submit_transaction(signed_transfer(&sk, Address([2u8; 32]), 10, 0))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("invalid nonce"), "got: {err}");
+        assert_eq!(backend.mempool.read().await.len(), 1);
+    }
+
+    // Case 9: different senders, same nonce → independently ACCEPT.
+    #[tokio::test]
+    async fn submit_different_senders_same_nonce_independent() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk_a = SigningKey::from_bytes(&[88u8; 32]);
+        let sk_b = SigningKey::from_bytes(&[89u8; 32]);
+        fund(&backend, &sk_a, 10_000);
+        fund(&backend, &sk_b, 10_000);
+
+        backend
+            .submit_transaction(signed_transfer(&sk_a, Address([1u8; 32]), 10, 0))
+            .await
+            .unwrap();
+        backend
+            .submit_transaction(signed_transfer(&sk_b, Address([1u8; 32]), 10, 0))
+            .await
+            .unwrap();
+        assert_eq!(backend.mempool.read().await.len(), 2);
+    }
+
+    // Case 10: a same-sender pending chain is drained into ONE block.
+    #[tokio::test]
+    async fn produce_block_includes_whole_pending_chain() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[90u8; 32]);
+        let addr = fund(&backend, &sk, 10_000);
+
+        for nonce in 0..3u64 {
+            backend
+                .submit_transaction(signed_transfer(&sk, Address([1u8; 32]), 100, nonce))
+                .await
+                .unwrap();
+        }
+        backend.produce_block().await.unwrap();
+
+        // One block, three transactions, nonces consumed three times.
+        assert_eq!(backend.storage.get_latest_height().unwrap(), 1);
+        let block = backend.storage.get_block_by_height(1).unwrap().unwrap();
+        assert_eq!(block.body.transactions.len(), 3);
+        let account = backend.storage.get_account(&addr).unwrap().unwrap();
+        assert_eq!(account.nonce, 3);
+        assert_eq!(account.balance, 9700);
+        assert_eq!(backend.mempool.read().await.len(), 0, "mempool drained");
+    }
+
+    // Case 11: nonce exhaustion is rejected, never wrapped.
+    #[tokio::test]
+    async fn submit_rejects_when_nonce_space_exhausted() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[91u8; 32]);
+        fund_with_nonce(&backend, &sk, 10_000, u64::MAX);
+
+        // The last allocatable nonce is still admissible.
+        backend
+            .submit_transaction(signed_transfer(&sk, Address([1u8; 32]), 10, u64::MAX))
+            .await
+            .unwrap();
+
+        // With it pending there is no successor to allocate.
+        let err = backend
+            .submit_transaction(signed_transfer(&sk, Address([2u8; 32]), 10, u64::MAX))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("invalid nonce"), "got: {err}");
+        assert!(err.contains("exhausted"), "got: {err}");
+        assert_eq!(backend.mempool.read().await.len(), 1);
+    }
+
+    // Case 12: concurrent same-node submissions competing for one nonce.
+    // Both transactions are valid in isolation and differ only by receiver,
+    // so exactly one may occupy the nonce slot.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_submissions_claim_one_nonce_slot() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[92u8; 32]);
+        let addr = fund(&backend, &sk, 10_000);
+
+        let tx_a = signed_transfer(&sk, Address([1u8; 32]), 10, 0);
+        let tx_b = signed_transfer(&sk, Address([2u8; 32]), 10, 0);
+        assert_ne!(
+            compute_tx_hash(&tx_a),
+            compute_tx_hash(&tx_b),
+            "the two submissions must be genuinely different transactions"
+        );
+
+        let b1 = backend.clone();
+        let b2 = backend.clone();
+        let h1 = tokio::spawn(async move { b1.submit_transaction(tx_a).await });
+        let h2 = tokio::spawn(async move { b2.submit_transaction(tx_b).await });
+        let (r1, r2) = (h1.await.unwrap(), h2.await.unwrap());
+
+        let accepted = usize::from(r1.is_ok()) + usize::from(r2.is_ok());
+        assert_eq!(accepted, 1, "exactly one submission may take nonce 0");
+
+        // One logical nonce slot, and the mempool agrees.
+        let pool = backend.mempool.read().await;
+        assert_eq!(pool.len(), 1);
+        let pending = pool.sender_pending(&addr, 0);
+        assert_eq!(pending.expected_nonce, Some(1));
+        assert_eq!(pending.len, 1);
+    }
+
+    // ── Issue #100: cumulative pending balance ─────────────────────────
+
+    #[tokio::test]
+    async fn submit_rejects_chain_exceeding_committed_balance() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[93u8; 32]);
+        fund(&backend, &sk, 10);
+
+        // 7 is affordable on its own; 7 + 7 is not.
+        backend
+            .submit_transaction(signed_transfer(&sk, Address([1u8; 32]), 7, 0))
+            .await
+            .unwrap();
+        let err = backend
+            .submit_transaction(signed_transfer(&sk, Address([1u8; 32]), 7, 1))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("insufficient balance"), "got: {err}");
+        assert_eq!(backend.mempool.read().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn submit_accepts_chain_within_committed_balance() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[94u8; 32]);
+        let addr = fund(&backend, &sk, 10);
+
+        backend
+            .submit_transaction(signed_transfer(&sk, Address([1u8; 32]), 4, 0))
+            .await
+            .unwrap();
+        backend
+            .submit_transaction(signed_transfer(&sk, Address([1u8; 32]), 6, 1))
+            .await
+            .unwrap();
+        assert_eq!(backend.mempool.read().await.len(), 2);
+
+        // And the block that consumes exactly the balance applies.
+        backend.produce_block().await.unwrap();
+        let account = backend.storage.get_account(&addr).unwrap().unwrap();
+        assert_eq!(account.balance, 0);
+        assert_eq!(account.nonce, 2);
+    }
+
+    // ── Issue #100: the motivating anchoring case ──────────────────────
+
+    /// The exact capability issue #100 reported missing: an executor
+    /// anchoring two receipts back to back, with no block in between.
+    #[tokio::test]
+    async fn submit_two_anchors_from_one_executor_without_a_block_between() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[95u8; 32]);
+        let executor = fund(&backend, &sk, 100);
+        let task_a = [0xB1u8; 32];
+        let task_b = [0xB2u8; 32];
+
+        // Both submitted before any block is produced.
+        backend.submit_transaction(valid_anchor_tx(&sk, 0, task_a)).await.unwrap();
+        backend.submit_transaction(valid_anchor_tx(&sk, 1, task_b)).await.unwrap();
+        assert_eq!(
+            backend.mempool.read().await.len(),
+            2,
+            "both pending at once"
+        );
+
+        // One block anchors both.
+        backend.produce_block().await.unwrap();
+        assert_eq!(backend.storage.get_latest_height().unwrap(), 1);
+        assert!(backend.storage.has_receipt(&task_a).unwrap());
+        assert!(backend.storage.has_receipt(&task_b).unwrap());
+
+        let account = backend.storage.get_account(&executor).unwrap().unwrap();
+        assert_eq!(account.nonce, 2, "anchoring consumed both nonces");
+        assert_eq!(account.balance, 100, "anchoring moves no balance");
+        assert_eq!(backend.mempool.read().await.len(), 0);
+    }
+
+    // ── Issue #100: per-sender pending bound ───────────────────────────
+
+    #[tokio::test]
+    async fn submit_rejects_beyond_max_pending_per_sender() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[96u8; 32]);
+        let other_sk = SigningKey::from_bytes(&[97u8; 32]);
+        fund(&backend, &sk, 10_000);
+        fund(&backend, &other_sk, 10_000);
+
+        // Exactly the cap is allowed.
+        for nonce in 0..MAX_PENDING_PER_SENDER as u64 {
+            backend
+                .submit_transaction(signed_transfer(&sk, Address([1u8; 32]), 1, nonce))
+                .await
+                .unwrap_or_else(|e| panic!("nonce {nonce} should be admitted: {e}"));
+        }
+        assert_eq!(backend.mempool.read().await.len(), MAX_PENDING_PER_SENDER);
+
+        // One more from the same sender is refused.
+        let err = backend
+            .submit_transaction(signed_transfer(
+                &sk,
+                Address([1u8; 32]),
+                1,
+                MAX_PENDING_PER_SENDER as u64,
+            ))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("too many pending"), "got: {err}");
+
+        // A different sender is unaffected: the bound is per sender.
+        backend
+            .submit_transaction(signed_transfer(&other_sk, Address([1u8; 32]), 1, 0))
+            .await
+            .unwrap();
+        assert_eq!(
+            backend.mempool.read().await.len(),
+            MAX_PENDING_PER_SENDER + 1
+        );
+    }
+
+    // ── Issue #100: drain/apply safety ─────────────────────────────────
+
+    /// Block production selects transactions without removing them, so a
+    /// failed application loses nothing. Without this, a rejected block
+    /// would silently discard the whole selected batch — one transaction
+    /// before #100, a sender's entire pending chain after it.
+    #[tokio::test]
+    async fn failed_block_application_keeps_transactions_pending() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[98u8; 32]);
+        let addr = fund(&backend, &sk, 10_000);
+
+        let pending_tx = signed_transfer(&sk, Address([1u8; 32]), 10, 0);
+        let pending_hash = compute_tx_hash(&pending_tx);
+        backend.submit_transaction(pending_tx).await.unwrap();
+
+        // Consume nonce 0 through a different transaction applied outside
+        // the mempool, exactly as an incoming block would. The pending
+        // entry is now stale and cannot be applied.
+        let external = signed_transfer(&sk, Address([2u8; 32]), 10, 0);
+        let block = build_valid_block(&backend, vec![external]);
+        backend.apply_block(&block).unwrap();
+        assert_eq!(
+            backend.storage.get_account(&addr).unwrap().unwrap().nonce,
+            1
+        );
+
+        // Production now fails, because the selected transaction is stale.
+        let err = backend.produce_block().await.unwrap_err().to_string();
+        assert!(
+            err.contains("nonce"),
+            "expected a nonce failure, got: {err}"
+        );
+
+        // Nothing was lost, and every index is still consistent.
+        let pool = backend.mempool.read().await;
+        assert_eq!(pool.len(), 1, "the transaction is still pending");
+        assert!(pool.contains_hash(&pending_hash));
+        assert_eq!(
+            pool.peek_for_block(10).len(),
+            1,
+            "order index still holds it"
+        );
+        // Committed nonce is 1, so the stale entry at 0 is below the walk.
+        let pending = pool.sender_pending(&addr, 1);
+        assert_eq!(pending.expected_nonce, Some(1));
+        assert_eq!(pending.len, 1, "still counted as a held resource");
+        assert_eq!(pending.pending_debit, 0, "a stale entry is not a debit");
+    }
+
+    // ── Issue #100: ordering ───────────────────────────────────────────
+
+    /// A sender's chain reaches the block in ascending nonce order, and
+    /// other senders keep their global FIFO position: admission only ever
+    /// accepts a sender's next nonce, so insertion order *is* nonce order
+    /// and no sender grouping is needed.
+    #[tokio::test]
+    async fn pending_chain_reaches_the_block_in_nonce_order() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk_a = SigningKey::from_bytes(&[99u8; 32]);
+        let sk_b = SigningKey::from_bytes(&[101u8; 32]);
+        let addr_a = Address(sk_a.verifying_key().to_bytes());
+        let addr_b = Address(sk_b.verifying_key().to_bytes());
+        fund(&backend, &sk_a, 10_000);
+        fund(&backend, &sk_b, 10_000);
+
+        // Interleaved: A0, B0, A1, B1, A2.
+        backend
+            .submit_transaction(signed_transfer(&sk_a, Address([1u8; 32]), 10, 0))
+            .await
+            .unwrap();
+        backend
+            .submit_transaction(signed_transfer(&sk_b, Address([1u8; 32]), 10, 0))
+            .await
+            .unwrap();
+        backend
+            .submit_transaction(signed_transfer(&sk_a, Address([1u8; 32]), 10, 1))
+            .await
+            .unwrap();
+        backend
+            .submit_transaction(signed_transfer(&sk_b, Address([1u8; 32]), 10, 1))
+            .await
+            .unwrap();
+        backend
+            .submit_transaction(signed_transfer(&sk_a, Address([1u8; 32]), 10, 2))
+            .await
+            .unwrap();
+
+        backend.produce_block().await.unwrap();
+        let block = backend.storage.get_block_by_height(1).unwrap().unwrap();
+        assert_eq!(block.body.transactions.len(), 5);
+
+        // Global FIFO preserved.
+        let senders: Vec<Address> = block.body.transactions.iter().map(|t| t.sender).collect();
+        assert_eq!(senders, vec![addr_a, addr_b, addr_a, addr_b, addr_a]);
+
+        // Each sender's own nonces are ascending and contiguous.
+        let a_nonces: Vec<u64> = block
+            .body
+            .transactions
+            .iter()
+            .filter(|t| t.sender == addr_a)
+            .map(|t| t.nonce)
+            .collect();
+        assert_eq!(a_nonces, vec![0, 1, 2]);
+        let b_nonces: Vec<u64> = block
+            .body
+            .transactions
+            .iter()
+            .filter(|t| t.sender == addr_b)
+            .map(|t| t.nonce)
+            .collect();
+        assert_eq!(b_nonces, vec![0, 1]);
+
+        assert_eq!(
+            backend.storage.get_account(&addr_a).unwrap().unwrap().nonce,
+            3
+        );
+        assert_eq!(
+            backend.storage.get_account(&addr_b).unwrap().unwrap().nonce,
+            2
+        );
     }
 
     // ── Block announcement tests ────────────────────────────────────────
