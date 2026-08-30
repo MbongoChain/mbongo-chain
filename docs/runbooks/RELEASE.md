@@ -59,7 +59,7 @@ evidence:
 | What artifact was tested? | the `.tgz` produced by the release run |
 | What artifact was published? | **the same `.tgz`** — see §6 |
 | What proves publication? | the registry returning that version |
-| What proves provenance? | `npm audit signatures`, and the package page |
+| What evidences provenance? | the registry's attestations for that exact version — see §6.3 |
 | Who may initiate it? | a maintainer, through the approval gate in §8 |
 | What must already exist? | the bootstrap prerequisites in §9 |
 
@@ -148,6 +148,98 @@ consulted. #101D must establish this with `--dry-run` before relying on it,
 and must not assume it. If tarball publishing and provenance turn out to be
 incompatible, that is a real trade-off to decide then — not something to
 paper over.
+
+### 6.1 How the tarball reaches a human
+
+The first publication happens on a maintainer's machine (§9), so the tarball
+has to leave the runner without being rebuilt. It is exported as a **GitHub
+Actions artifact**, stored uncompressed so the downloaded file is the tarball
+itself.
+
+**[decision]** The artifact **name is not its identity.** An artifact with a
+given name can be replaced by a later upload, so identity is the combination
+of:
+
+| | |
+|---|---|
+| workflow run ID | which run produced it |
+| artifact ID | which upload within that run |
+| source SHA and tag | what it was built from |
+| SDK version | what it claims to be |
+| tarball filename | `mbongo-sdk-<version>.tgz` |
+| `CANONICAL_TARBALL_SHA256` | the bytes themselves |
+
+**[decision]** The maintainer downloads the artifact from that exact run,
+extracts the `.tgz`, recomputes its SHA-256, and **requires equality** with
+the value the run logged. On mismatch, stop. They then publish that exact
+file. **Running `npm pack` locally is forbidden** — it produces a different
+artifact that nothing tested.
+
+Retention is **30 days**, long enough for a bootstrap and a recovery, short
+enough that build artifacts do not accumulate.
+
+### 6.2 Two digests, two purposes
+
+Both are computed over the same raw tarball bytes and are **never compared
+with each other**:
+
+| Value | Form | Answers |
+|---|---|---|
+| `CANONICAL_TARBALL_SHA256` | hex SHA-256 | did the file survive the GitHub artifact round trip? |
+| `CANONICAL_TARBALL_SRI` | `sha512-<base64>` | is this what the registry holds? |
+
+**[platform]** npm publishes `dist.integrity` as a Subresource Integrity
+string over the package tarball — `sha512-` followed by the base64 SHA-512 of
+the raw bytes. After publication, the recorded `CANONICAL_TARBALL_SRI` must
+equal `npm view <package>@<version> dist.integrity` **exactly**; a difference
+is not something to normalise away.
+
+`dist.shasum` is a SHA-1 of the same bytes. Record it as a diagnostic if
+useful. **It is never a security gate.**
+
+**[decision] Integrity is not provenance.** Integrity answers *are these the
+same bytes*; provenance answers *what does the registry attest about the build
+that produced them*. They stay separate gates, and a successful publish does
+not by itself establish the second.
+
+### 6.3 What counts as provenance evidence
+
+**[decision] `npm audit signatures` is not the answer.** Run from
+`sdk/typescript` it audits the SDK's own installed dependencies —
+`@noble/curves`, `@noble/hashes`, `typescript` — and says nothing about
+`@mbongo/sdk`, which is the project rather than one of its dependencies. A
+green result there is evidence about the dependency tree, not about what was
+published.
+
+**[platform]** The registry serves attestations per exact version at
+`/-/npm/v1/attestations/<package>@<version>`. `@latest` does not resolve;
+the exact version is required. A published-with-provenance package returns two
+attestations, one with predicate `https://slsa.dev/provenance/v1`, whose
+in-toto subject names `pkg:npm/<package>@<version>` and carries a
+`sha512` digest.
+
+**[platform]** That subject digest is the **hex SHA-512 of the raw tarball** —
+the same bytes `dist.integrity` hashes, in a different encoding. Confirmed by
+downloading a published tarball and reproducing both values. So the
+attestation can be bound to the artifact we packed, not merely to a package
+name.
+
+**[decision]** Three evidence states, kept apart:
+
+| State | Means | Established by |
+|---|---|---|
+| `PROVENANCE_ATTESTATION_PRESENT` | the registry serves an attestation with a SLSA provenance predicate | the endpoint |
+| `PROVENANCE_SUBJECT_MATCHES_PACKAGE` | its subject names this version and carries our tarball's SHA-512 | comparing the digest |
+| `PROVENANCE_CRYPTOGRAPHICALLY_VERIFIED` | the Sigstore bundle's signature checks out | **not implemented** |
+
+The release verifies the first two. It does **not** verify the third, and must
+not report it: parsing a DSSE payload the registry served is not the same as
+verifying its signature. Reaching that state would need Sigstore bundle
+verification, which this repository has not adopted.
+
+Failure states: `PROVENANCE_ATTESTATION_MISSING`,
+`PROVENANCE_PREDICATE_MISSING`, `PROVENANCE_SUBJECT_MISMATCH`,
+`PROVENANCE_MALFORMED_RESPONSE`. Any of them fails the release.
 
 ---
 
@@ -254,7 +346,8 @@ configuring a trusted publisher for a package that has never been published.
 
 1. **The first publication is a manual, human action** — performed by a
    maintainer from their own machine, authenticated with 2FA, publishing the
-   tarball produced and verified by a release run.
+   tarball produced and verified by a release run and retrieved as described
+   in §6.1.
 2. **Immediately afterwards**, the maintainer configures the trusted publisher
    on the now-existing package, naming this repository, the release workflow
    filename, and the `npm-production` environment.
@@ -407,7 +500,7 @@ Durable, machine-checkable records — not an issue comment:
 | tarball filename and digest | the workflow run log |
 | gate results | the workflow run, bound to that exact SHA |
 | published version | the registry |
-| provenance status | `npm audit signatures`, the package page |
+| provenance evidence | the attestations endpoint for that exact version (§6.3) |
 | GitHub Release | its own URL, if created |
 
 Per [`../ENGINEERING_EVIDENCE.md`](../ENGINEERING_EVIDENCE.md): bind every
@@ -443,11 +536,35 @@ the release.
 
 **[external]** Then, by hand:
 
-- [ ] publish that tarball, authenticated with 2FA
-- [ ] confirm the version is present in the registry
+- [ ] download the artifact from **that exact run**, and record the run ID and
+      artifact ID
+- [ ] extract the `.tgz` and recompute its SHA-256
+- [ ] require equality with the run's `CANONICAL_TARBALL_SHA256`; **stop on
+      mismatch**
+- [ ] publish **that exact file**, authenticated with 2FA. Do **not** run
+      `npm pack` locally, and do not modify the tarball
+- [ ] confirm `npm view @mbongo/sdk@<version> version`
+- [ ] confirm `npm view @mbongo/sdk@<version> dist.integrity` equals the run's
+      `CANONICAL_TARBALL_SRI`; **stop on mismatch**
+- [ ] expect **no provenance** for this release: it was published manually,
+      outside trusted publishing. Do not claim otherwise
 - [ ] configure the trusted publisher on the package: this repository, the
-      release workflow filename, the `npm-production` environment
+      release workflow filename `release-sdk-typescript.yml`, the
+      `npm-production` environment
+- [ ] create the `npm-production` environment with at least one required
+      reviewer
 - [ ] confirm the next release publishes through the workflow without any
       token
 
 Only after the last line is `@mbongo/sdk` releasable by automation.
+
+**[decision]** A bootstrap run is a **successful** workflow outcome, not a
+failure. It validates, packs, tests, exports and reports
+`BOOTSTRAP_REQUIRED`. A workflow that deliberately attempted OIDC publication
+in order to discover that the package does not exist would be
+indistinguishable from a genuine outage.
+
+**[platform]** Referencing a GitHub environment that does not exist **creates
+it, with no protection rules**. `environment:` is therefore not a fail-closed
+approval gate by itself, and the workflow checks that `npm-production`
+actually carries a required-reviewer rule before it will publish.
