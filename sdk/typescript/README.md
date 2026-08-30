@@ -4,9 +4,16 @@
 
 ## Status
 
-**Unstable, pre-1.0.** Breaking changes are allowed until v1.0.
+**Not published yet.** `@mbongo/sdk` is the intended package name, it is not
+on npm today, and the `@mbongo` scope is not yet claimed. Until the first
+release the SDK is used from the repository — see
+[Working on the SDK](#working-on-the-sdk).
 
-Aligned with [`docs/specs/rpc_v0.2.md`](../../docs/specs/rpc_v0.2.md)
+**Unstable, pre-1.0.** Breaking changes are allowed until v1.0. The SDK
+carries its own version and does not track the node or protocol version.
+
+Aligned with
+[`docs/specs/rpc_v0.2.md`](https://github.com/MbongoChain/mbongo-chain/blob/dev/docs/specs/rpc_v0.2.md)
 (**FROZEN**), which describes the RPC surface the node actually serves.
 
 Earlier versions of this package targeted `docs/specs/jsonrpc_v0.1.md`, an
@@ -15,14 +22,42 @@ made returned `-32601`. Those methods and the types that went with them
 (`ValidatorData`, `TransactionStatus`, `Account`, the flattened `Block`) are
 gone.
 
-## Install and build
+**Verifying a receipt signature proves cryptographic attribution and
+integrity — not that the computation the receipt describes was performed
+correctly.** Nothing in this package, or in the chain behind it, checks the
+work. That distinction is load-bearing and is spelled out under
+[Receipt primitives](#what-verifyreceiptsignature-proves).
+
+## Requirements
+
+- **Node.js `>=20.19.0`.** This is the floor the runtime dependencies
+  declare — `@noble/hashes` and `@noble/curves` both require it. It has not
+  itself been exercised: CI runs Node 24.x, so 20.19 is the declared minimum
+  rather than a tested one.
+- **ESM only.** The package ships `"type": "module"` with a single `.` export
+  and no `require` condition, so `require("@mbongo/sdk")` fails with
+  `ERR_PACKAGE_PATH_NOT_EXPORTED` even on Node versions that can otherwise
+  require an ESM module.
+- **TypeScript consumers need an ambient `fetch` type** in their compilation
+  environment, because `MbongoClientOptions.fetch` is typed as
+  `typeof globalThis.fetch`. A project that leaves `lib` at its default for
+  the target, or that installs `@types/node`, already has one.
+
+Two consumer environments are proven, both exercised in CI against the packed
+tarball: a Node ESM import, and TypeScript with `module` and
+`moduleResolution` set to `NodeNext`. Browsers, Deno, Bun and React Native are
+not tested and are not claimed.
+
+## Install
+
+After the first npm release:
 
 ```bash
-npm install
-npm run build      # tsc -> dist/
-npm run typecheck  # tsc --noEmit
-npm test           # builds, then runs the wire-contract tests
+npm install @mbongo/sdk
 ```
+
+That release has not happened. Until it does, see
+[Working on the SDK](#working-on-the-sdk).
 
 ## Supported methods
 
@@ -431,10 +466,27 @@ transaction's `amount` and `nonce`. A block containing a value outside the
 safe-integer range is unreadable rather than partially readable. No such value
 can currently exist on chain; the structural limit is tracked separately.
 
-## Tests
+## Working on the SDK
 
-`npm test` builds the package and runs Node's built-in test runner against
-`dist/` — the same artifact a consumer installs. The tests assert the JSON
-actually put on the wire, so a wrong method string, a stray parameter or a
-reintroduced legacy form fails the suite. No test framework dependency is
-added.
+From a clone of the repository:
+
+```bash
+cd sdk/typescript
+npm ci
+npm run typecheck   # tsc --noEmit
+npm test            # builds, then the wire-contract suite
+npm run build       # tsc -> dist/
+npm run test:consumer
+```
+
+`npm test` runs Node's built-in test runner against `dist/` — the same
+artifact a consumer installs. The tests assert the JSON actually put on the
+wire, so a wrong method string, a stray parameter or a reintroduced legacy
+form fails the suite. No test framework dependency is added.
+
+`npm run test:consumer` packs the package, installs the resulting tarball into
+a throwaway project outside the repository, and imports `@mbongo/sdk` by name
+from both JavaScript and TypeScript. It runs in CI on every change, so a
+`files` or `exports` change that would make the package uninstallable fails
+there rather than after a release. It proves the artifact is installable; it
+is not publication provenance, and there is no release workflow yet.
