@@ -257,6 +257,12 @@ the `ping` method.
 | [CONTRIBUTION_TIERS.md](./docs/CONTRIBUTION_TIERS.md) | Tier 0/1/2 change rules |
 | [RFC_PROCESS.md](./docs/RFC_PROCESS.md) | How to propose changes to locked surfaces |
 
+For everything else, start at [docs/INDEX.md](./docs/INDEX.md). It carries the
+authority map — the one document that decides each subject — and marks which
+parts of `docs/` describe the running system. Much of that directory predates
+the current protocol; the index says which parts, so read it before trusting
+anything not listed above.
+
 ---
 
 ## Contributing

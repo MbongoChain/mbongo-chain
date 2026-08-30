@@ -1,18 +1,92 @@
 # Mbongo Chain Documentation Index
 
-> **Complete hierarchical index of all technical documentation**
-
-This index provides a structured, hierarchical view of all Mbongo Chain documentation organized by topic and depth level.
+> **If you need to know what Mbongo Chain currently does, read the authority
+> map below and nothing else.** The rest of this file catalogues the whole
+> documentation corpus, most of which predates the current protocol and
+> describes designs that were never built.
 
 ---
 
-## Document Hierarchy Legend
+## Authority map — what is true today
+
+Each row names the one document that decides its subject. Where another
+document disagrees with one of these, this table wins.
+
+| Subject | Authority | Status |
+|---|---|---|
+| Project vision and scope | [`VISION_v1.md`](VISION_v1.md) | NORMATIVE |
+| Frozen protocol surfaces, versioning | [`specs/PROTOCOL_LOCK_v0.3.md`](specs/PROTOCOL_LOCK_v0.3.md) | NORMATIVE |
+| JSON-RPC contract | [`specs/rpc_v0.2.md`](specs/rpc_v0.2.md) | NORMATIVE (FROZEN) |
+| Receipt v1 structure | [`specs/RECEIPT_SPEC_v0.1.md`](specs/RECEIPT_SPEC_v0.1.md) | NORMATIVE |
+| Receipt anchoring consensus rules | [`rfcs/0002-receipt-anchoring-v0.3.md`](rfcs/0002-receipt-anchoring-v0.3.md) | NORMATIVE (Accepted) |
+| How protocol changes are proposed and accepted | [`RFC_PROCESS.md`](RFC_PROCESS.md) | NORMATIVE |
+| Which changes need an RFC | [`CONTRIBUTION_TIERS.md`](CONTRIBUTION_TIERS.md) | NORMATIVE |
+| Contribution workflow | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | NORMATIVE |
+| Receipt anchoring: data model, crypto domains, storage | [`architecture/compute-receipts.md`](architecture/compute-receipts.md) | CURRENT |
+| Building, signing, anchoring, verifying receipts | [`development/compute-receipts.md`](development/compute-receipts.md) | CURRENT |
+| Devnet topology and infrastructure | [`architecture/devnet-infrastructure.md`](architecture/devnet-infrastructure.md) | CURRENT |
+| Running a devnet locally | [`development/devnet.md`](development/devnet.md) | CURRENT |
+| Devnet operations | [`runbooks/DEVNET_V0.3_OPERATIONS.md`](runbooks/DEVNET_V0.3_OPERATIONS.md) | CURRENT |
+| TypeScript SDK | [`../sdk/typescript/README.md`](../sdk/typescript/README.md) | CURRENT |
+
+The shipped RPC surface is **six JSON-RPC methods**. Receipt anchoring travels
+through the generic `submit_transaction`; there is no compute RPC, and no
+lookup of a receipt by `task_id`.
+
+---
+
+## Status vocabulary
+
+| Status | Meaning |
+|---|---|
+| **NORMATIVE** | Defines a contract or process other documents defer to. |
+| **CURRENT** | Accurately describes what is implemented or operated today. |
+| **HISTORICAL** | Records past work or evidence. Not current authority. |
+| **SUPERSEDED** | A newer authoritative document replaces it. |
+| **ASPIRATIONAL** | Describes planned or imagined behaviour that is not implemented. |
+
+Only documents named in the authority map above, or explicitly marked in this
+file, carry a status. The rest of the corpus is unclassified.
+
+---
+
+## Reading anything else in this directory
+
+Most of `docs/` was written between November 2025 and February 2026, before
+the protocol was locked, before RPC v0.2, and before the vision narrowed to a
+verification layer for off-chain inference receipts. Those documents were
+written in good faith as design material and remain useful for understanding
+intent and history.
+
+**They are not authoritative, and several describe systems that do not
+exist.** Unless a document appears in the authority map above, or the sections
+below mark it CURRENT or NORMATIVE, assume it records a design idea rather
+than the running system, and verify against the code, the specs, or the tests
+before relying on it.
+
+Four documents are known to contradict the running system and carry a banner
+saying so: [`ts_sdk_overview.md`](ts_sdk_overview.md),
+[`rpc_overview.md`](rpc_overview.md),
+[`openapi_reference.md`](openapi_reference.md) and
+[`governance_model.md`](governance_model.md). Others may be wrong without
+having been checked yet.
+
+---
+
+## Catalogue
+
+Everything below is a map of the corpus, not a statement about correctness.
+
+### Legend
 
 - **[L1]** - High-level overviews and introductions
 - **[L2]** - Detailed specifications and guides
 - **[L3]** - Implementation details and advanced topics
-- **[PRIMARY]** - Canonical/authoritative document for this topic
+- **[PRIMARY]** - Most complete document on the topic within this catalogue
 - **[ARCHIVE]** - Older version, kept for reference
+
+`[PRIMARY]` marks depth within the catalogue. It does **not** mean current or
+authoritative; the authority map above is the only source of that.
 
 ---
 
@@ -170,8 +244,10 @@ This index provides a structured, hierarchical view of all Mbongo Chain document
 
 ### 4.4 Governance
 ```
-├── governance_model.md [L2]
-│   └── DAO governance: proposals, voting, treasury
+├── governance_model.md [L2] [ASPIRATIONAL]
+│   └── Stake-weighted on-chain DAO: proposals, voting, treasury.
+│       No such mechanism exists. Repository and protocol changes are
+│       governed by RFC_PROCESS.md and CONTRIBUTION_TIERS.md.
 └── oracle_model.md [L3]
     └── Oracle design for external data feeds
 ```
@@ -245,11 +321,10 @@ This index provides a structured, hierarchical view of all Mbongo Chain document
 │   ├── Core types and traits
 │   ├── Transaction building
 │   └── Code examples
-├── ts_sdk_overview.md [L2]
-│   ├── TypeScript SDK installation
-│   ├── Client initialization
-│   ├── Wallet integration
-│   └── Code examples
+├── ts_sdk_overview.md [L2] [ASPIRATIONAL]
+│   └── Wallet, ComputeClient, GovernanceClient and providers that
+│       @mbongo/sdk does not implement. For the shipped package see
+│       ../sdk/typescript/README.md.
 └── development/compute-receipts.md [L2] [PRIMARY]
     ├── Receipt primitives and anchoring API
     ├── Nonce, errors and retry semantics
@@ -274,13 +349,15 @@ This index provides a structured, hierarchical view of all Mbongo Chain document
 
 ### 7.2 APIs
 ```
-├── rpc_overview.md [L2] [PRIMARY]
-│   ├── JSON-RPC 2.0 API
-│   ├── WebSocket subscriptions
-│   ├── Method reference
-│   └── Error codes
-└── openapi_reference.md [L3]
-    └── OpenAPI/Swagger specification for REST endpoints
+├── specs/rpc_v0.2.md [L2] [PRIMARY]
+│   └── The JSON-RPC contract the node actually serves. FROZEN.
+│       Six methods, no subscriptions.
+├── rpc_overview.md [L2] [ASPIRATIONAL]
+│   └── An Ethereum-compatible surface (eth_*, mbongo_* camelCase,
+│       WebSocket subscriptions) that the node does not serve.
+└── openapi_reference.md [L3] [ASPIRATIONAL]
+    └── Eighteen /v1/* REST paths, none of which the node serves.
+        A small REST surface does exist; see crates/mbongo-api.
 ```
 
 ---
@@ -303,10 +380,11 @@ This index provides a structured, hierarchical view of all Mbongo Chain document
 
 ### 9.1 Project Information
 ```
-├── README.md [L1] [PRIMARY]
-│   └── Documentation navigation hub (this directory)
 ├── INDEX.md [L1] [PRIMARY]
-│   └── Hierarchical documentation index (this file)
+│   └── Authority map and documentation catalogue (this file)
+├── README.md [L1] [SUPERSEDED]
+│   └── An earlier navigation hub for this directory, superseded by
+│       this file. Kept for its category descriptions.
 ├── vision.md [L1]
 │   └── Project vision and goals
 ├── mbongo_whitepaper.md [L1]
@@ -319,8 +397,9 @@ This index provides a structured, hierarchical view of all Mbongo Chain document
 ```
 ├── spec_validation_summary.md [L3]
 │   └── Specification validation status
-└── final_doc_index.md [L3]
-    └── Alternative documentation listing
+└── final_doc_index.md [L3] [SUPERSEDED]
+    └── A third documentation index from November 2025, superseded by
+        this file.
 ```
 
 ### 9.3 Archive
@@ -361,7 +440,13 @@ TOTAL                             68 documents
 [ARCHIVE] Archived documents       5 documents
 ```
 
-### Primary Documents (Most Important)
+### Longest documents in the catalogue
+
+This ranks depth of coverage within the 2025 design corpus. It is not a
+statement about what is current, and it is not the authority map — that is at
+the top of this file. `rpc_overview.md` below is aspirational; `README.md` is
+superseded by this file.
+
 ```
 1.  consensus_master_overview.md
 2.  poc_consensus_mechanics.md
@@ -383,6 +468,23 @@ TOTAL                             68 documents
 
 ## Documentation Reading Paths
 
+**Path 0 is the only one that traverses current documents.** Paths 1 to 6
+below were written for the November 2025 corpus and route through design
+material, including documents now known to be aspirational. They are kept
+because they show how that material was meant to be read, not because they
+describe the running system.
+
+### Path 0: What Mbongo Chain currently is
+```
+1. ../README.md                            what runs today, how to start it
+2. VISION_v1.md                            scope, and what is excluded
+3. specs/PROTOCOL_LOCK_v0.3.md             which surfaces are frozen
+4. specs/rpc_v0.2.md                       the RPC contract
+5. architecture/compute-receipts.md        receipts on chain
+6. ../sdk/typescript/README.md             the shipped SDK
+7. RFC_PROCESS.md                          how any of it changes
+```
+
 ### Path 1: New User (Non-Technical)
 ```
 1. vision.md
@@ -397,10 +499,13 @@ TOTAL                             68 documents
 1. getting_started.md
 2. developer_guide.md
 3. developer_environment.md
-4. rust_sdk_overview.md or ts_sdk_overview.md
+4. rust_sdk_overview.md
 5. cli_overview.md
-6. rpc_overview.md
 ```
+For the SDK and the RPC contract this path is superseded by Path 0:
+`../sdk/typescript/README.md` and `specs/rpc_v0.2.md`. The documents it
+used to name here, `ts_sdk_overview.md` and `rpc_overview.md`, are
+aspirational.
 
 ### Path 3: Validator (Operations)
 ```

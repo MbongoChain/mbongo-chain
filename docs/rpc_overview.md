@@ -2,8 +2,19 @@
 
 > **Document Type:** API Reference  
 > **Last Updated:** November 2025  
-> **Status:** Official Reference  
+> **Status:** ASPIRATIONAL  
 > **Audience:** Developers, Integrators, Node Operators
+
+> [!WARNING]
+> **The node does not serve the API described here.** This document specifies
+> an Ethereum-compatible surface — `eth_*` methods, `mbongo_*` camelCase
+> methods, `net_*`, and WebSocket subscriptions. None of them are implemented.
+>
+> The live contract is
+> [`specs/rpc_v0.2.md`](specs/rpc_v0.2.md) (**FROZEN**): six snake_case
+> JSON-RPC methods — `ping`, `get_block_height`, `submit_transaction`,
+> `produce_block`, `get_latest_block_hash`, `get_block_by_height` — and no
+> subscriptions.
 
 ---
 

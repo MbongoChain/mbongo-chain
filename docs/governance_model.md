@@ -3,7 +3,20 @@
 
 > **Document Type:** Governance Specification  
 > **Last Updated:** November 2025  
-> **Status:** Official Reference
+> **Status:** ASPIRATIONAL
+
+> [!WARNING]
+> **This document describes an on-chain governance mechanism that does not
+> exist.** There is no stake-weighted voting, no proposal or treasury system,
+> and no PoS or PoUW voting cohort. MBO is not issued.
+>
+> Repository and protocol changes are today decided by
+> [`RFC_PROCESS.md`](RFC_PROCESS.md) and
+> [`CONTRIBUTION_TIERS.md`](CONTRIBUTION_TIERS.md). Those documents govern a
+> different thing — an off-chain maintainer process — rather than replacing
+> the design below. Nothing here currently controls consensus rules, block
+> validation, or protocol version upgrades, despite the present tense used
+> throughout.
 
 ---
 

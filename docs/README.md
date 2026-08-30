@@ -1,6 +1,14 @@
 # Mbongo Chain Documentation
 
-> **Complete technical documentation for the Mbongo Chain blockchain platform**
+> [!IMPORTANT]
+> **SUPERSEDED — this is no longer the documentation entry point.**
+> Go to [`INDEX.md`](INDEX.md), which carries the authority map: the single
+> document that decides each subject, and which parts of this directory are
+> current.
+>
+> The navigation below dates from December 2025 and lists documents without
+> saying whether they are still true. It is kept for its category
+> descriptions, not for routing.
 
 Welcome to the Mbongo Chain documentation hub. This directory contains comprehensive technical specifications, guides, and reference materials for developers, validators, and contributors.
 
