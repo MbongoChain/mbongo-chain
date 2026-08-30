@@ -2,11 +2,27 @@
 /**
  * Packed consumer smoke test.
  *
- * Proves that the artifact `npm pack` produces can actually be installed and
- * used by an outside project. Everything here runs against the tarball: the
- * consumer lives outside the repository, installs `@mbongo/sdk` from the
- * `.tgz` by absolute path, and imports it by package name only. Nothing is
- * published, and no Mbongo node is contacted.
+ * Proves that the packaged artifact can actually be installed and used by an
+ * outside project. Everything here runs against a tarball: the consumer lives
+ * outside the repository, installs `@mbongo/sdk` from the `.tgz` by absolute
+ * path, and imports it by package name only. Nothing is published, and no
+ * Mbongo node is contacted.
+ *
+ * Two modes, differing only in where the tarball comes from:
+ *
+ *   node scripts/consumer-smoke.mjs
+ *       packs one itself, as it always has.
+ *
+ *   node scripts/consumer-smoke.mjs --tarball <path>
+ *       consumes exactly the tarball it is given, and packs nothing.
+ *
+ * The second mode exists so a release can test the artifact it is about to
+ * publish rather than a second one built alongside it. Packing again would
+ * produce a different file, and "the artifact tested is the artifact
+ * published" would stop being provable. See docs/runbooks/RELEASE.md §6.
+ *
+ * The caller owns the file it supplies: this script never writes to it, and
+ * never deletes it. It removes only the temporary directory it created.
  *
  * What the repository test suite cannot tell you, and this can:
  *   - `files` and the `exports` map describe a package Node can resolve
@@ -27,18 +43,51 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { gunzipSync } from "node:zlib";
 
 const PKG_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REPO_ROOT = path.resolve(PKG_DIR, "..", "..");
 const EXPECTED_NAME = "@mbongo/sdk";
 const EXPECTED_VERSION = "0.1.0";
 
+const USAGE = `usage: node scripts/consumer-smoke.mjs [--tarball <path>]
+
+  (no arguments)      pack the package here, then test that tarball
+  --tarball <path>    test the given tarball; nothing is packed`;
+
+/**
+ * Fail on anything unrecognised rather than guessing. A mistyped flag that
+ * silently fell through to packing would produce a pass for an artifact the
+ * caller never asked about.
+ */
+function parseArgs(argv) {
+  let tarball = null;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] !== "--tarball") {
+      throw new UsageError(`unknown argument: ${argv[i]}`);
+    }
+    if (tarball !== null) throw new UsageError("--tarball given more than once");
+    const value = argv[++i];
+    if (value === undefined || value.startsWith("--")) {
+      throw new UsageError("--tarball needs a path");
+    }
+    tarball = value;
+  }
+  return tarball;
+}
+
+class UsageError extends Error {}
+
 let failed = 0;
+
+/** Counted so the run can assert how many times it packed. */
+let packInvocations = 0;
 
 function check(label, ok, detail) {
   if (ok) {
@@ -77,10 +126,43 @@ function run(args, cwd) {
   });
 }
 
-const runNpm = (args, cwd) => run([npmCli(), ...args], cwd);
+function runNpm(args, cwd) {
+  if (args[0] === "pack") packInvocations++;
+  return run([npmCli(), ...args], cwd);
+}
 
 function firstLine(text) {
   return String(text ?? "").trim().split("\n")[0] ?? "";
+}
+
+/**
+ * File list read from the archive itself, rather than from what `npm pack`
+ * reported having written. In the supplied-tarball mode there is no pack
+ * output to trust, and inspecting the bytes is the stronger evidence in both.
+ *
+ * A tar entry is a 512-byte header — name in the first 100 bytes, size as
+ * octal at offset 124 — followed by the content padded to a 512 multiple.
+ */
+function tarballEntries(tarballPath) {
+  const raw = gunzipSync(readFileSync(tarballPath));
+  const names = [];
+  let off = 0;
+  while (off + 512 <= raw.length) {
+    const name = raw.toString("utf8", off, off + 100).replace(/\0.*$/, "");
+    if (!name) {
+      off += 512;
+      continue;
+    }
+    const size =
+      parseInt(raw.toString("ascii", off + 124, off + 136).replace(/\0.*$/, "").trim(), 8) || 0;
+    names.push(name.replace(/\\/g, "/"));
+    off += 512 + Math.ceil(size / 512) * 512;
+  }
+  // npm puts everything under a leading `package/` directory.
+  return names
+    .filter((n) => n.startsWith("package/"))
+    .map((n) => n.slice("package/".length))
+    .filter(Boolean);
 }
 
 const CONSUMER_JS = [
@@ -182,11 +264,26 @@ const CONSUMER_TSCONFIG = {
   include: ["smoke.ts"],
 };
 
+let suppliedTarball;
+try {
+  suppliedTarball = parseArgs(process.argv.slice(2));
+} catch (err) {
+  if (!(err instanceof UsageError)) throw err;
+  console.error(err.message + "\n\n" + USAGE);
+  process.exit(2);
+}
+
 const tmpRoot = mkdtempSync(path.join(tmpdir(), "mbongo-sdk-101b-"));
 
 try {
   console.log("packed consumer smoke");
-  console.log("  node " + process.version + " in " + tmpRoot);
+  console.log(
+    "  node " +
+      process.version +
+      " in " +
+      tmpRoot +
+      (suppliedTarball === null ? "" : " — supplied tarball, packing nothing"),
+  );
 
   // --- the artifact must come from a fresh build ------------------------
   check(
@@ -196,23 +293,40 @@ try {
   );
   if (failed > 0) throw new Error("nothing to pack");
 
-  // --- pack -------------------------------------------------------------
-  const packDir = path.join(tmpRoot, "pack");
-  mkdirSync(packDir);
-  const packed = runNpm(["pack", "--json", "--pack-destination", packDir], PKG_DIR);
-  check("npm pack succeeded", packed.status === 0, firstLine(packed.stderr));
-  if (packed.status !== 0) throw new Error("pack failed");
+  // --- obtain the tarball ------------------------------------------------
+  let tarball;
+  if (suppliedTarball === null) {
+    const packDir = path.join(tmpRoot, "pack");
+    mkdirSync(packDir);
+    const packed = runNpm(["pack", "--json", "--pack-destination", packDir], PKG_DIR);
+    check("npm pack succeeded", packed.status === 0, firstLine(packed.stderr));
+    if (packed.status !== 0) throw new Error("pack failed");
 
-  const meta = JSON.parse(packed.stdout)[0];
-  const tarball = path.join(packDir, meta.filename);
-  check("tarball written to the temporary directory", existsSync(tarball), tarball);
-  check(
-    "archive filename is derived, not the package name",
-    meta.filename === "mbongo-sdk-" + EXPECTED_VERSION + ".tgz",
-    meta.filename,
-  );
+    const meta = JSON.parse(packed.stdout)[0];
+    tarball = path.join(packDir, meta.filename);
+    check("tarball written to the temporary directory", existsSync(tarball), tarball);
+    check(
+      "archive filename is derived, not the package name",
+      meta.filename === "mbongo-sdk-" + EXPECTED_VERSION + ".tgz",
+      meta.filename,
+    );
+  } else {
+    // Never fall back to packing: a caller who named a tarball wants that one
+    // tested, and quietly testing a different artifact would be worse than
+    // failing.
+    tarball = path.resolve(suppliedTarball);
+    if (!existsSync(tarball)) throw new Error(`no such tarball: ${tarball}`);
+    if (!statSync(tarball).isFile()) throw new Error(`not a file: ${tarball}`);
+    check("supplied tarball resolved", true, tarball);
+    check("nothing was packed for the supplied tarball", packInvocations === 0);
+    // Validity comes from the archive, not from the name the caller gave it.
+    check(
+      "supplied file is a package archive",
+      tarballEntries(tarball).includes("package.json"),
+    );
+  }
 
-  const files = meta.files.map((f) => f.path.replace(/\\/g, "/"));
+  const files = tarballEntries(tarball);
   // npm force-includes package.json, README and LICENSE whatever `files`
   // says, so this gate catches the file being absent from the package
   // directory rather than being filtered out of it.
@@ -364,6 +478,18 @@ try {
       .map((f) => path.join(dir, f)),
   );
   check("no tarball left in the repository", strays.length === 0, strays.join(", "));
+
+  // Stated as a count so a regression that starts packing in the supplied
+  // mode fails here rather than being noticed later.
+  const expectedPacks = suppliedTarball === null ? 1 : 0;
+  check(
+    `npm pack ran exactly ${expectedPacks} time(s)`,
+    packInvocations === expectedPacks,
+    `actual ${packInvocations}`,
+  );
+  if (suppliedTarball !== null) {
+    check("the supplied tarball still exists", existsSync(path.resolve(suppliedTarball)));
+  }
 } finally {
   rmSync(tmpRoot, { recursive: true, force: true });
   console.log(
