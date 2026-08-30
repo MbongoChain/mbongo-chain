@@ -24,6 +24,7 @@ import {
   receiptHash,
   verifyReceiptSignature,
 } from "../dist/index.js";
+import { stringifyExact } from "../dist/json-exact.js";
 
 const load = (rel) =>
   JSON.parse(readFileSync(new URL(rel, import.meta.url), "utf8"));
@@ -144,8 +145,8 @@ test("every valid vector reproduces the pinned transaction signature", () => {
     const { receipt } = receiptFrom(v.transaction.receipt_vector);
     const tx = signAnchorReceiptTransaction(receipt, v.transaction.nonce, SEED);
     assert.equal(hex(tx.signature), v.expected.transaction_signature, v.name);
-    assert.equal(tx.amount, 0);
-    assert.equal(tx.nonce, v.transaction.nonce);
+    assert.equal(tx.amount, 0n);
+    assert.equal(tx.nonce, BigInt(v.transaction.nonce));
     assert.equal(hex(tx.sender), hex(receipt.executor), "sender is the executor");
     assert.equal(hex(tx.receiver), "00".repeat(32), "receiver is the zero address");
   }
@@ -229,7 +230,15 @@ test("the wire object matches the pinned serde representation exactly", () => {
   const tx = signAnchorReceiptTransaction(receipt, v.transaction.nonce, SEED);
   const wire = anchorReceiptTransactionToWire(tx);
 
-  assert.deepEqual(wire, pinned.object);
+  // Compared as serialised JSON rather than as objects: the pinned fixture
+  // records the bytes the node receives, and the migration to bigint changed
+  // the in-memory representation without changing those bytes. Comparing the
+  // text is what proves that.
+  assert.equal(
+    stringifyExact(wire),
+    JSON.stringify(pinned.object),
+    "the serialised wire bytes must be unchanged by the bigint migration",
+  );
 
   // The mixed representation is the point, so assert it rather than trusting
   // one deep comparison.
@@ -245,8 +254,23 @@ test("the wire object matches the pinned serde representation exactly", () => {
   }
   assert.equal(wire.tx_type, "AnchorReceipt");
   assert.deepEqual(Object.keys(wire.payload), ["AnchorReceipt"], "externally tagged");
-  assert.equal(typeof wire.amount, "number");
-  assert.equal(typeof wire.nonce, "number");
+  assert.equal(typeof wire.amount, "bigint");
+  assert.equal(typeof wire.nonce, "bigint");
+  // The wire *kind* is what the frozen RPC contract fixes: these stay JSON
+  // numbers, never JSON strings.
+  const serialised = stringifyExact(wire);
+  assert.ok(
+    serialised.includes('"amount":0,'),
+    "amount is an unquoted JSON number",
+  );
+  assert.ok(
+    serialised.includes('"nonce":' + wire.nonce.toString()),
+    "nonce is an unquoted JSON number",
+  );
+  assert.ok(
+    !serialised.includes('"nonce":"'),
+    "nonce must not be quoted",
+  );
   // No JSON-RPC envelope leaks into the transaction object.
   for (const k of ["jsonrpc", "id", "method", "params"]) {
     assert.ok(!(k in wire), `${k} does not belong on a transaction`);
@@ -274,9 +298,21 @@ test("a key that does not derive the receipt executor is refused", () => {
   );
 });
 
-test("an unsafe nonce fails before anything is signed", () => {
+test("an unusable nonce fails before anything is signed", () => {
   const { receipt } = receiptFrom(CANONICAL.transaction.receipt_vector);
-  const bad = [-1, 1.5, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1, "7", 7n];
+  const bad = [
+    -1,
+    1.5,
+    NaN,
+    Infinity,
+    -Infinity,
+    Number.MAX_SAFE_INTEGER + 1, // already rounded by JavaScript
+    "7",
+    -1n,
+    18446744073709551616n, // u64::MAX + 1
+  ];
+  assert.equal(bad.length, 9, "expected 9 rejected nonces");
+
   for (const nonce of bad) {
     assert.throws(
       () => anchorReceiptSigningPayload(receipt, nonce),
@@ -288,6 +324,27 @@ test("an unsafe nonce fails before anything is signed", () => {
       MbongoNumericRangeError,
       `signing with nonce ${String(nonce)}`,
     );
+  }
+});
+
+test("a bigint nonce is accepted across the whole u64 domain", () => {
+  const { receipt } = receiptFrom(CANONICAL.transaction.receipt_vector);
+
+  // A safe number and the same value as a bigint must be indistinguishable:
+  // the migration must not change bytes for values the old SDK could express.
+  assert.deepEqual(
+    anchorReceiptSigningPayload(receipt, 7),
+    anchorReceiptSigningPayload(receipt, 7n),
+    "7 and 7n must encode identically",
+  );
+
+  // And values the old SDK could not express now work.
+  for (const decimal of ["9007199254740993", "18446744073709551615"]) {
+    const intended = BigInt(decimal);
+    assert.equal(intended.toString(), decimal, "harness: intended value preserved");
+    const tx = signAnchorReceiptTransaction(receipt, intended, SEED);
+    assert.equal(tx.nonce, intended);
+    assert.equal(tx.nonce.toString(), decimal);
   }
 });
 

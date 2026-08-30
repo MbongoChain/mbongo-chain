@@ -25,19 +25,24 @@ const URL = "http://localhost:8080/rpc";
 /** A `fetch` stub that records requests and replays canned responses. */
 function stub(responses) {
   const sent = [];
+  const sentRaw = [];
   const queue = Array.isArray(responses) ? [...responses] : [responses];
   const fetchImpl = async (_url, init) => {
+    // The raw body matters as much as the parsed one now: exactness is a
+    // property of the bytes on the wire, not of what JSON.parse recovers.
+    sentRaw.push(init.body);
     sent.push(JSON.parse(init.body));
     const next = queue.length > 1 ? queue.shift() : queue[0];
     return {
       status: next.status ?? 200,
-      json: async () => {
-        if (next.raw !== undefined) return next.raw;
-        throw new Error("not json");
+      text: async () => {
+        if (next.text !== undefined) return next.text;
+        if (next.raw !== undefined) return JSON.stringify(next.raw);
+        return "not json at all";
       },
     };
   };
-  return { sent, fetchImpl };
+  return { sent, sentRaw, fetchImpl };
 }
 
 /** Wraps a JSON-RPC result, echoing the id the client chose. */
@@ -47,7 +52,11 @@ const ok = (result) => ({
 
 function clientWith(responses) {
   const s = stub(responses);
-  return { client: new MbongoClient(URL, { fetch: s.fetchImpl }), sent: s.sent };
+  return {
+    client: new MbongoClient(URL, { fetch: s.fetchImpl }),
+    sent: s.sent,
+    sentRaw: s.sentRaw,
+  };
 }
 
 // ── Method strings and canonical params ──────────────────────────────
@@ -62,7 +71,7 @@ test("ping sends the exact method string and no params", async () => {
 
 test("get_block_height sends the exact method string and no params", async () => {
   const { client, sent } = clientWith(ok(1234));
-  assert.equal(await client.getBlockHeight(), 1234);
+  assert.equal(await client.getBlockHeight(), 1234n, "heights come back as exact bigint");
   assert.equal(sent[0].method, "get_block_height");
   assert.ok(!("params" in sent[0]));
 });
@@ -98,7 +107,7 @@ test("get_block_by_height sends the canonical object, never a bare number", asyn
   };
   const { client, sent } = clientWith(ok(block));
   const got = await client.getBlockByHeight(5);
-  assert.equal(got.header.height, 5, "the nested block shape must survive");
+  assert.equal(got.header.height, 5n, "the nested block shape must survive");
   assert.deepEqual(got.body.transactions, []);
   assert.equal(sent[0].method, "get_block_by_height");
   assert.deepEqual(
@@ -208,7 +217,11 @@ test("error data is preserved when present", async () => {
     (err) => {
       assert.equal(err.code, -32602);
       assert.equal(err.isInvalidParams, true);
-      assert.deepEqual(err.data, { at: 0 });
+      // error.data is arbitrary server JSON, so its integers are preserved
+      // exactly rather than coerced to number: an unknown field could be
+      // outside the safe range, and rounding it would be the bug this
+      // package exists to avoid.
+      assert.deepEqual(err.data, { at: 0n });
       return true;
     },
   );
@@ -268,4 +281,116 @@ test("no mbg_ method is reachable from the client", () => {
       `${name} targeted a method the node never served`,
     );
   }
+});
+
+// ── Exact integers on the request path ───────────────────────────────
+//
+// The response direction is covered in numeric.test.mjs. These assert the
+// other half: what leaves this client must carry every digit the caller
+// meant, as an unquoted JSON number.
+
+/** Builds a bigint from digits, proving identity before any use. */
+function exactValue(decimal) {
+  const value = BigInt(decimal);
+  assert.equal(value.toString(), decimal, "harness failure: intended value not preserved");
+  return value;
+}
+
+test("getBlockByHeight sends a bigint height as exact unquoted digits", async () => {
+  const decimal = "9007199254740993";
+  const intended = exactValue(decimal);
+  const { client, sentRaw } = clientWith(ok("0xhash"));
+
+  await assert.rejects(() => client.getBlockByHeight(intended)); // result is not a block
+  assert.ok(
+    sentRaw[0].includes(`"height":${decimal}`),
+    `request must carry the exact digits, got: ${sentRaw[0]}`,
+  );
+  assert.ok(!sentRaw[0].includes("9007199254740992"), "must not be rounded");
+  assert.ok(!sentRaw[0].includes(`"height":"`), "must not be quoted");
+});
+
+test("submitTransaction sends exact amount and nonce as JSON numbers", async () => {
+  const nonce = "18446744073709551615"; // u64::MAX
+  const amount = "9007199254740993";
+  const { client, sentRaw, sent } = clientWith(ok("0xhash"));
+
+  await client.submitTransaction({
+    tx_type: "Transfer",
+    sender: "0x11",
+    receiver: "0x22",
+    amount: exactValue(amount),
+    nonce: exactValue(nonce),
+    payload: "None",
+    signature: "0x00",
+  });
+
+  const body = sentRaw[0];
+  assert.ok(body.includes(`"amount":${amount}`), `amount digits: ${body}`);
+  assert.ok(body.includes(`"nonce":${nonce}`), `nonce digits: ${body}`);
+  assert.ok(!body.includes('"amount":"'), "amount must not be quoted");
+  assert.ok(!body.includes('"nonce":"'), "nonce must not be quoted");
+  // The envelope is unchanged: same method string, id still a number.
+  assert.equal(sent[0].method, "submit_transaction");
+  assert.equal(typeof sent[0].id, "number");
+});
+
+test("a safe number input still works and is sent identically to its bigint", async () => {
+  const a = clientWith(ok("0xhash"));
+  const b = clientWith(ok("0xhash"));
+  const base = {
+    tx_type: "Transfer",
+    sender: "0x11",
+    receiver: "0x22",
+    payload: "None",
+    signature: "0x00",
+  };
+
+  await a.client.submitTransaction({ ...base, amount: 100, nonce: 0 });
+  await b.client.submitTransaction({ ...base, amount: 100n, nonce: 0n });
+
+  assert.equal(a.sentRaw[0], b.sentRaw[0], "number and bigint inputs must serialise alike");
+  assert.ok(a.sentRaw[0].includes('"amount":100'));
+  assert.ok(a.sentRaw[0].includes('"nonce":0'));
+});
+
+test("an amount above u64::MAX is refused before transmission", async () => {
+  const past = exactValue("18446744073709551616"); // u64::MAX + 1
+  const { client, sentRaw } = clientWith(ok("0xhash"));
+
+  await assert.rejects(
+    () =>
+      client.submitTransaction({
+        tx_type: "Transfer",
+        sender: "0x11",
+        receiver: "0x22",
+        amount: past,
+        nonce: 0n,
+        payload: "None",
+        signature: "0x00",
+      }),
+    (err) => {
+      assert.equal(err.name, "MbongoNumericRangeError");
+      // SCALE could encode this as a u128; the limit is the node's block
+      // read path, so the message must not blame u128.
+      assert.ok(!/u128/i.test(err.message), "must not be reported as a u128 overflow");
+      return true;
+    },
+  );
+  assert.equal(sentRaw.length, 0, "nothing may be transmitted");
+});
+
+test("u64::MAX is accepted for nonce and height", async () => {
+  const m = "18446744073709551615";
+  const { client, sentRaw } = clientWith(ok("0xhash"));
+  await client.submitTransaction({
+    tx_type: "Transfer",
+    sender: "0x11",
+    receiver: "0x22",
+    amount: 0n,
+    nonce: exactValue(m),
+    payload: "None",
+    signature: "0x00",
+  });
+  assert.ok(sentRaw[0].includes(`"nonce":${m}`));
 });
