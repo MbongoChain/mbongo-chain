@@ -75,35 +75,70 @@ export interface WireReceipt {
 export type TransactionPayload = "None" | { AnchorReceipt: WireReceipt };
 
 /**
- * A transaction as it crosses the wire.
+ * A transaction as this package returns it.
  *
  * `amount` is a `u128` and `nonce` a `u64` on the Rust side, and
- * `rpc_v0.2.md` §1 specifies both as JSON numbers. JavaScript numbers are
- * exact only up to `Number.MAX_SAFE_INTEGER` (2^53 − 1), so an `amount`
- * above that bound cannot round-trip through this type without losing
- * precision. That is a property of the frozen wire contract, not of this
- * package, and it is not worked around here: silently re-encoding the field
- * would make these types stop describing the actual JSON.
+ * `rpc_v0.2.md` §1 specifies both as JSON numbers. A JSON number token is
+ * lexically unbounded, so the wire carries them exactly; JavaScript's
+ * `number` does not, being integer-exact only to 2^53 − 1. Both are
+ * therefore `bigint` here, and the client parses the response without
+ * `JSON.parse` so the digits survive.
+ *
+ * Returned values are always `bigint`, never a union: a type that is
+ * sometimes one and sometimes the other cannot be used without a check at
+ * every site. For *input*, see {@link TransactionInput}.
  */
 export interface Transaction {
   tx_type: TransactionType;
   sender: Address;
   receiver: Address;
-  /** `u128` on the wire. See the precision note on this interface. */
-  amount: number;
+  /** `u128` on the wire; see the note on this interface. */
+  amount: bigint;
   /** `u64` on the wire. */
-  nonce: number;
+  nonce: bigint;
   payload: TransactionPayload;
   signature: Signature;
 }
 
-/** Block header. `timestamp` and `height` are `u64` on the wire. */
+/**
+ * A transaction as this package accepts it.
+ *
+ * `amount` and `nonce` may be a `bigint` or a safe non-negative `number`. A
+ * safe number converts to `bigint` exactly, so accepting one rejects nothing
+ * that was valid and keeps existing callers — `amount: 100, nonce: 0` —
+ * working unchanged. A number that is *not* a safe integer is refused rather
+ * than converted: JavaScript rounded it before this package saw it, and
+ * widening it afterwards would only disguise that.
+ *
+ * {@link Transaction} is assignable to this type, so a value read back from
+ * the chain can be resubmitted without conversion.
+ */
+export interface TransactionInput {
+  tx_type: TransactionType;
+  sender: Address;
+  receiver: Address;
+  /** `u128` on the wire, currently capped at `u64::MAX` by this SDK. */
+  amount: number | bigint;
+  /** `u64` on the wire. */
+  nonce: number | bigint;
+  payload: TransactionPayload;
+  signature: Signature;
+}
+
+/**
+ * Block header.
+ *
+ * `timestamp` and `height` are `u64` on the wire and `bigint` here.
+ * `timestamp` carries the full type domain rather than a plausible range
+ * because it is set by the block producer and no consensus rule bounds it,
+ * so a reader must be able to represent any header a node will accept.
+ */
 export interface BlockHeader {
   parent_hash: Hash;
   state_root: Hash;
   transactions_root: Hash;
-  timestamp: number;
-  height: number;
+  timestamp: bigint;
+  height: bigint;
 }
 
 /** Block body: the transactions included in the block, in order. */
@@ -120,9 +155,14 @@ export interface Block {
   body: BlockBody;
 }
 
-/** Parameters for `get_block_by_height`. */
+/**
+ * Parameters for `get_block_by_height`, as sent.
+ *
+ * `height` is serialised as an exact JSON integer token, so the full `u64`
+ * domain reaches the node unrounded.
+ */
 export interface GetBlockByHeightParams {
-  height: number;
+  height: bigint;
 }
 
 /** JSON-RPC 2.0 request envelope. `params` is omitted for methods that take none. */

@@ -32,7 +32,7 @@ import { ed25519 } from "@noble/curves/ed25519.js";
 
 import type { MbongoClient } from "./client.js";
 import { MbongoAnchorError, MbongoRpcError, type AnchorRejection } from "./errors.js";
-import { assertSafeUnsignedInteger } from "./numeric.js";
+import { normalizeU64 } from "./numeric.js";
 import { encodeReceipt, type Receipt } from "./receipt.js";
 import type { Hash, Transaction, WireReceipt } from "./types.js";
 
@@ -66,10 +66,15 @@ export interface AnchorReceiptTransaction {
   readonly sender: Uint8Array;
   /** 32 zero bytes. */
   readonly receiver: Uint8Array;
-  /** Always `0`. Anchoring transfers nothing. */
-  readonly amount: 0;
-  /** The sender account's current nonce, supplied by the caller. */
-  readonly nonce: number;
+  /** Always `0n`. Anchoring transfers nothing. */
+  readonly amount: 0n;
+  /**
+   * The sender account's current nonce, supplied by the caller.
+   *
+   * Exact across the whole `u64` domain. Builders accept a `bigint` or a
+   * safe non-negative `number`; the canonical form keeps the `bigint`.
+   */
+  readonly nonce: bigint;
   /** The anchored receipt, with its own executor signature intact. */
   readonly receipt: Receipt;
   /** 64 bytes: Ed25519 over the raw signing payload. */
@@ -136,10 +141,10 @@ function requireBytes(field: string, value: unknown, length: number): Uint8Array
  */
 export function anchorReceiptSigningPayload(
   receipt: Receipt,
-  nonce: number,
+  nonce: number | bigint,
 ): Uint8Array {
   // Before anything is encoded, and well before anything is signed.
-  assertSafeUnsignedInteger("nonce", nonce);
+  const exactNonce = normalizeU64("nonce", nonce);
   // encodeReceipt carries the receipt's own validation: version, field widths
   // and the 4096-byte metadata bound. Duplicating those rules here would let
   // the two drift apart.
@@ -150,7 +155,7 @@ export function anchorReceiptSigningPayload(
     receipt.executor,
     new Uint8Array(ADDRESS_BYTES),
     unsignedLE(0n, 16),
-    unsignedLE(BigInt(nonce), 8),
+    unsignedLE(exactNonce, 8),
     Uint8Array.from([PAYLOAD_ANCHOR_RECEIPT]),
     receiptBytes,
   ]);
@@ -175,11 +180,12 @@ export function anchorReceiptSigningPayload(
  */
 export function signAnchorReceiptTransaction(
   receipt: Receipt,
-  nonce: number,
+  nonce: number | bigint,
   secretKey: Uint8Array,
 ): AnchorReceiptTransaction {
   requireBytes("secretKey", secretKey, SECRET_KEY_BYTES);
-  const payload = anchorReceiptSigningPayload(receipt, nonce);
+  const exactNonce = normalizeU64("nonce", nonce);
+  const payload = anchorReceiptSigningPayload(receipt, exactNonce);
 
   let publicKey: Uint8Array;
   try {
@@ -203,8 +209,8 @@ export function signAnchorReceiptTransaction(
     txType: "AnchorReceipt",
     sender: Uint8Array.from(receipt.executor),
     receiver: new Uint8Array(ADDRESS_BYTES),
-    amount: 0,
-    nonce,
+    amount: 0n,
+    nonce: exactNonce,
     receipt,
     signature,
   };
@@ -268,7 +274,7 @@ export function anchorReceiptTransactionToWire(
     tx_type: "AnchorReceipt",
     sender: toHex(tx.sender),
     receiver: toHex(tx.receiver),
-    amount: 0,
+    amount: 0n,
     nonce: tx.nonce,
     payload: { AnchorReceipt: receipt },
     signature: toHex(tx.signature),

@@ -32,7 +32,7 @@ function countingClient(result) {
       calls.n += 1;
       return {
         status: 200,
-        json: async () => ({ jsonrpc: "2.0", id: 1, result }),
+        text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, result }),
       };
     },
   });
@@ -154,74 +154,130 @@ test("getBlockByHeight rejects an unsafe height without calling the network", as
   assert.equal(calls.n, 0);
 });
 
-test("the safe maximum still reaches the network", async () => {
-  const { client, calls } = countingClient(block({ height: SAFE_MAX }));
+// ── Inbound: returned exactly, not refused ───────────────────────────
+//
+// This is what issue #91 changed. The SDK used to reject any inbound value
+// above 2^53 - 1, because `response.json()` had already rounded it and the
+// original could not be recovered. The client no longer parses that way, so
+// these values arrive intact and are returned as exact bigint.
+
+/** Serves a raw JSON-RPC body, so response digits are under test control. */
+function rawClient(resultJson) {
+  const calls = { n: 0 };
+  const client = new MbongoClient(URL, {
+    fetch: async () => {
+      calls.n += 1;
+      return {
+        status: 200,
+        text: async () => `{"jsonrpc":"2.0","id":1,"result":${resultJson}}`,
+      };
+    },
+  });
+  return { client, calls };
+}
+
+/** Builds a bigint from digits, proving identity before any use. */
+function exact(decimal) {
+  const value = BigInt(decimal);
+  assert.equal(value.toString(), decimal, "harness failure: intended value not preserved");
+  return value;
+}
+
+const U64_MAX_TEXT = "18446744073709551615";
+const TWO_POW_53_PLUS_1_TEXT = "9007199254740993";
+
+test("the safe maximum still reaches the network, now as bigint", async () => {
+  const { client, calls } = rawClient(
+    `{"header":{"parent_hash":"0x00","state_root":"0x00","transactions_root":"0x00","timestamp":0,"height":${SAFE_MAX}},"body":{"transactions":[]}}`,
+  );
   const got = await client.getBlockByHeight(SAFE_MAX);
-  assert.equal(got.header.height, SAFE_MAX, "the boundary survives exactly");
+  assert.equal(got.header.height, BigInt(SAFE_MAX), "the boundary survives exactly");
   assert.equal(calls.n, 1);
 });
 
-// ── Inbound: never returned as trustworthy ───────────────────────────
-
-test("an unsafe get_block_height result is not returned", async () => {
-  const { client } = countingClient(TWO_POW_53);
-  await assert.rejects(() => client.getBlockHeight(), MbongoNumericRangeError);
+test("get_block_height returns values above 2^53 exactly", async () => {
+  for (const decimal of [TWO_POW_53_PLUS_1_TEXT, U64_MAX_TEXT]) {
+    const intended = exact(decimal);
+    const { client } = rawClient(decimal);
+    const height = await client.getBlockHeight();
+    assert.equal(typeof height, "bigint");
+    assert.equal(height, intended);
+    assert.equal(height.toString(), decimal, `${decimal} must survive intact`);
+  }
 });
 
-test("an unsafe block height is not returned", async () => {
-  const { client } = countingClient(block({ height: TWO_POW_53 }));
-  await assert.rejects(
-    () => client.getBlockByHeight(0),
-    (err) => {
-      assert.ok(err instanceof MbongoNumericRangeError);
-      assert.equal(err.field, "block.header.height");
-      return true;
-    },
-  );
+test("2^53 and 2^53+1 do not alias through get_block_height", async () => {
+  const a = await rawClient("9007199254740992").client.getBlockHeight();
+  const b = await rawClient("9007199254740993").client.getBlockHeight();
+  assert.notEqual(a, b, "distinct heights must stay distinct");
+  assert.equal(a.toString(), "9007199254740992");
+  assert.equal(b.toString(), "9007199254740993");
 });
 
-test("an unsafe block timestamp is not returned", async () => {
-  const { client } = countingClient(block({ timestamp: TWO_POW_53 }));
-  await assert.rejects(
-    () => client.getBlockByHeight(0),
-    (err) => {
-      assert.equal(err.field, "block.header.timestamp");
-      return true;
-    },
+test("block header and transaction integers all arrive exactly", async () => {
+  const height = "9007199254740993";
+  const timestamp = "9007199254740995";
+  const nonce = "9007199254740997";
+  const amount = "9007199254740999";
+  const { client } = rawClient(
+    `{"header":{"parent_hash":"0x00","state_root":"0x00","transactions_root":"0x00",` +
+      `"timestamp":${timestamp},"height":${height}},"body":{"transactions":[` +
+      `{"tx_type":"Transfer","sender":"0x11","receiver":"0x22","amount":${amount},` +
+      `"nonce":${nonce},"payload":"None","signature":"0x00"}]}}`,
   );
+
+  const got = await client.getBlockByHeight(0);
+  assert.equal(got.header.height.toString(), height);
+  assert.equal(got.header.timestamp.toString(), timestamp);
+  assert.equal(got.body.transactions[0].amount.toString(), amount);
+  assert.equal(got.body.transactions[0].nonce.toString(), nonce);
+  // None of the four may alias onto the same rounded double.
+  const seen = new Set([height, timestamp, nonce, amount]);
+  assert.equal(seen.size, 4, "the four values are distinct by construction");
 });
 
-test("an unsafe amount inside a block transaction is not returned", async () => {
-  const { client } = countingClient(
-    block({}, [tx({ amount: TWO_POW_53 })]),
+test("u64::MAX arrives exactly in every u64 field", async () => {
+  const m = U64_MAX_TEXT;
+  const { client } = rawClient(
+    `{"header":{"parent_hash":"0x00","state_root":"0x00","transactions_root":"0x00",` +
+      `"timestamp":${m},"height":${m}},"body":{"transactions":[` +
+      `{"tx_type":"Transfer","sender":"0x11","receiver":"0x22","amount":${m},` +
+      `"nonce":${m},"payload":"None","signature":"0x00"}]}}`,
   );
-  await assert.rejects(
-    () => client.getBlockByHeight(0),
-    (err) => {
-      assert.equal(err.field, "block.body.transactions[0].amount");
-      return true;
-    },
-  );
+  const got = await client.getBlockByHeight(0);
+  const intended = exact(m);
+  assert.equal(got.header.height, intended);
+  assert.equal(got.header.timestamp, intended);
+  assert.equal(got.body.transactions[0].amount, intended);
+  assert.equal(got.body.transactions[0].nonce, intended);
 });
 
-test("an unsafe nonce inside a block transaction is not returned", async () => {
-  const { client } = countingClient(block({}, [tx(), tx({ nonce: TWO_POW_53 })]));
-  await assert.rejects(
-    () => client.getBlockByHeight(0),
-    (err) => {
-      assert.equal(
-        err.field,
-        "block.body.transactions[1].nonce",
-        "every transaction in the body is walked, not just the first",
-      );
-      return true;
-    },
+test("a well-formed block with small values still passes through", async () => {
+  const { client } = rawClient(
+    `{"header":{"parent_hash":"0x00","state_root":"0x00","transactions_root":"0x00","timestamp":12345,"height":7},` +
+      `"body":{"transactions":[{"tx_type":"Transfer","sender":"0x11","receiver":"0x22","amount":100,"nonce":0,"payload":"None","signature":"0x00"}]}}`,
   );
-});
-
-test("a well-formed block with safe values passes through untouched", async () => {
-  const b = block({ height: 7, timestamp: 12345 }, [tx({ amount: SAFE_MAX })]);
-  const { client } = countingClient(b);
   const got = await client.getBlockByHeight(7);
-  assert.deepEqual(got, b);
+  assert.deepEqual(got, {
+    header: {
+      parent_hash: "0x00",
+      state_root: "0x00",
+      transactions_root: "0x00",
+      timestamp: 12345n,
+      height: 7n,
+    },
+    body: {
+      transactions: [
+        {
+          tx_type: "Transfer",
+          sender: "0x11",
+          receiver: "0x22",
+          amount: 100n,
+          nonce: 0n,
+          payload: "None",
+          signature: "0x00",
+        },
+      ],
+    },
+  });
 });

@@ -95,9 +95,10 @@ It signs nothing.
 The one transaction this package can build and sign for you is
 `AnchorReceipt` — see [Anchoring a receipt](#anchoring-a-receipt). There is
 deliberately no general `signTransaction`: a generic signer would have to
-encode arbitrary `u128` amounts, and this package refuses to vouch for values
-outside the JavaScript safe-integer range. `AnchorReceipt` sidesteps that
-entirely, because consensus pins its amount to `0`.
+encode arbitrary `u128` amounts, and this package caps `amount` at `u64::MAX`
+for the read-path reason described under
+[Numeric range](#numeric-range-exact-integers). `AnchorReceipt` sidesteps the
+question entirely, because consensus pins its amount to `0`.
 
 For any other transaction type the caller still supplies a signed object:
 
@@ -166,51 +167,77 @@ The client always sends `{"height": N}`. The node also tolerates a bare
 number, but that is an implementation detail of the current runtime rather
 than contract, so this client never emits it.
 
-## Numeric range: the SDK accepts only safe integers
+## Numeric range: exact integers
 
-`@mbongo/sdk` 0.1 supports integer values in **`0 .. 2^53 - 1`** for the RPC
-fields carried as JSON numbers: `Transaction.amount`, `Transaction.nonce`,
-`BlockHeader.height`, `BlockHeader.timestamp`, the `get_block_height` result
-and the `getBlockByHeight` argument.
+The four RPC fields whose Rust type is wider than a JavaScript number are
+carried as `bigint`: `Transaction.amount`, `Transaction.nonce`,
+`BlockHeader.height` and `BlockHeader.timestamp`, along with the
+`get_block_height` result and the `getBlockByHeight` argument.
 
-Values outside that range are **rejected**, with `MbongoNumericRangeError`
-naming the field:
+**Input** accepts either form. A `bigint` is taken as-is; a `number` is
+accepted while it is still a safe non-negative integer, which converts
+exactly. So existing code keeps working:
 
 ```typescript
-await client.submitTransaction({ ...tx, amount: 9007199254740992 });
+await client.submitTransaction({ ...tx, amount: 100, nonce: 0 });
+await client.submitTransaction({ ...tx, amount: 100n, nonce: 9007199254740993n });
+```
+
+**Output** is always `bigint`, including for small values — a type that
+changed with the magnitude would need a check at every call site:
+
+```typescript
+const height = await client.getBlockHeight();   // bigint
+const block = await client.getBlockByHeight(height);
+block.header.timestamp;                          // bigint
+block.body.transactions[0]?.amount;              // bigint
+```
+
+Smaller fields stay `number`, because their domains fit: `receipt.version`,
+the byte-array elements, JSON-RPC error codes and request ids.
+
+### An unsafe number is refused, not repaired
+
+```typescript
+await client.submitTransaction({ ...tx, amount: 9007199254740993 });
 // MbongoNumericRangeError: transaction.amount: exceeds the JavaScript
 // safe-integer range (max 9007199254740991)
 ```
 
-Outbound values are checked **before any network call**. Inbound values are
-checked before being returned, including every transaction inside a block
-body.
+That literal is already `9007199254740992` before this package sees it —
+JavaScript rounded it while parsing the source. The intent cannot be
+recovered, so the SDK rejects it rather than converting it to a `bigint` that
+would merely look precise. Pass a `bigint` when you need the full range.
 
-### Why
+### `amount` currently stops at `u64::MAX`
 
-`rpc_v0.2.md` represents these fields as JSON numbers, and the Rust types
-behind them are wider than JavaScript can hold exactly — `amount` is a
-`u128`, the rest are `u64`. JavaScript is integer-exact only through
-`Number.MAX_SAFE_INTEGER`, so a larger literal is rounded **when JavaScript
-parses it**, before this package ever sees the value. The original cannot be
-recovered.
+Rust's `Transaction.amount` is a `u128` and the node accepts that whole
+domain on submission, but `get_block_by_height` serialises blocks through
+`serde_json::to_value`, which fails above `u64::MAX`. An amount past that
+bound could be submitted and included, and the block holding it would then be
+unreadable. The SDK refuses such a value rather than helping produce a block
+the chain cannot serve back.
 
-What can be detected is that the value in hand is not a safe integer. The SDK
-fails closed on that: it will not transmit a value it cannot vouch for, and
-will not hand one back as though it were trustworthy. A rounded `amount`
-would otherwise be signed for and settled as a different number than
-intended.
+**Full `u128` amounts are not supported.** Lifting the cap is a node-side
+change, tracked separately.
 
-### What this is not
+### How this works, and what it does not fix
 
-This is an **SDK restriction**, not a protocol rule. The node accepts the
-full Rust domain, and `rpc_v0.2.md` is unchanged and remains FROZEN. Nothing
-here narrows the protocol; it narrows what this client is willing to vouch
-for.
+`rpc_v0.2.md` represents these fields as JSON numbers and fixes no magnitude.
+A JSON number token is lexically unbounded, so the node already emits and
+accepts exact decimal digits — the precision was never lost on the wire. It
+was lost in JavaScript: `JSON.parse` rounds every token to a double, and
+`JSON.stringify` cannot serialise a `bigint` at all.
 
-Supporting the full range across languages would need a different wire
-representation and therefore a versioned RPC decision. No such format has
-been selected.
+This package replaces both on the RPC path with an exact parser and
+serialiser. Integers remain JSON numbers, never strings; method names,
+parameter shapes and response shapes are unchanged. `rpc_v0.2.md` stays
+FROZEN and needs no version bump.
+
+That fixes this client, and only this client. **A JavaScript program calling
+the node with `fetch` and native `JSON.parse` still loses integers above
+2^53 − 1**, silently. The transport preserves the exact decimal token; the
+native parser does not. Use `@mbongo/sdk`, or an exact-number JSON parser.
 
 ## Receipt primitives
 
@@ -459,12 +486,11 @@ being skipped. Version, the four fixed widths, the 4096-byte metadata bound,
 checked — a byte outside that range would be silently truncated into a receipt
 whose hash no longer matches the chain's.
 
-### One limitation
+### Whole-block validation
 
-`getBlockByHeight` validates the **whole** block, including every
-transaction's `amount` and `nonce`. A block containing a value outside the
-safe-integer range is unreadable rather than partially readable. No such value
-can currently exist on chain; the structural limit is tracked separately.
+`getBlockByHeight` normalises the **whole** block, including every
+transaction's `amount` and `nonce`. Integers arrive exactly, as `bigint`; a
+structurally malformed block is refused rather than partially returned.
 
 ## Working on the SDK
 
