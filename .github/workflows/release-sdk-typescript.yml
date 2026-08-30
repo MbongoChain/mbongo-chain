@@ -335,9 +335,77 @@ jobs:
             || echo "::warning::the publish command exited $cli_status, but the registry holds our exact artifact"
           echo "PUBLISHED_CONFIRMED"
 
-          # Separate question, separate answer: integrity says the bytes match,
-          # provenance says what the registry attests about the build.
-          npm audit signatures || echo "::warning::provenance could not be verified here; check the package page"
+      # A separate question from integrity, and answered separately.
+      #
+      # `npm audit signatures` is NOT used here. Run from this directory it
+      # audits the SDK's own installed dependencies — @noble/curves,
+      # @noble/hashes, typescript — and says nothing about @mbongo/sdk, which
+      # is the project rather than one of its dependencies.
+      #
+      # What this does instead: ask the registry for the attestations of the
+      # exact published version, require a SLSA provenance predicate, and
+      # require the attestation's subject to name that version and carry the
+      # SHA-512 of the bytes we packed.
+      #
+      # The subject digest is the hex SHA-512 of the raw tarball — the same
+      # bytes as dist.integrity, which is base64 of the same hash. So this
+      # binds the attestation to our artifact, not merely to the package name.
+      #
+      # This is OBSERVED, not cryptographically verified. Parsing a DSSE
+      # payload served by the registry is not the same as verifying its
+      # Sigstore signature, and this step deliberately does not claim to.
+      - name: Provenance evidence for the published artifact
+        if: steps.mode.outputs.mode == 'automated'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e '
+            const https = require("https"), crypto = require("crypto"), fs = require("fs");
+            const pkg = process.argv[1], ver = process.argv[2], tgz = process.argv[3];
+            const want = crypto.createHash("sha512").update(fs.readFileSync(tgz)).digest("hex");
+            const url = "https://registry.npmjs.org/-/npm/v1/attestations/"
+              + pkg.replace("/", "%2f") + "@" + ver;
+
+            const fail = (state, detail) => {
+              console.log("::error::" + state + (detail ? " — " + detail : ""));
+              process.exit(1);
+            };
+
+            https.get(url, { headers: { "user-agent": "mbongo-release" } }, (res) => {
+              const chunks = [];
+              res.on("data", (d) => chunks.push(d));
+              res.on("end", () => {
+                if (res.statusCode === 404) fail("PROVENANCE_ATTESTATION_MISSING", "registry has no attestations for " + pkg + "@" + ver);
+                if (res.statusCode !== 200) fail("PROVENANCE_ATTESTATION_MISSING", "HTTP " + res.statusCode);
+
+                let doc;
+                try { doc = JSON.parse(Buffer.concat(chunks).toString()); }
+                catch { fail("PROVENANCE_MALFORMED_RESPONSE"); }
+
+                const slsa = (doc.attestations || [])
+                  .find((a) => a.predicateType === "https://slsa.dev/provenance/v1");
+                if (!slsa) fail("PROVENANCE_PREDICATE_MISSING", "no SLSA provenance predicate");
+
+                let stmt;
+                try { stmt = JSON.parse(Buffer.from(slsa.bundle.dsseEnvelope.payload, "base64").toString()); }
+                catch { fail("PROVENANCE_MALFORMED_RESPONSE", "DSSE payload did not parse"); }
+
+                const subject = (stmt.subject || [])[0];
+                if (!subject) fail("PROVENANCE_SUBJECT_MISMATCH", "statement carries no subject");
+
+                const expectedName = "pkg:npm/" + pkg + "@" + ver;
+                if (subject.name !== expectedName)
+                  fail("PROVENANCE_SUBJECT_MISMATCH", "subject is " + subject.name + ", expected " + expectedName);
+                if (subject.digest?.sha512 !== want)
+                  fail("PROVENANCE_SUBJECT_MISMATCH", "subject digest is not the artifact we packed");
+
+                console.log("PROVENANCE_ATTESTATION_PRESENT");
+                console.log("PROVENANCE_SUBJECT_MATCHES_PACKAGE");
+                console.log("PROVENANCE_CRYPTOGRAPHICALLY_VERIFIED=no (attestation observed, signature not verified here)");
+                console.log("subject " + subject.name);
+              });
+            }).on("error", (e) => fail("PROVENANCE_ATTESTATION_MISSING", e.message));
+          ' "$PACKAGE_NAME" "$VERSION" '${{ steps.pack.outputs.tarball }}'
 
       - name: Summary
         if: always()

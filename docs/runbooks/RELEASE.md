@@ -59,7 +59,7 @@ evidence:
 | What artifact was tested? | the `.tgz` produced by the release run |
 | What artifact was published? | **the same `.tgz`** — see §6 |
 | What proves publication? | the registry returning that version |
-| What proves provenance? | `npm audit signatures`, and the package page |
+| What evidences provenance? | the registry's attestations for that exact version — see §6.3 |
 | Who may initiate it? | a maintainer, through the approval gate in §8 |
 | What must already exist? | the bootstrap prerequisites in §9 |
 
@@ -201,6 +201,45 @@ useful. **It is never a security gate.**
 same bytes*; provenance answers *what does the registry attest about the build
 that produced them*. They stay separate gates, and a successful publish does
 not by itself establish the second.
+
+### 6.3 What counts as provenance evidence
+
+**[decision] `npm audit signatures` is not the answer.** Run from
+`sdk/typescript` it audits the SDK's own installed dependencies —
+`@noble/curves`, `@noble/hashes`, `typescript` — and says nothing about
+`@mbongo/sdk`, which is the project rather than one of its dependencies. A
+green result there is evidence about the dependency tree, not about what was
+published.
+
+**[platform]** The registry serves attestations per exact version at
+`/-/npm/v1/attestations/<package>@<version>`. `@latest` does not resolve;
+the exact version is required. A published-with-provenance package returns two
+attestations, one with predicate `https://slsa.dev/provenance/v1`, whose
+in-toto subject names `pkg:npm/<package>@<version>` and carries a
+`sha512` digest.
+
+**[platform]** That subject digest is the **hex SHA-512 of the raw tarball** —
+the same bytes `dist.integrity` hashes, in a different encoding. Confirmed by
+downloading a published tarball and reproducing both values. So the
+attestation can be bound to the artifact we packed, not merely to a package
+name.
+
+**[decision]** Three evidence states, kept apart:
+
+| State | Means | Established by |
+|---|---|---|
+| `PROVENANCE_ATTESTATION_PRESENT` | the registry serves an attestation with a SLSA provenance predicate | the endpoint |
+| `PROVENANCE_SUBJECT_MATCHES_PACKAGE` | its subject names this version and carries our tarball's SHA-512 | comparing the digest |
+| `PROVENANCE_CRYPTOGRAPHICALLY_VERIFIED` | the Sigstore bundle's signature checks out | **not implemented** |
+
+The release verifies the first two. It does **not** verify the third, and must
+not report it: parsing a DSSE payload the registry served is not the same as
+verifying its signature. Reaching that state would need Sigstore bundle
+verification, which this repository has not adopted.
+
+Failure states: `PROVENANCE_ATTESTATION_MISSING`,
+`PROVENANCE_PREDICATE_MISSING`, `PROVENANCE_SUBJECT_MISMATCH`,
+`PROVENANCE_MALFORMED_RESPONSE`. Any of them fails the release.
 
 ---
 
@@ -461,7 +500,7 @@ Durable, machine-checkable records — not an issue comment:
 | tarball filename and digest | the workflow run log |
 | gate results | the workflow run, bound to that exact SHA |
 | published version | the registry |
-| provenance status | `npm audit signatures`, the package page |
+| provenance evidence | the attestations endpoint for that exact version (§6.3) |
 | GitHub Release | its own URL, if created |
 
 Per [`../ENGINEERING_EVIDENCE.md`](../ENGINEERING_EVIDENCE.md): bind every
