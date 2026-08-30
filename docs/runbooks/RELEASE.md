@@ -149,6 +149,59 @@ and must not assume it. If tarball publishing and provenance turn out to be
 incompatible, that is a real trade-off to decide then — not something to
 paper over.
 
+### 6.1 How the tarball reaches a human
+
+The first publication happens on a maintainer's machine (§9), so the tarball
+has to leave the runner without being rebuilt. It is exported as a **GitHub
+Actions artifact**, stored uncompressed so the downloaded file is the tarball
+itself.
+
+**[decision]** The artifact **name is not its identity.** An artifact with a
+given name can be replaced by a later upload, so identity is the combination
+of:
+
+| | |
+|---|---|
+| workflow run ID | which run produced it |
+| artifact ID | which upload within that run |
+| source SHA and tag | what it was built from |
+| SDK version | what it claims to be |
+| tarball filename | `mbongo-sdk-<version>.tgz` |
+| `CANONICAL_TARBALL_SHA256` | the bytes themselves |
+
+**[decision]** The maintainer downloads the artifact from that exact run,
+extracts the `.tgz`, recomputes its SHA-256, and **requires equality** with
+the value the run logged. On mismatch, stop. They then publish that exact
+file. **Running `npm pack` locally is forbidden** — it produces a different
+artifact that nothing tested.
+
+Retention is **30 days**, long enough for a bootstrap and a recovery, short
+enough that build artifacts do not accumulate.
+
+### 6.2 Two digests, two purposes
+
+Both are computed over the same raw tarball bytes and are **never compared
+with each other**:
+
+| Value | Form | Answers |
+|---|---|---|
+| `CANONICAL_TARBALL_SHA256` | hex SHA-256 | did the file survive the GitHub artifact round trip? |
+| `CANONICAL_TARBALL_SRI` | `sha512-<base64>` | is this what the registry holds? |
+
+**[platform]** npm publishes `dist.integrity` as a Subresource Integrity
+string over the package tarball — `sha512-` followed by the base64 SHA-512 of
+the raw bytes. After publication, the recorded `CANONICAL_TARBALL_SRI` must
+equal `npm view <package>@<version> dist.integrity` **exactly**; a difference
+is not something to normalise away.
+
+`dist.shasum` is a SHA-1 of the same bytes. Record it as a diagnostic if
+useful. **It is never a security gate.**
+
+**[decision] Integrity is not provenance.** Integrity answers *are these the
+same bytes*; provenance answers *what does the registry attest about the build
+that produced them*. They stay separate gates, and a successful publish does
+not by itself establish the second.
+
 ---
 
 ## 7. Pre-publish gates
@@ -254,7 +307,8 @@ configuring a trusted publisher for a package that has never been published.
 
 1. **The first publication is a manual, human action** — performed by a
    maintainer from their own machine, authenticated with 2FA, publishing the
-   tarball produced and verified by a release run.
+   tarball produced and verified by a release run and retrieved as described
+   in §6.1.
 2. **Immediately afterwards**, the maintainer configures the trusted publisher
    on the now-existing package, naming this repository, the release workflow
    filename, and the `npm-production` environment.
@@ -443,11 +497,35 @@ the release.
 
 **[external]** Then, by hand:
 
-- [ ] publish that tarball, authenticated with 2FA
-- [ ] confirm the version is present in the registry
+- [ ] download the artifact from **that exact run**, and record the run ID and
+      artifact ID
+- [ ] extract the `.tgz` and recompute its SHA-256
+- [ ] require equality with the run's `CANONICAL_TARBALL_SHA256`; **stop on
+      mismatch**
+- [ ] publish **that exact file**, authenticated with 2FA. Do **not** run
+      `npm pack` locally, and do not modify the tarball
+- [ ] confirm `npm view @mbongo/sdk@<version> version`
+- [ ] confirm `npm view @mbongo/sdk@<version> dist.integrity` equals the run's
+      `CANONICAL_TARBALL_SRI`; **stop on mismatch**
+- [ ] expect **no provenance** for this release: it was published manually,
+      outside trusted publishing. Do not claim otherwise
 - [ ] configure the trusted publisher on the package: this repository, the
-      release workflow filename, the `npm-production` environment
+      release workflow filename `release-sdk-typescript.yml`, the
+      `npm-production` environment
+- [ ] create the `npm-production` environment with at least one required
+      reviewer
 - [ ] confirm the next release publishes through the workflow without any
       token
 
 Only after the last line is `@mbongo/sdk` releasable by automation.
+
+**[decision]** A bootstrap run is a **successful** workflow outcome, not a
+failure. It validates, packs, tests, exports and reports
+`BOOTSTRAP_REQUIRED`. A workflow that deliberately attempted OIDC publication
+in order to discover that the package does not exist would be
+indistinguishable from a genuine outage.
+
+**[platform]** Referencing a GitHub environment that does not exist **creates
+it, with no protection rules**. `environment:` is therefore not a fail-closed
+approval gate by itself, and the workflow checks that `npm-production`
+actually carries a required-reviewer rule before it will publish.

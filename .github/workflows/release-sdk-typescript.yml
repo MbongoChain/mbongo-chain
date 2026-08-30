@@ -1,0 +1,372 @@
+# TypeScript SDK release.
+#
+# The contract this implements is docs/runbooks/RELEASE.md. Read it before
+# changing anything here; the rules below are its consequences, not new policy.
+#
+# THE FILENAME IS OPERATIONALLY SIGNIFICANT. npm binds a trusted publisher to
+# the exact workflow filename. Renaming this file breaks publishing until the
+# trusted publisher is reconfigured on npmjs.com.
+#
+# Two things are worth knowing before reading further:
+#
+#   One tarball. It is packed once, tested, exported and published. Nothing
+#   repacks it, because "the artifact tested is the artifact published" is
+#   only provable when there is a single artifact.
+#
+#   Referencing an environment that does not exist CREATES it, without any
+#   protection rules. `environment:` is therefore not a fail-closed approval
+#   gate on its own, so the publish path checks the environment's protection
+#   rules explicitly before it will publish.
+
+name: Release TypeScript SDK
+
+on:
+  push:
+    tags:
+      - 'sdk-typescript-v*'
+
+# The tag is the only execution authority. No pull_request, no
+# pull_request_target, no branch push, no schedule, no manual dispatch.
+
+permissions:
+  contents: read
+
+concurrency:
+  # Per release identity, and never cancelled: cancelling mid-publish would
+  # produce exactly the ambiguous state the runbook forbids resolving by retry.
+  group: release-sdk-typescript-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PACKAGE_NAME: '@mbongo/sdk'
+  PKG_DIR: sdk/typescript
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Nothing is built here. This job only decides whether the tag, the
+  # manifest and the lockfile agree, so a disagreement costs a few seconds
+  # rather than a packed artifact.
+  # ---------------------------------------------------------------------
+  validate:
+    name: Validate tag and version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.contract.outputs.version }}
+    steps:
+      - name: Checkout the tagged source
+        uses: actions/checkout@v4
+
+      - name: Tag, manifest and lockfile must agree
+        id: contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          echo "tag        $tag"
+          echo "source SHA $GITHUB_SHA"
+
+          case "$tag" in
+            sdk-typescript-v*) ;;
+            *) echo "::error::not an SDK release tag: $tag"; exit 1 ;;
+          esac
+
+          version="${tag#sdk-typescript-v}"
+          if ! printf '%s' "$version" \
+            | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'; then
+            echo "::error::tag version is not semver: $version"
+            exit 1
+          fi
+
+          manifest=$(node -p "require('./${PKG_DIR}/package.json').version")
+          name=$(node -p "require('./${PKG_DIR}/package.json').name")
+          lock=$(node -p "require('./${PKG_DIR}/package-lock.json').version")
+          lockName=$(node -p "require('./${PKG_DIR}/package-lock.json').name")
+
+          echo "manifest   $name@$manifest"
+          echo "lockfile   $lockName@$lock"
+
+          [ "$name" = "$PACKAGE_NAME" ] \
+            || { echo "::error::package is $name, expected $PACKAGE_NAME"; exit 1; }
+          [ "$version" = "$manifest" ] \
+            || { echo "::error::tag says $version, manifest says $manifest"; exit 1; }
+          [ "$version" = "$lock" ] \
+            || { echo "::error::tag says $version, lockfile says $lock"; exit 1; }
+          [ "$lockName" = "$PACKAGE_NAME" ] \
+            || { echo "::error::lockfile package is $lockName"; exit 1; }
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------
+  # Builds, packs once, tests that exact tarball, exports it, and then
+  # either publishes it or reports that the first publication is manual.
+  #
+  # Everything happens in one job on purpose: moving the tarball between
+  # jobs would raise a question about its bytes that would then have to be
+  # answered, and the simplest answer is not to move it.
+  # ---------------------------------------------------------------------
+  release:
+    name: Pack, verify and release
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: npm-production
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      PACK_DIR: ${{ github.workspace }}/.release-pack
+
+    steps:
+      - name: Checkout the tagged source
+        uses: actions/checkout@v4
+
+      - name: Install Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # npm trusted publishing requires npm >= 11.5.1 and Node >= 22.14.0.
+      # Asserted rather than assumed: a runner image change that lowered the
+      # bundled npm would otherwise fail later, during publication.
+      - name: Toolchain meets the trusted-publishing minimum
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          npm --version
+          node -e '
+            const [nMaj, nMin] = process.versions.node.split(".").map(Number);
+            if (nMaj < 22 || (nMaj === 22 && nMin < 14)) {
+              console.error("node " + process.versions.node + " < 22.14.0");
+              process.exit(1);
+            }
+          '
+          npm_version=$(npm --version)
+          node -e '
+            const need = [11, 5, 1];
+            const got = process.argv[1].split(".").map(Number);
+            for (let i = 0; i < 3; i++) {
+              if (got[i] > need[i]) break;
+              if (got[i] < need[i]) {
+                console.error("npm " + process.argv[1] + " < 11.5.1");
+                process.exit(1);
+              }
+            }
+          ' "$npm_version"
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ${{ env.PKG_DIR }}
+
+      - name: Typecheck
+        run: npm run typecheck
+        working-directory: ${{ env.PKG_DIR }}
+
+      - name: Unit tests
+        run: npm test
+        working-directory: ${{ env.PKG_DIR }}
+
+      - name: Build
+        run: npm run build
+        working-directory: ${{ env.PKG_DIR }}
+
+      # The only pack in this workflow. Everything downstream uses this file.
+      - name: Pack the canonical tarball
+        id: pack
+        shell: bash
+        working-directory: ${{ env.PKG_DIR }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$PACK_DIR"
+          npm pack --json --pack-destination "$PACK_DIR" > "$RUNNER_TEMP/pack.json"
+
+          count=$(find "$PACK_DIR" -maxdepth 1 -name '*.tgz' | wc -l)
+          echo "tarballs in the pack directory: $count"
+          [ "$count" -eq 1 ] \
+            || { echo "::error::expected exactly 1 tarball, found $count"; exit 1; }
+
+          tarball=$(find "$PACK_DIR" -maxdepth 1 -name '*.tgz')
+          echo "canonical tarball: $tarball"
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          echo "filename=$(basename "$tarball")" >> "$GITHUB_OUTPUT"
+
+      # Two digests over the same bytes, for two different purposes. They are
+      # never compared with each other.
+      #
+      #   sha256  identity across the GitHub artifact download, for a human
+      #   sri     the value npm publishes as dist.integrity
+      - name: Digest the canonical tarball
+        id: digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball='${{ steps.pack.outputs.tarball }}'
+          sha256=$(node -e '
+            const c = require("crypto"), fs = require("fs");
+            process.stdout.write(c.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"));
+          ' "$tarball")
+          sri=$(node -e '
+            const c = require("crypto"), fs = require("fs");
+            process.stdout.write("sha512-" + c.createHash("sha512").update(fs.readFileSync(process.argv[1])).digest("base64"));
+          ' "$tarball")
+          echo "CANONICAL_TARBALL_SHA256 $sha256"
+          echo "CANONICAL_TARBALL_SRI    $sri"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+          echo "sri=$sri" >> "$GITHUB_OUTPUT"
+
+      # The consumer smoke in supplied-tarball mode. It asserts internally
+      # that it packed nothing, so this step is what proves the published
+      # artifact is the tested one.
+      - name: Consumer smoke against the canonical tarball
+        run: node scripts/consumer-smoke.mjs --tarball '${{ steps.pack.outputs.tarball }}'
+        working-directory: ${{ env.PKG_DIR }}
+
+      - name: Publish dry run
+        shell: bash
+        working-directory: ${{ env.PKG_DIR }}
+        run: npm publish '${{ steps.pack.outputs.tarball }}' --dry-run
+
+      # Exported unconditionally. For the first release a human needs these
+      # exact bytes; afterwards it is the retrievable copy of what shipped.
+      - name: Export the canonical tarball
+        id: artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.pack.outputs.filename }}
+          path: ${{ steps.pack.outputs.tarball }}
+          if-no-files-found: error
+          retention-days: 30
+          # Stored uncompressed so the downloaded file is the tarball itself.
+          archive: false
+
+      # Package-level absence, not version-level. Every legitimate new version
+      # is absent before its own release, so a version query alone would call
+      # every release a bootstrap.
+      - name: Classify release mode
+        id: mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg=$(printf '%s' "$PACKAGE_NAME" | sed 's|/|%2F|')
+          pkg_status=$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/${pkg}")
+          ver_status=$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/${pkg}/${VERSION}")
+          echo "registry package  $pkg_status"
+          echo "registry version  $ver_status"
+
+          if [ "$pkg_status" = "404" ]; then
+            # The package has never been published. Neither this nor anything
+            # else here establishes who controls the @mbongo scope.
+            mode=bootstrap
+          elif [ "$pkg_status" = "200" ] && [ "$ver_status" = "404" ]; then
+            mode=automated
+          elif [ "$pkg_status" = "200" ] && [ "$ver_status" = "200" ]; then
+            echo "::error::${PACKAGE_NAME}@${VERSION} already exists. A published version cannot be replaced."
+            exit 1
+          else
+            echo "::error::registry state is indeterminate (package $pkg_status, version $ver_status)"
+            exit 1
+          fi
+          echo "mode: $mode"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+
+      # `environment:` above does NOT fail when npm-production is missing —
+      # GitHub creates it without protection rules. So before publishing,
+      # require that it actually carries a reviewer gate.
+      - name: Environment protection must be real
+        if: steps.mode.outputs.mode == 'automated'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rules=$(gh api "repos/${GITHUB_REPOSITORY}/environments/npm-production" \
+            --jq '[.protection_rules[]?.type] | join(",")' 2>/dev/null || echo '')
+          echo "protection rules: ${rules:-<none>}"
+          case ",$rules," in
+            *,required_reviewers,*) ;;
+            *) echo "::error::npm-production has no required reviewers. Configure it before publishing."
+               exit 1 ;;
+          esac
+
+      - name: Publish
+        if: steps.mode.outputs.mode == 'automated'
+        id: publish
+        shell: bash
+        working-directory: ${{ env.PKG_DIR }}
+        # No NPM_TOKEN and no .npmrc auth line: authentication is the OIDC
+        # exchange, and provenance comes with it.
+        run: |
+          set +e
+          npm publish '${{ steps.pack.outputs.tarball }}'
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+
+      # The publish command's exit status is not the answer on its own: a
+      # dropped connection after the registry accepted the package looks like
+      # a failure. Ask the registry.
+      - name: Confirm what the registry holds
+        if: steps.mode.outputs.mode == 'automated'
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected='${{ steps.digest.outputs.sri }}'
+          cli_status='${{ steps.publish.outputs.status }}'
+          actual=$(npm view "${PACKAGE_NAME}@${VERSION}" dist.integrity 2>/dev/null || echo '')
+
+          echo "publish exit status  $cli_status"
+          echo "expected integrity   $expected"
+          echo "registry integrity   ${actual:-<absent>}"
+
+          if [ -z "$actual" ]; then
+            [ "$cli_status" = "0" ] \
+              && { echo "::error::publish reported success but the registry has no such version"; exit 1; }
+            echo "::error::publication failed; the version is absent. Nothing was published."
+            exit 1
+          fi
+
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::${PACKAGE_NAME}@${VERSION} exists with different bytes than we packed. Do not retry."
+            exit 1
+          fi
+
+          [ "$cli_status" = "0" ] \
+            || echo "::warning::the publish command exited $cli_status, but the registry holds our exact artifact"
+          echo "PUBLISHED_CONFIRMED"
+
+          # Separate question, separate answer: integrity says the bytes match,
+          # provenance says what the registry attests about the build.
+          npm audit signatures || echo "::warning::provenance could not be verified here; check the package page"
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## ${PACKAGE_NAME}@${VERSION}"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| mode | \`${{ steps.mode.outputs.mode }}\` |"
+            echo "| tag | \`${GITHUB_REF#refs/tags/}\` |"
+            echo "| source SHA | \`$GITHUB_SHA\` |"
+            echo "| run ID | \`$GITHUB_RUN_ID\` |"
+            echo "| tarball | \`${{ steps.pack.outputs.filename }}\` |"
+            echo "| artifact ID | \`${{ steps.artifact.outputs.artifact-id }}\` |"
+            echo "| artifact digest | \`${{ steps.artifact.outputs.artifact-digest }}\` |"
+            echo "| CANONICAL_TARBALL_SHA256 | \`${{ steps.digest.outputs.sha256 }}\` |"
+            echo "| CANONICAL_TARBALL_SRI | \`${{ steps.digest.outputs.sri }}\` |"
+            echo
+            if [ "${{ steps.mode.outputs.mode }}" = "bootstrap" ]; then
+              echo "**BOOTSTRAP_REQUIRED — AUTOMATED_PUBLISH_ATTEMPTED=NO.**"
+              echo
+              echo "${PACKAGE_NAME} has never been published, so npm has no package on which"
+              echo "to configure a trusted publisher. This run validated, packed, tested and"
+              echo "exported the canonical tarball; the first publication is a human step."
+              echo
+              echo "Follow \`docs/runbooks/RELEASE.md\` §15. Download the artifact from this"
+              echo "run, recompute its SHA-256, require equality, and publish that exact file."
+              echo "Do not run \`npm pack\` locally."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
