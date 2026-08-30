@@ -2733,6 +2733,99 @@ mod tests {
         assert_eq!(final_receiver.balance, 300);
     }
 
+    // ── Issue #100: consensus characterization ─────────────────────────
+    //
+    // These two tests describe behaviour that already exists. `apply_block`
+    // validates each transaction against an advancing in-memory account
+    // view (`account_cache`), so a sender's nonce is consumed and visible
+    // to the next transaction of the same block. Consecutive same-sender
+    // nonces in one block are therefore consensus-valid today.
+    //
+    // Nothing in the anchoring protocol had to change for issue #100:
+    // PROTOCOL_LOCK_v0.3 §3 rule (d) and RFC 0002 rule (d) govern
+    // `apply_block`, which is untouched. The limitation reported in #100
+    // lives entirely in `submit_transaction`'s admission pre-check.
+    //
+    // Both tests must pass on unmodified consensus code. If either ever
+    // fails, the premise of the #100 fix is false and pending-aware
+    // admission must not ship.
+
+    #[test]
+    fn apply_block_accepts_consecutive_nonces_from_one_sender() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+
+        let sk = SigningKey::from_bytes(&[70u8; 32]);
+        let sender_addr = fund(&backend, &sk, 5000);
+        let receiver_addr = Address([71u8; 32]);
+
+        // Two transfers from ONE sender, consecutive nonces, ONE block.
+        let tx1 = signed_transfer(&sk, receiver_addr, 100, 0);
+        let tx2 = signed_transfer(&sk, receiver_addr, 200, 1);
+        let tx1_hash = compute_tx_hash(&tx1);
+        let tx2_hash = compute_tx_hash(&tx2);
+
+        let block = build_valid_block(&backend, vec![tx1, tx2]);
+        backend.apply_block(&block).unwrap();
+
+        // Height advanced exactly once: both transactions are in one block.
+        assert_eq!(backend.storage.get_latest_height().unwrap(), 1);
+
+        // The nonce was consumed twice within that single block.
+        let sender = backend.storage.get_account(&sender_addr).unwrap().unwrap();
+        assert_eq!(sender.nonce, 2, "both nonces consumed in one block");
+        assert_eq!(sender.balance, 4700);
+
+        let receiver = backend.storage.get_account(&receiver_addr).unwrap().unwrap();
+        assert_eq!(receiver.balance, 300);
+
+        // Both transactions stored and sequenced in body order.
+        assert!(backend.storage.get_transaction(&tx1_hash).unwrap().is_some());
+        assert!(backend.storage.get_transaction(&tx2_hash).unwrap().is_some());
+        assert_eq!(
+            backend.storage.get_tx_hash_by_seq(1).unwrap(),
+            Some(tx1_hash)
+        );
+        assert_eq!(
+            backend.storage.get_tx_hash_by_seq(2).unwrap(),
+            Some(tx2_hash)
+        );
+        assert!(backend.storage.get_tx_hash_by_seq(3).unwrap().is_none());
+        assert_eq!(backend.storage.get_last_included_tx_seq().unwrap(), 2);
+    }
+
+    #[test]
+    fn apply_block_accepts_consecutive_anchors_from_one_executor() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+
+        let sk = SigningKey::from_bytes(&[72u8; 32]);
+        let executor_addr = fund(&backend, &sk, 100);
+        let task_a = [0xA1u8; 32];
+        let task_b = [0xA2u8; 32];
+
+        // Two anchors from ONE executor, consecutive nonces, ONE block.
+        // Distinct task ids, so rules (i)/(j) are not the subject here.
+        let tx1 = valid_anchor_tx(&sk, 0, task_a);
+        let tx2 = valid_anchor_tx(&sk, 1, task_b);
+
+        let block = build_valid_block(&backend, vec![tx1, tx2]);
+        backend.apply_block(&block).unwrap();
+
+        assert_eq!(backend.storage.get_latest_height().unwrap(), 1);
+
+        // Both receipts anchored from one block.
+        assert!(backend.storage.has_receipt(&task_a).unwrap());
+        assert!(backend.storage.has_receipt(&task_b).unwrap());
+
+        // Anchoring consumes the nonce and moves no balance.
+        let executor = backend.storage.get_account(&executor_addr).unwrap().unwrap();
+        assert_eq!(executor.nonce, 2, "both nonces consumed in one block");
+        assert_eq!(executor.balance, 100, "anchoring moves no balance");
+
+        assert_eq!(backend.storage.get_last_included_tx_seq().unwrap(), 2);
+    }
+
     // ── Block announcement tests ────────────────────────────────────────
 
     #[test]
