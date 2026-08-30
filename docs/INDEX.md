@@ -28,6 +28,7 @@ document disagrees with one of these, this table wins.
 | Devnet topology and infrastructure | [`architecture/devnet-infrastructure.md`](architecture/devnet-infrastructure.md) | CURRENT |
 | Running a devnet locally | [`development/devnet.md`](development/devnet.md) | CURRENT |
 | Devnet operations | [`runbooks/DEVNET_V0.3_OPERATIONS.md`](runbooks/DEVNET_V0.3_OPERATIONS.md) | CURRENT |
+| How the SDK is released | [`runbooks/RELEASE.md`](runbooks/RELEASE.md) | NORMATIVE |
 | TypeScript SDK | [`../sdk/typescript/README.md`](../sdk/typescript/README.md) | CURRENT |
 
 The shipped RPC surface is **six JSON-RPC methods**. Receipt anchoring travels
