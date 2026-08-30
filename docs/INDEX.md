@@ -22,6 +22,7 @@ document disagrees with one of these, this table wins.
 | How protocol changes are proposed and accepted | [`RFC_PROCESS.md`](RFC_PROCESS.md) | NORMATIVE |
 | Which changes need an RFC | [`CONTRIBUTION_TIERS.md`](CONTRIBUTION_TIERS.md) | NORMATIVE |
 | Contribution workflow | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | NORMATIVE |
+| What counts as engineering proof | [`ENGINEERING_EVIDENCE.md`](ENGINEERING_EVIDENCE.md) | NORMATIVE |
 | Receipt anchoring: data model, crypto domains, storage | [`architecture/compute-receipts.md`](architecture/compute-receipts.md) | CURRENT |
 | Building, signing, anchoring, verifying receipts | [`development/compute-receipts.md`](development/compute-receipts.md) | CURRENT |
 | Devnet topology and infrastructure | [`architecture/devnet-infrastructure.md`](architecture/devnet-infrastructure.md) | CURRENT |
