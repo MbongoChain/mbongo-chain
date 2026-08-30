@@ -1,25 +1,48 @@
 {
   "name": "@mbongo/sdk",
   "version": "0.1.0",
+  "description": "TypeScript client for the Mbongo Chain JSON-RPC surface (RPC v0.2)",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MbongoChain/mbongo-chain.git",
+    "directory": "sdk/typescript"
+  },
+  "homepage": "https://github.com/MbongoChain/mbongo-chain#readme",
+  "bugs": {
+    "url": "https://github.com/MbongoChain/mbongo-chain/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test"
   },
-  "devDependencies": {
-    "typescript": "^5.0.0"
-  },
-  "description": "TypeScript client for the Mbongo Chain JSON-RPC surface (RPC v0.2)",
-  "files": [
-    "dist",
-    "README.md"
-  ],
   "dependencies": {
     "@noble/curves": "2.4.0",
     "@noble/hashes": "2.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
   }
 }
