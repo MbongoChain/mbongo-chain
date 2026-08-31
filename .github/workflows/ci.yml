@@ -228,3 +228,28 @@ jobs:
       - name: Packed consumer smoke
         run: npm run test:consumer
         working-directory: sdk/typescript
+
+      # The release workflow does NOT go through `npm run`: it invokes the
+      # smoke directly with `node`, so `npm_execpath` is unset and the npm CLI
+      # has to be found on disk. That difference is invisible to the step
+      # above, and it is what failed the first real tagged release
+      # (run 33349968293) after every ordinary CI run had passed.
+      #
+      # This reproduces the release shape on the runner: pack once, then
+      # consume that exact tarball through a direct `node` invocation.
+      - name: Consumer smoke, release-equivalent invocation
+        shell: bash
+        working-directory: sdk/typescript
+        run: |
+          set -euo pipefail
+          pack_dir="$RUNNER_TEMP/release-shape-pack"
+          mkdir -p "$pack_dir"
+          npm pack --pack-destination "$pack_dir" > /dev/null
+
+          count=$(find "$pack_dir" -maxdepth 1 -name '*.tgz' | wc -l)
+          [ "$count" -eq 1 ] \
+            || { echo "::error::expected exactly 1 tarball, found $count"; exit 1; }
+          tarball=$(find "$pack_dir" -maxdepth 1 -name '*.tgz')
+
+          # Direct node, exactly as the release workflow does it.
+          env -u npm_execpath node scripts/consumer-smoke.mjs --tarball "$tarball"
