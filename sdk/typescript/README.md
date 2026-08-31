@@ -4,10 +4,8 @@
 
 ## Status
 
-**Not published yet.** `@mbongo/sdk` is the intended package name, it is not
-on npm today, and the `@mbongo` scope is not yet claimed. Until the first
-release the SDK is used from the repository — see
-[Working on the SDK](#working-on-the-sdk).
+**Published.** `@mbongo/sdk` is on the public npm registry; `0.1.0` is the
+first release.
 
 **Unstable, pre-1.0.** Breaking changes are allowed until v1.0. The SDK
 carries its own version and does not track the node or protocol version.
@@ -50,13 +48,11 @@ not tested and are not claimed.
 
 ## Install
 
-After the first npm release:
-
 ```bash
 npm install @mbongo/sdk
 ```
 
-That release has not happened. Until it does, see
+To work on the SDK itself rather than consume it, see
 [Working on the SDK](#working-on-the-sdk).
 
 ## Supported methods
@@ -515,4 +511,4 @@ a throwaway project outside the repository, and imports `@mbongo/sdk` by name
 from both JavaScript and TypeScript. It runs in CI on every change, so a
 `files` or `exports` change that would make the package uninstallable fails
 there rather than after a release. It proves the artifact is installable; it
-is not publication provenance, and there is no release workflow yet.
+is not publication provenance.
