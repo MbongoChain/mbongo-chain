@@ -29,20 +29,33 @@ re-check the linked documentation before relying on it.
 | Package | `@mbongo/sdk`, version `0.1.0`, Apache-2.0, ESM only |
 | Registry | none declared; the public npm registry by default |
 | `publishConfig` | `{"access": "public"}` |
-| Git tags | `v0.2-devnet-stable`, `v0.3-devnet-stable` — devnet milestones, no SDK tags |
+| Git tags | `v0.2-devnet-stable`, `v0.3-devnet-stable` — devnet milestones; `sdk-typescript-v0.1.0` — the SDK release |
 | GitHub releases | none |
-| GitHub environments | none |
+| GitHub environments | `npm-production`, one required reviewer |
 | Repository secrets | none |
-| Release automation | none |
+| Release automation | this workflow, tag-triggered |
 
-**[external]** The package is **not published**. `@mbongo/sdk` and
-`/-/org/mbongo` both return 404 from the registry, and the npmjs.com org page
-returns 403.
+**[external]** `@mbongo/sdk@0.1.0` is **published** on the public registry.
+Scope control is `PROVEN`: the authenticated npm identity is an owner of the
+`@mbongo` organisation, established from `npm org ls` rather than inferred
+from a 404.
 
-Those are **observations, not proof**. A 404 shows a name is unregistered. It
-does not show that the scope is available, claimable, or controlled by anyone
-in particular. Scope control is `NOT VERIFIED` and can only become `PROVEN` by
-positive authenticated evidence from npm.
+The published bytes were verified independently of the publishing CLI —
+`dist.integrity` compared against the digest recorded by the release run, and
+the registry-served tarball re-hashed to the same SHA-256. A publish command's
+exit code is not the authority; the registry is.
+
+**[external]** A trusted publisher is configured on the package for GitHub
+Actions: repository `MbongoChain/mbongo-chain`, workflow
+`release-sdk-typescript.yml`, environment `npm-production`, with **`npm
+publish` as the only granted permission**. That configuration is **not
+machine-readable**: npm exposes no CLI command and no documented API for it,
+so it is recorded here from the npmjs.com interface and cannot be
+re-verified programmatically.
+
+Package publishing access requires two-factor authentication and disallows
+bypass-2FA tokens. No long-lived npm credential exists, in this repository or
+anywhere in the release path.
 
 ---
 
@@ -88,9 +101,22 @@ reverse.
 **[decision]** Release tags are `sdk-typescript-v<semver>`, for example
 `sdk-typescript-v0.1.0`.
 
-**[repo]** No tag matching `sdk-typescript-v*` exists, so the namespace is
-free. The two existing tags use a `v<version>-devnet-stable` form for devnet
-milestones and are not affected.
+**[repo]** `sdk-typescript-v0.1.0` exists and names the release commit. The
+two other tags use a `v<version>-devnet-stable` form for devnet milestones and
+are not affected.
+
+**Immutability.** A release tag becomes **immutable the moment its npm version
+exists**, and must never afterwards be moved, deleted or recreated: the
+published package is permanent, so a moved tag would make the repository
+disagree with the registry about what shipped. `sdk-typescript-v0.1.0` is past
+that line.
+
+Before publication the tag names nothing durable, so correcting it is
+legitimate — and was done once: an earlier `sdk-typescript-v0.1.0` pointed at a
+commit whose release run failed before publishing, and it was deleted
+explicitly and recreated on the fixed commit. What made that safe was the
+absence of a published version, not the absence of objections. Check the
+registry before touching a release tag, never the other way round.
 
 The prefix matters because this is a monorepo: an unprefixed `v0.1.0` would be
 ambiguous against node and protocol milestones.
@@ -339,8 +365,9 @@ mechanism, and **blocked by an external prerequisite** for the first release.
   package.
 
 **The bootstrap problem.** Trusted publishing is configured *on the package*.
-The package does not exist. The npm documentation gives no procedure for
-configuring a trusted publisher for a package that has never been published.
+At the time of the first release the package did not exist, and the npm
+documentation gives no procedure for configuring a trusted publisher for a
+package that has never been published.
 
 **[decision]** Therefore:
 
@@ -356,6 +383,21 @@ configuring a trusted publisher for a package that has never been published.
 This is deliberately not automated away. It means **no long-lived npm
 credential ever needs to exist in this repository**, at any point, including
 the bootstrap.
+
+**Where this stands.** Steps 1 and 2 are done. `0.1.0` was published by hand
+under the bootstrap path, and the trusted publisher is configured. Step 3 is
+**configured but never exercised**: no release has yet published over OIDC, so
+the automated path is ready rather than demonstrated. The first tag that runs
+it will be its first proof.
+
+Two consequences follow, and neither is a defect:
+
+- **`0.1.0` carries no provenance.** It was published outside trusted
+  publishing, so no attestation exists and the attestations endpoint returns
+  404 for that version. This is expected, and it is not retrofittable —
+  provenance attaches at publication.
+- **Future releases through the workflow are expected to carry provenance
+  automatically**, without `--provenance`, per the platform note above.
 
 **[decision] Token fallback: none by default.** No `NPM_TOKEN` secret is to be
 created or stored. If trusted publishing is ever unavailable, the recovery
