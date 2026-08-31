@@ -51,6 +51,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 
+import { resolveNpmCli } from "./npm-cli.mjs";
+
 const PKG_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REPO_ROOT = path.resolve(PKG_DIR, "..", "..");
 const EXPECTED_NAME = "@mbongo/sdk";
@@ -103,19 +105,12 @@ function check(label, ok, detail) {
  * `process.execPath`. Spawning `npm.cmd` directly is refused by recent Node
  * versions unless a shell is used, and a shell is exactly what this test is
  * trying to avoid.
+ *
+ * The candidate layouts live in `npm-cli.mjs` so they can be tested against a
+ * layout other than the one this process happens to run under.
  */
 function npmCli() {
-  const fromEnv = process.env.npm_execpath;
-  if (fromEnv && fromEnv.endsWith(".js") && existsSync(fromEnv)) return fromEnv;
-  const bundled = path.join(
-    path.dirname(process.execPath),
-    "node_modules",
-    "npm",
-    "bin",
-    "npm-cli.js",
-  );
-  if (existsSync(bundled)) return bundled;
-  throw new Error("could not locate the npm CLI entry point");
+  return resolveNpmCli();
 }
 
 function run(args, cwd) {
