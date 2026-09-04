@@ -28,7 +28,9 @@ Before contributing, ensure you have:
   https://rustup.rs  
 - **Cargo** (installed with Rust)  
 - **Git**  
-- **Node.js 18+** (for SDK + tooling)  
+- **Node.js `>=20.19.0`** (the TypeScript SDK's supported floor, set by its  
+  `@noble` runtime dependencies; the other Node projects here ask for less,  
+  so one runtime at this version covers them all)  
 - **pnpm or npm**  
 - **Docker** (optional: infra / testnet tooling)
 

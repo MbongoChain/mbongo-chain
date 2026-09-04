@@ -28,10 +28,12 @@ work. That distinction is load-bearing and is spelled out under
 
 ## Requirements
 
-- **Node.js `>=20.19.0`.** This is the floor the runtime dependencies
-  declare — `@noble/hashes` and `@noble/curves` both require it. It has not
-  itself been exercised: CI runs Node 24.x, so 20.19 is the declared minimum
-  rather than a tested one.
+- **Node.js `>=20.19.0`.** This is the supported runtime floor, and it comes
+  from the shipped dependencies: `@noble/hashes` and `@noble/curves` both
+  declare it. CI exercises the floor itself — the SDK job runs on exactly
+  `20.19.0` as well as on the current Node 24 line, so the published minimum
+  is a tested one. It is a support boundary rather than a claim about the
+  first version the code can execute on.
 - **ESM only.** The package ships `"type": "module"` with a single `.` export
   and no `require` condition, so `require("@mbongo/sdk")` fails with
   `ERR_PACKAGE_PATH_NOT_EXPORTED` even on Node versions that can otherwise
