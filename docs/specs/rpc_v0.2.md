@@ -28,15 +28,32 @@ names — returns `-32601`.
 
 ### Byte encoding in JSON
 
-Byte arrays cross the wire as `0x`-prefixed lowercase hex strings, not as
-number arrays:
+A byte field's JSON form follows from its Rust type, not from one rule for all
+of them. Hex appears exactly where a custom serializer exists. A plain
+`[u8; N]` or `Vec<u8>` carries no annotation and falls through to serde's
+default sequence handling, which emits an array of numbers:
 
 | Type | JSON form | Source |
 |---|---|---|
 | `Address` (32 bytes) | `"0x" + 64 hex` | `impl Display for Address` |
 | `Hash` (32 bytes) | `"0x" + 64 hex` | `impl Display for Hash` |
 | `signature` (64 bytes) | `"0x" + 128 hex` | `serde_arr64` |
+| unannotated `[u8; N]` / `Vec<u8>` | array of numbers, each `0..=255` | serde default |
 | `u128` / `u64` | JSON number | serde default |
+
+The unannotated row is reached in one place: the `Receipt` nested in an
+`AnchorReceipt` payload (§4.1). Its `task_id`, `input_commitment`,
+`output_commitment` and `metadata` each cross the wire as a JSON array of
+byte values, **not** as a hex string, while its `executor` (an `Address`) and
+`signature` are hex like any other. Every other byte field this document names
+— `sender`, `receiver`, `signature`, and the `Hash` fields of a block header —
+is hex, per the table above. The exact object is pinned by
+`test-vectors/transaction/anchor-receipt-v1.json`.
+
+That is a statement about the JSON representation alone. It says nothing about
+SCALE, which is bytes and never JSON, and nothing about the signing preimages
+of §4.3, which are also bytes: a receipt's signature covers the raw 32-byte
+hash, never any JSON rendering of it.
 
 This matters for clients: a transaction can be **submitted** as JSON without
 any SCALE implementation. SCALE is required only to compute the bytes that
