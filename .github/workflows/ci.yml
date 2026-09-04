@@ -183,25 +183,62 @@ jobs:
   # safety guard, which exists to stop a silently rounded transaction amount
   # from ever reaching the wire.
   sdk-typescript:
-    name: TypeScript SDK
+    name: TypeScript SDK (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
     # Install, typecheck and a stdlib test runner over one small package.
     timeout-minutes: 10
+
+    strategy:
+      # Never cancel one runtime because the other failed: when a failure is
+      # specific to a Node version, which version it was is the whole answer.
+      fail-fast: false
+      matrix:
+        node-version:
+          # The exact floor `sdk/typescript/package.json` declares, which is
+          # in turn the floor `@noble/hashes` and `@noble/curves` declare.
+          # Pinned to the exact patch deliberately: '20', '20.x' and '20.19'
+          # all drift to a newer release, which would leave the published
+          # minimum itself untested — the gap this matrix exists to close.
+          - '20.19.0'
+          # The current line, as a bare major so CI keeps following Node
+          # forward without a repository change.
+          - '24'
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Pinned to a major version so a new Node release cannot change CI
-      # behaviour without a repository change. Node 20+ is required for the
-      # built-in test runner the suite uses; no test framework is installed.
-      - name: Install Node 24
+      # Node 20+ is required for the built-in test runner the suite uses; no
+      # test framework is installed.
+      #
+      # The release workflow deliberately does not share this matrix. npm
+      # trusted publishing requires Node >= 22.14.0, so the runtime that
+      # publishes is a separate contract from the compatibility floor tested
+      # here, and lowering it would break publication.
+      - name: Install Node ${{ matrix.node-version }}
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: ${{ matrix.node-version }}
 
+      # Proving the floor is the point of this matrix, so the runtime is
+      # asserted rather than assumed. Printing the version alone would leave
+      # a silent resolution change green while testing a version nobody
+      # declared.
       - name: Report Node version
-        run: node --version
+        run: |
+          node --version
+          node -e '
+            const want = process.argv[1];
+            const got = process.versions.node;
+            const ok = want.includes(".")
+              ? got === want
+              : got.split(".")[0] === want;
+            if (!ok) {
+              console.error("requested Node " + want + " but running " + got);
+              process.exit(1);
+            }
+            console.log("runtime confirmed: " + got + " (requested " + want + ")");
+          ' '${{ matrix.node-version }}'
         working-directory: sdk/typescript
 
       # `npm ci` rather than `npm install`: it honours the lockfile exactly
