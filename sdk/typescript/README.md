@@ -38,10 +38,14 @@ work. That distinction is load-bearing and is spelled out under
   and no `require` condition, so `require("@mbongo/sdk")` fails with
   `ERR_PACKAGE_PATH_NOT_EXPORTED` even on Node versions that can otherwise
   require an ESM module.
-- **TypeScript consumers need an ambient `fetch` type** in their compilation
-  environment, because `MbongoClientOptions.fetch` is typed as
-  `typeof globalThis.fetch`. A project that leaves `lib` at its default for
-  the target, or that installs `@types/node`, already has one.
+- **No ambient `fetch` type is required to compile against this package.**
+  `MbongoClientOptions.fetch` is typed by the SDK's own `MbongoFetch`, so the
+  declarations need neither a DOM lib nor `@types/node`: `lib: ["ES2022"]`
+  with `types: []` is enough. The platform `globalThis.fetch` still satisfies
+  the contract, and any implementation matching `MbongoFetch` can be injected.
+  That is a statement about typing only — the SDK does not polyfill `fetch`,
+  so with none injected a real global `fetch` must exist at runtime, which
+  Node `>=20.19.0` provides.
 
 Two consumer environments are proven, both exercised in CI against the packed
 tarball: a Node ESM import, and TypeScript with `module` and
