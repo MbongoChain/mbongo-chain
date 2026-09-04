@@ -49,13 +49,59 @@ export const RPC_METHODS = {
   getBlockByHeight: "get_block_by_height",
 } as const;
 
+/**
+ * The response fields this client reads.
+ *
+ * Deliberately not the whole `Response` interface. Naming `Response` would
+ * make a consumer's compilation depend on an ambient web-platform declaration
+ * — a DOM lib, or `@types/node` — merely to describe a type this package
+ * owns. The two members below are exactly the ones {@link MbongoClient}
+ * touches.
+ */
+export interface MbongoFetchResponse {
+  readonly status: number;
+  text(): Promise<string>;
+}
+
+/**
+ * The request options this client sends.
+ *
+ * Exactly the three fields the RPC call sets. `signal`, `credentials` and the
+ * rest of `RequestInit` are absent because this client never sets them, and
+ * declaring them would reintroduce the ambient dependency these types exist
+ * to remove.
+ */
+export interface MbongoFetchInit {
+  method: string;
+  headers: Record<string, string>;
+  body: string;
+}
+
+/**
+ * The `fetch` contract {@link MbongoClient} requires.
+ *
+ * The platform `fetch` satisfies it structurally, so passing
+ * `globalThis.fetch` stays valid. It is deliberately narrower than the
+ * platform signature: `input` is a `string` because the client only ever
+ * sends its own RPC URL, and `init` is required because the client always
+ * supplies it — an optional one would force every custom implementation to
+ * guard a field that is never missing.
+ *
+ * Being narrower is a real, accepted trade: code that reads the option back
+ * out and requires the full `typeof globalThis.fetch` no longer compiles.
+ */
+export type MbongoFetch = (
+  input: string,
+  init: MbongoFetchInit,
+) => Promise<MbongoFetchResponse>;
+
 /** Client options. */
 export interface MbongoClientOptions {
   /**
    * `fetch` implementation to use. Defaults to the global one. Provided so
    * tests can observe the exact request body without a network.
    */
-  fetch?: typeof globalThis.fetch;
+  fetch?: MbongoFetch;
 }
 
 // ── Response normalisation ───────────────────────────────────────────────
@@ -182,13 +228,20 @@ function normalizeTransactionInput(tx: TransactionInput): Transaction {
 
 export class MbongoClient {
   private requestId = 0;
-  private readonly fetchImpl: typeof globalThis.fetch;
+  private readonly fetchImpl: MbongoFetch;
 
   constructor(
     private readonly rpcUrl: string,
     options: MbongoClientOptions = {},
   ) {
-    this.fetchImpl = options.fetch ?? globalThis.fetch;
+    // The same property off the same object as before; only the typing
+    // differs. Reaching `globalThis.fetch` by name would need the ambient
+    // declaration this package no longer depends on, so the global is read
+    // through the contract it has to satisfy anyway. When the runtime has no
+    // `fetch`, this is `undefined` and the first call throws — exactly as it
+    // did before.
+    this.fetchImpl =
+      options.fetch ?? (globalThis as unknown as { fetch: MbongoFetch }).fetch;
   }
 
   /** Health check. Resolves to the string `"pong"`. */
@@ -285,7 +338,7 @@ export class MbongoClient {
       request.params = params;
     }
 
-    let response: Response;
+    let response: MbongoFetchResponse;
     try {
       response = await this.fetchImpl(this.rpcUrl, {
         method: "POST",

@@ -223,7 +223,14 @@ const CONSUMER_TS = [
   '  signAnchorReceiptTransaction,',
   '  receiptsInBlock,',
   '} from "@mbongo/sdk";',
-  'import type { Receipt, Block, Transaction, TransactionInput, WireReceipt } from "@mbongo/sdk";',
+  'import type {',
+  '  Receipt,',
+  '  Block,',
+  '  MbongoClientOptions,',
+  '  Transaction,',
+  '  TransactionInput,',
+  '  WireReceipt,',
+  '} from "@mbongo/sdk";',
   '',
   '// Values and types both have to resolve from the installed declarations.',
   'export const client: MbongoClient = new MbongoClient("http://127.0.0.1:1/");',
@@ -266,6 +273,11 @@ const CONSUMER_TS = [
   'export const submitLegacy = () => client.submitTransaction(legacyInput);',
   'export const submitExact = () => client.submitTransaction(exactInput);',
   '',
+  '// The SDK owns its fetch types, but the platform `fetch` must still',
+  '// satisfy them. This is the assignment that would break if the structural',
+  '// contract were ever narrowed past what a real fetch provides.',
+  'export const nativeOptions: MbongoClientOptions = { fetch: globalThis.fetch };',
+  '',
 ].join("\n");
 
 const CONSUMER_TSCONFIG = {
@@ -274,11 +286,10 @@ const CONSUMER_TSCONFIG = {
     // map. If a consumer typechecks here, the SDK does not need to migrate
     // its own moduleResolution.
     //
-    // `lib` is left unset on purpose, so TypeScript picks its default for the
-    // target the way an ordinary consumer project does. Pinning it to
-    // ["ES2022"] would drop the ambient `fetch` type that
-    // `MbongoClientOptions.fetch` refers to, and the failure would be about
-    // this test's configuration rather than about the package.
+    // `lib` is left unset here so TypeScript picks its default for the target,
+    // the way an ordinary consumer project does. The stricter environment —
+    // ES2022 with no DOM and no `@types` — is covered separately by
+    // NODOM_TSCONFIG below, which is where the fetch typing is proved.
     target: "ES2022",
     module: "NodeNext",
     moduleResolution: "NodeNext",
@@ -290,6 +301,74 @@ const CONSUMER_TSCONFIG = {
   },
   include: ["smoke.ts"],
 };
+
+/**
+ * A consumer in the environment #107 was about: `lib: ["ES2022"]`, no DOM and
+ * no `@types` at all. Before the SDK owned its fetch types this failed with
+ * TS7017, because the declarations named `typeof globalThis.fetch`.
+ *
+ * It writes its own fetch using only SDK-owned types, which is the point: a
+ * consumer should be able to describe a fetch implementation without
+ * borrowing a web-platform declaration from somewhere.
+ */
+const CONSUMER_TS_NODOM = [
+  'import { MbongoClient } from "@mbongo/sdk";',
+  'import type {',
+  '  MbongoClientOptions,',
+  '  MbongoFetch,',
+  '  MbongoFetchInit,',
+  '  MbongoFetchResponse,',
+  '} from "@mbongo/sdk";',
+  '',
+  '// Not one ambient web-platform name appears below.',
+  'const mine: MbongoFetch = async (url: string, init: MbongoFetchInit) => {',
+  '  const method: string = init.method;',
+  '  const body: string = init.body;',
+  '  const contentType: string = init.headers["Content-Type"];',
+  '  const response: MbongoFetchResponse = {',
+  '    status: url.length + method.length + body.length + contentType.length,',
+  '    text: async () => "{}",',
+  '  };',
+  '  return response;',
+  '};',
+  '',
+  'const options: MbongoClientOptions = { fetch: mine };',
+  'export const client = new MbongoClient("http://127.0.0.1:1/", options);',
+  'export const height = () => client.getBlockHeight();',
+  '',
+].join("\n");
+
+/**
+ * The control for the check above.
+ *
+ * A passing no-DOM check proves nothing on its own: it would also pass if the
+ * configuration quietly stopped excluding DOM. This declaration is the exact
+ * construct #107 was about, compiled the same way, and it has to fail.
+ */
+const CONTROL_TS = [
+  'export interface Control {',
+  '  fetch?: typeof globalThis.fetch;',
+  '}',
+  '',
+].join("\n");
+
+/** The no-DOM, no-`@types` environment, pointed at one file. */
+const nodomTsconfig = (entry) => ({
+  compilerOptions: {
+    target: "ES2022",
+    module: "NodeNext",
+    moduleResolution: "NodeNext",
+    strict: true,
+    noEmit: true,
+    skipLibCheck: false,
+    // The whole point: the default for ES2022 would pull in DOM, and any
+    // installed `@types` package could supply an ambient `fetch` too.
+    lib: ["ES2022"],
+    types: [],
+    typeRoots: [],
+  },
+  include: [entry],
+});
 
 let suppliedTarball;
 try {
@@ -496,6 +575,39 @@ try {
     "TypeScript consumer typechecks against the installed declarations (NodeNext)",
     ts.status === 0,
     firstLine(ts.stdout) || firstLine(ts.stderr),
+  );
+
+  // --- the declarations must not require an ambient fetch (#107) ---------
+  writeFileSync(path.join(consumerDir, "nodom.ts"), CONSUMER_TS_NODOM);
+  writeFileSync(
+    path.join(consumerDir, "tsconfig.nodom.json"),
+    JSON.stringify(nodomTsconfig("nodom.ts"), null, 2) + "\n",
+  );
+  const nodom = run(
+    [tsc, "--project", path.join(consumerDir, "tsconfig.nodom.json")],
+    consumerDir,
+  );
+  check(
+    "TypeScript consumer typechecks with lib ES2022, no DOM and no @types",
+    nodom.status === 0,
+    firstLine(nodom.stdout) || firstLine(nodom.stderr),
+  );
+
+  // Without this the check above could pass because the configuration stopped
+  // excluding DOM rather than because the declarations stopped needing it.
+  writeFileSync(path.join(consumerDir, "control.ts"), CONTROL_TS);
+  writeFileSync(
+    path.join(consumerDir, "tsconfig.control.json"),
+    JSON.stringify(nodomTsconfig("control.ts"), null, 2) + "\n",
+  );
+  const control = run(
+    [tsc, "--project", path.join(consumerDir, "tsconfig.control.json")],
+    consumerDir,
+  );
+  check(
+    "control: `typeof globalThis.fetch` still fails in that same environment",
+    control.status !== 0 && /TS7017/.test(control.stdout + control.stderr),
+    firstLine(control.stdout) || firstLine(control.stderr),
   );
 
   // --- nothing leaked into the repository -------------------------------
