@@ -56,6 +56,15 @@ jobs:
       - name: Mbongo Compute Conformance
         run: cargo run -p mbongo-compute --bin compute_conformance
 
+      # Mbongo Compute Provider Policy (provider-policy-v1): the reference
+      # evaluator of docs/architecture/compute-provider-capability-policy.md,
+      # driven through its decision matrix: executor gate first, claims are
+      # not proofs, unknown fails closed, composition never weakens. Pure and
+      # deterministic; no clock, no network. Also part of the workspace test
+      # run above; named here so the gate is visible on its own.
+      - name: Mbongo Compute Provider Policy
+        run: cargo test -p mbongo-compute --test provider_policy --locked
+
   # ---------------------------------------------------------
   # Mbongo Compute v0.4 Vertical (run on PR + push)
   # ---------------------------------------------------------
