@@ -30,6 +30,7 @@ document disagrees with one of these, this table wins.
 | Where customer and model data may exist across Compute; the public-chain / control-plane / private-data-plane boundary | [`architecture/compute-privacy-data-plane.md`](architecture/compute-privacy-data-plane.md) | NORMATIVE (architecture, non-consensus — RFC 0005 wins on protocol) |
 | How a client, the control plane, the private data plane and a worker hand private inputs and results to one another | [`architecture/compute-private-data-plane-interface.md`](architecture/compute-private-data-plane-interface.md) | NORMATIVE (architecture, non-consensus — RFC 0005 wins on protocol) |
 | What the control plane may and must do between an accepted `ComputeTask` and an anchored receipt; leases, attempts, retry, duplicate handling, receipt relay | [`architecture/compute-control-plane-worker-interface.md`](architecture/compute-control-plane-worker-interface.md) | NORMATIVE (architecture, non-consensus — RFC 0005 wins on protocol) |
+| Whether a provider's worker is eligible to execute a task: provider / worker / executor identities, capability advertisements as claims, evidence levels, policy requirements and composition, the PUBLIC / VERIFIED / CONFIDENTIAL / SOVEREIGN profiles, the deterministic eligibility decision, the handoff to confidential compute (`provider-policy-v1`) | [`architecture/compute-provider-capability-policy.md`](architecture/compute-provider-capability-policy.md) | NORMATIVE (architecture, non-consensus — RFC 0005 wins on protocol; reference evaluator in `crates/mbongo-compute/src/policy.rs`) |
 | Building, signing, anchoring, verifying receipts | [`development/compute-receipts.md`](development/compute-receipts.md) | CURRENT |
 | The reference compute worker, control plane and private data plane: what runs, what is public, what is private, crash and retry | [`development/reference-worker.md`](development/reference-worker.md) | CURRENT (implementation of E and F; not protocol authority) |
 | What every compute implementation must satisfy — the named conformance suite (`compute-conformance-v1`), its cases, how a future worker or data plane runs it | [`development/compute-conformance.md`](development/compute-conformance.md) | CURRENT (tests the architecture contracts; not protocol authority) |
@@ -205,6 +206,8 @@ authoritative; the authority map above is the only source of that.
 │   └── Private data plane handoff contract: references, capabilities, fetch, result, failure windows
 ├── architecture/compute-control-plane-worker-interface.md [L2] [PRIMARY]
 │   └── Control plane and worker coordination contract: discovery, leases, attempts, lifecycle, retry, receipt relay
+├── architecture/compute-provider-capability-policy.md [L2] [PRIMARY]
+│   └── Provider capability and policy model: claims vs evidence, policy composition, profiles, eligibility decision, K handoff
 ├── compute_engine_overview.md [L3]
 │   └── GPU compute execution runtime
 ├── mempool_overview.md [L3]

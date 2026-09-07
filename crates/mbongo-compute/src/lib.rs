@@ -61,4 +61,5 @@ pub mod control_plane;
 pub mod data_plane;
 pub mod execution;
 pub mod identity;
+pub mod policy;
 pub mod worker;
