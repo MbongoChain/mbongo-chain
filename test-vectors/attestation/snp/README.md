@@ -17,7 +17,7 @@ live SEV-SNP guest answering a fresh challenge can (see
 |---|---|---|---|
 | `milan-go-sev-guest/attestation-report.bin` | 1184 | `377e6241d3b373ab1df80c0f96978594e7e21f4797dd6ea95e2957e1c1e26060` | `google/go-sev-guest` `verify/testdata/attestation.bin`, commit `609f29a2` (2022-09-23), Apache-2.0 |
 | `milan-go-sev-guest/vcek.der` | 1360 | `0d057f9b6e29a69eda9c0154b259567d291c1c08d73a11e9d31ace07c435b6d8` | `google/go-sev-guest` `verify/testdata/vcek.testcer`, same commit — the VCEK of the chip that signed the report above |
-| `vcek-milan-other-chip-virtee.der` | 1289 | `3bbfb6ee259f75a95d13168cfdf2e034181bb93c7c016825731cbe8ea16c95e1` | `virtee/sev` `tests/certs_data/vcek_milan.der`, Apache-2.0 — a VCEK of a **different** Milan chip; chains to the same AMD root but does not sign the report above |
+| `vcek-milan-other-chip-virtee.der` | 1360 | `3bbfb6ee259f75a95d13168cfdf2e034181bb93c7c016825731cbe8ea16c95e1` | `virtee/sev` `tests/certs_data/vcek_milan.der`, Apache-2.0 — a VCEK of a **different** Milan chip; chains to the same AMD root but does not sign the report above |
 
 Facts about the report, as parsed by the official `sev` crate (8.0.0): version 2,
 VMPL 0, guest policy `0xb0000` (**debug allowed**, migration not allowed,
