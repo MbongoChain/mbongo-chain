@@ -26,6 +26,11 @@ parity-scale-codec = { workspace = true }
 # Cryptography
 ed25519-dalek = { workspace = true }
 blake3 = { workspace = true }
+# Confidential authorization (Workstream K): content-key sealing and key
+# wrapping to an attested environment key. Both crates are already in the
+# lock through the libp2p noise stack; no new crate enters the workspace.
+chacha20poly1305 = "0.10"
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
 
 # Error handling
 thiserror = { workspace = true }
@@ -48,6 +53,10 @@ path = "src/bin/compute_harness.rs"
 [[bin]]
 name = "compute_conformance"
 path = "src/bin/compute_conformance.rs"
+
+[[bin]]
+name = "confidential_authorization"
+path = "src/bin/confidential_authorization.rs"
 
 [dev-dependencies]
 criterion = { workspace = true }

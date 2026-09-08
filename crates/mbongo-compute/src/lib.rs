@@ -56,6 +56,7 @@
 
 pub mod chain;
 pub mod clock;
+pub mod confidential;
 pub mod conformance;
 pub mod control_plane;
 pub mod data_plane;

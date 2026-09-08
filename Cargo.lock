@@ -2847,6 +2847,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "blake3",
+ "chacha20poly1305",
  "criterion",
  "ed25519-dalek",
  "env_logger",
@@ -2860,6 +2861,7 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
+ "x25519-dalek",
 ]
 
 [[package]]

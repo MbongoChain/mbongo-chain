@@ -116,7 +116,7 @@ Logs carry identifiers and outcomes: task ids, executor addresses, instance, ses
 
 ## Confidential-compute extension point
 
-`execution::ConfidentialExtension` names the one step a confidential profile changes — the content key released only to an attested environment, the output encrypted inside it — and is not implemented. Nothing about the task, the receipt, the capability or the lease would change. The first worker is ordinary execution, and TEE is not required.
+`execution::ConfidentialExtension` names the one step a confidential profile changes — the content key released only to an attested environment, the output encrypted inside it. Workstream K implements that step beside the worker, in `confidential/` ([`compute-confidential-attestation-key-release.md`](../architecture/compute-confidential-attestation-key-release.md)): a client seals the input under a content key and registers the object as confidential; the control plane's release authority issues a challenge, verifies attestation evidence, runs the provider-policy evaluator and mints a single-use release; only then does `authorize_fetch_confidential` issue the fetch capability and the key service release the content key wrapped to the environment key the evidence bound. The ordinary `authorize_fetch` refuses a confidential object. The attestation path is **REFERENCE_ATTESTED — test only, not hardware attestation**; the worker's own `run_once` path is the ordinary profile, unchanged, and TEE is not required.
 
 ## Conformance
 
