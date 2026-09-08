@@ -63,6 +63,7 @@ use crate::policy::{
 };
 
 pub mod reference;
+pub mod snp;
 pub mod suite;
 
 /// The contract version of everything in this module (architecture /
@@ -419,6 +420,22 @@ pub enum VerifyError {
     SecurityVersionTooLow,
     #[error("environment has debug enabled")]
     DebugEnabled,
+    /// Hardware adapters (K-HW): the certificate or collateral the evidence
+    /// chains through is outside its validity window.
+    #[error("collateral expired or not yet valid")]
+    ExpiredCollateral,
+    /// Hardware adapters: a platform state the policy refuses (migration
+    /// allowed, SMT enabled, VMPL too high, report version too old).
+    #[error("platform state not acceptable under policy")]
+    PlatformStateUnacceptable,
+    /// Hardware adapters: the chip or platform identity is on the
+    /// deployment revocation list.
+    #[error("platform revoked")]
+    RevokedPlatform,
+    /// Hardware adapters that depend on a vendor service: it did not answer.
+    /// The reference and SNP adapters never raise it.
+    #[error("vendor verification service unavailable")]
+    VendorServiceUnavailable,
 }
 
 /// The vendor-neutral verifier boundary (§7). A future hardware adapter
