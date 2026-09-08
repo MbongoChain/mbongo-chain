@@ -77,6 +77,16 @@ jobs:
       - name: Mbongo Compute Confidential Authorization
         run: cargo run -p mbongo-compute --bin confidential_authorization --locked
 
+      # Mbongo Compute Hardware Attestation (hardware-attestation-v1,
+      # snp-adapter-v1): the unit portion, on captured real AMD Milan
+      # evidence (test-vectors/attestation/snp): real chain to the pinned
+      # AMD root, signature tamper rejection, REPORT_DATA binding, platform
+      # and TCB policy, normalization, negative controls. The live-guest
+      # test is #[ignore]d here and reported as ignored, never as passed:
+      # GitHub-hosted runners have no SEV-SNP guest. See the gated job below.
+      - name: Mbongo Compute Hardware Attestation
+        run: cargo test -p mbongo-compute --test hardware_attestation --locked
+
   # ---------------------------------------------------------
   # Mbongo Compute v0.4 Vertical (run on PR + push)
   # ---------------------------------------------------------
@@ -124,6 +134,41 @@ jobs:
 
       - name: Run the Mbongo Compute v0.4 Vertical Harness
         run: cargo run -p mbongo-node --bin compute_vertical --locked
+
+  # ---------------------------------------------------------
+  # Mbongo Compute Hardware Attestation (live, AMD SEV-SNP)
+  # ---------------------------------------------------------
+  # Runs only when the maintainer has registered a self-hosted runner
+  # inside an SEV-SNP guest (labels: self-hosted, sev-snp) and set the
+  # repository variable MBONGO_SNP_LIVE_RUNNER to 'true'. Otherwise the job
+  # is SKIPPED, which is visible as such and is never a pass: a skipped
+  # hardware job is SKIPPED_NO_HARDWARE, not PASS_HARDWARE. The run prints
+  # RESULT=PASS_HARDWARE only after a real report, bound to a fresh
+  # challenge, verified against the pinned AMD root, satisfies the strict
+  # policy the runner's environment supplies through MBONGO_SNP_MEASUREMENT
+  # and MBONGO_SNP_MIN_TCB, and the content key unwraps inside the guest.
+  hardware-attestation-live:
+    name: Mbongo Compute Hardware Attestation (live, SEV-SNP)
+    if: ${{ vars.MBONGO_SNP_LIVE_RUNNER == 'true' }}
+    runs-on: [self-hosted, sev-snp]
+    timeout-minutes: 30
+    needs: checks
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.94.0
+        uses: dtolnay/rust-toolchain@1.94.0
+
+      - name: Live SEV-SNP end-to-end
+        run: |
+          cargo run -p mbongo-compute --bin snp_live_test --locked -- \n            --product "${MBONGO_SNP_PRODUCT:-milan}" \n            --measurement "$MBONGO_SNP_MEASUREMENT" \n            --min-tcb "$MBONGO_SNP_MIN_TCB" \n            --out "$RUNNER_TEMP/snp-live-result.txt"
+          MBONGO_SNP_LIVE_RESULT="$RUNNER_TEMP/snp-live-result.txt" \n            cargo test -p mbongo-compute --test hardware_attestation --locked -- --ignored
+        env:
+          MBONGO_SNP_PRODUCT: ${{ vars.MBONGO_SNP_PRODUCT }}
+          MBONGO_SNP_MEASUREMENT: ${{ vars.MBONGO_SNP_MEASUREMENT }}
+          MBONGO_SNP_MIN_TCB: ${{ vars.MBONGO_SNP_MIN_TCB }}
 
   devnet:
     name: Devnet Convergence Harness

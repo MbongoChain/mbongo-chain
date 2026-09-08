@@ -31,6 +31,12 @@ blake3 = { workspace = true }
 # lock through the libp2p noise stack; no new crate enters the workspace.
 chacha20poly1305 = "0.10"
 x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+# Hardware attestation adapter (K-HW): the official VirTEE/AMD SEV-SNP
+# library, pure-Rust crypto (no OpenSSL), report parsing and the pinned AMD
+# ARK/ASK roots. The guest ioctl path compiles only on Linux.
+sev = { version = "8.0.0", default-features = false, features = ["snp", "crypto_nossl"] }
+x509-cert = "0.2.5"
+sha2 = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
