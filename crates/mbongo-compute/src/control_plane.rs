@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::chain::{scan_receipts, scan_tasks, ChainClient, ChainError};
 use crate::clock::Clock;
+use crate::confidential::{ReleaseAuthority, ReleaseError, ReleaseGrant, ReleaseId};
 use crate::data_plane::{
     Capability, CapabilityRequest, DataPlaneError, InMemoryDataPlane, LocalKey, Operation,
 };
@@ -197,6 +198,11 @@ pub struct TaskRecord {
     pub capabilities: Vec<(CapabilityId, AttemptId)>,
     /// The input object the client registered for this task.
     pub input_object: Option<ObjectId>,
+    /// Whether that object is confidential (K): its fetch capability is
+    /// issued only against a redeemed release authorization, never by the
+    /// ordinary path.
+    #[serde(default)]
+    pub confidential_input: bool,
     /// Last reported failure.
     pub last_failure: Option<FailureClass>,
     /// Submitted anchoring transaction, for §11.2 lookup.
@@ -256,6 +262,13 @@ pub enum ControlPlaneError {
     /// The client registered no input object for the task.
     #[error("no input reference registered")]
     NoInputReference,
+    /// The input is confidential: the ordinary fetch path never serves it
+    /// (K21). Obtain a release authorization first.
+    #[error("confidential input: release authorization required")]
+    ConfidentialReleaseRequired,
+    /// The release authority refused.
+    #[error("release: {0}")]
+    Release(#[from] ReleaseError),
     /// The data plane refused.
     #[error("data plane: {0}")]
     DataPlane(#[from] DataPlaneError),
@@ -385,6 +398,7 @@ impl ControlPlane {
                     attempt_count: 0,
                     capabilities: Vec::new(),
                     input_object: None,
+                    confidential_input: false,
                     last_failure: None,
                     submitted_tx: None,
                     completed_height: None,
@@ -417,6 +431,21 @@ impl ControlPlane {
     ) -> Result<(), ControlPlaneError> {
         let rec = self.tasks.get_mut(&task_id).ok_or(ControlPlaneError::UnknownTask)?;
         rec.input_object = Some(object);
+        Ok(())
+    }
+
+    /// As [`Self::register_input`], for a **confidential** object: the
+    /// ordinary fetch path refuses it, and its capability is issued only
+    /// through [`Self::authorize_fetch_confidential`] against a redeemed
+    /// release authorization (K18, K21, K25).
+    pub fn register_confidential_input(
+        &mut self,
+        task_id: [u8; 32],
+        object: ObjectId,
+    ) -> Result<(), ControlPlaneError> {
+        let rec = self.tasks.get_mut(&task_id).ok_or(ControlPlaneError::UnknownTask)?;
+        rec.input_object = Some(object);
+        rec.confidential_input = true;
         Ok(())
     }
 
@@ -676,6 +705,13 @@ impl ControlPlane {
         let lease = self.live_lease(session_id, lease_id)?;
         let rec = self.tasks.get(&lease.task_id).ok_or(ControlPlaneError::UnknownTask)?;
         let object = rec.input_object.ok_or(ControlPlaneError::NoInputReference)?;
+        if rec.confidential_input {
+            log::warn!(
+                "control-plane: ordinary fetch refused for confidential task {} — release authorization required",
+                hex::encode(&lease.task_id[..8])
+            );
+            return Err(ControlPlaneError::ConfidentialReleaseRequired);
+        }
         let cap = dp.issue_capability(
             &self.issuer,
             &CapabilityRequest {
@@ -690,6 +726,53 @@ impl ControlPlane {
         rec.capabilities.push((cap.capability_id, lease.attempt_id));
         rec.state = TaskState::InputAuthorized;
         Ok(cap)
+    }
+
+    /// The confidential counterpart of [`Self::authorize_fetch`] (K §14):
+    /// redeems `release_id` with the release authority — once, inside this
+    /// session, for this lease's task — and only then issues the fetch
+    /// capability. The grant it returns is what the key service wraps the
+    /// content key against. Lease first, then release, then capability.
+    pub fn authorize_fetch_confidential(
+        &mut self,
+        session_id: SessionId,
+        lease_id: LeaseId,
+        release_id: ReleaseId,
+        authority: &mut ReleaseAuthority,
+        dp: &mut InMemoryDataPlane,
+    ) -> Result<(Capability, ReleaseGrant), ControlPlaneError> {
+        let lease = self.live_lease(session_id, lease_id)?;
+        let session = self
+            .sessions
+            .get(&session_id)
+            .cloned()
+            .ok_or(ControlPlaneError::UnknownSession)?;
+        let rec = self.tasks.get(&lease.task_id).ok_or(ControlPlaneError::UnknownTask)?;
+        let object = rec.input_object.ok_or(ControlPlaneError::NoInputReference)?;
+        if !rec.confidential_input {
+            return Err(ControlPlaneError::NoInputReference);
+        }
+        let grant = authority.redeem(&session, release_id, lease.task_id)?;
+        debug_assert_eq!(grant.executor, lease.executor);
+        let cap = dp.issue_capability(
+            &self.issuer,
+            &CapabilityRequest {
+                task_id: lease.task_id,
+                operation: Operation::FetchInput,
+                resource: Some(object),
+                ttl_secs: self.config.capability_secs,
+                max_uses: 1,
+            },
+        )?;
+        let rec = self.tasks.get_mut(&lease.task_id).expect("checked");
+        rec.capabilities.push((cap.capability_id, lease.attempt_id));
+        rec.state = TaskState::InputAuthorized;
+        log::info!(
+            "control-plane: confidential fetch authorized for task {} under release {}",
+            hex::encode(&lease.task_id[..8]),
+            release_id
+        );
+        Ok((cap, grant))
     }
 
     /// Obtains a put-result capability under the lease (E §7 step 8).

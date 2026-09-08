@@ -65,6 +65,18 @@ jobs:
       - name: Mbongo Compute Provider Policy
         run: cargo test -p mbongo-compute --test provider_policy --locked
 
+      # Mbongo Compute Confidential Authorization (confidential-auth-v1): the
+      # named suite of docs/architecture/compute-confidential-attestation-key-release.md
+      # against the REFERENCE / TEST ONLY attestation verifier: a claim-only
+      # confidential worker gets nothing; a valid, fresh, session-, executor-
+      # and task-bound attestation under a trusted root and an approved
+      # measurement, with J eligible, gets one single-use release; every
+      # replay, binding, freshness, trust and outage failure fails closed.
+      # Manual clock, no network. Exits non-zero unless it prints
+      # "CONFIDENTIAL AUTHORIZATION: PASS".
+      - name: Mbongo Compute Confidential Authorization
+        run: cargo run -p mbongo-compute --bin confidential_authorization --locked
+
   # ---------------------------------------------------------
   # Mbongo Compute v0.4 Vertical (run on PR + push)
   # ---------------------------------------------------------
