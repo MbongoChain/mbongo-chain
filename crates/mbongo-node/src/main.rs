@@ -275,6 +275,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //     request next range if not yet caught up
 //   - On NewBlock at height > local+1 → trigger GetHeight from known peer
 
+/// Request the next batch of blocks from `peer`, starting at
+/// `local_height + 1` up to `remote_height`. Returns `true` only when the
+/// command was accepted by the P2P event loop's channel.
+fn request_next_batch(
+    cmd_tx: &tokio::sync::mpsc::UnboundedSender<SyncCommand>,
+    peer: libp2p::PeerId,
+    local_height: u64,
+    remote_height: u64,
+) -> bool {
+    if local_height >= remote_height {
+        return false;
+    }
+    let start = local_height + 1;
+    let end = std::cmp::min(remote_height + 1, start + MAX_RANGE);
+    log::info!("Requesting blocks [{start}..{end}) from {peer}");
+    cmd_tx
+        .send(SyncCommand::GetBlocks {
+            peer_id: peer,
+            start_height: start,
+            end_height: end,
+        })
+        .is_ok()
+}
+
 /// Runs the sync orchestrator loop.  Never returns under normal operation.
 #[allow(clippy::too_many_lines)]
 async fn run_sync_orchestrator<S: mbongo_storage::Storage + Send + Sync + 'static>(
@@ -300,29 +324,6 @@ async fn run_sync_orchestrator<S: mbongo_storage::Storage + Send + Sync + 'stati
         remote_height: 0,
         in_flight: false,
     };
-
-    /// Request the next batch of blocks from `peer`, starting at
-    /// `local_height + 1` up to `remote_height`.  Sends a `GetBlocks`
-    /// command via `cmd_tx`.  Returns `true` if a request was sent.
-    fn request_next_batch(
-        cmd_tx: &tokio::sync::mpsc::UnboundedSender<SyncCommand>,
-        peer: PeerId,
-        local_height: u64,
-        remote_height: u64,
-    ) -> bool {
-        if local_height >= remote_height {
-            return false;
-        }
-        let start = local_height + 1;
-        let end = std::cmp::min(remote_height + 1, start + MAX_RANGE);
-        log::info!("Requesting blocks [{start}..{end}) from {peer}");
-        let _ = cmd_tx.send(SyncCommand::GetBlocks {
-            peer_id: peer,
-            start_height: start,
-            end_height: end,
-        });
-        true
-    }
 
     loop {
         tokio::select! {
@@ -450,6 +451,12 @@ async fn run_sync_orchestrator<S: mbongo_storage::Storage + Send + Sync + 'stati
                             }
                         }
                     }
+                    SyncEvent::RequestFailed { peer_id } => {
+                        state.in_flight = false;
+                        log::warn!(
+                            "Block sync request to {peer_id} failed; cleared in-flight state"
+                        );
+                    }
                 }
             }
         }
@@ -459,6 +466,7 @@ async fn run_sync_orchestrator<S: mbongo_storage::Storage + Send + Sync + 'stati
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mbongo_storage::InMemoryStorage;
 
     #[test]
     fn it_works() {
@@ -531,5 +539,56 @@ mod tests {
         // P2P has no host flag: it keeps its own listen semantics.
         let args = Args::parse_from(["mbongo-node"]);
         assert_eq!(args.p2p_port, 30333);
+    }
+
+    #[test]
+    fn next_batch_is_not_in_flight_when_command_channel_is_closed() {
+        let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+        drop(cmd_rx);
+
+        assert!(!request_next_batch(&cmd_tx, libp2p::PeerId::random(), 0, 1));
+    }
+
+    #[tokio::test]
+    async fn outbound_failure_allows_sync_to_request_another_batch() {
+        let backend = NodeBackend::new(InMemoryStorage::new(), false);
+        backend.ensure_genesis().unwrap();
+
+        let (_block_tx, block_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+        let orchestrator = tokio::spawn(run_sync_orchestrator(backend, block_rx, event_rx, cmd_tx));
+        let peer = libp2p::PeerId::random();
+
+        event_tx
+            .send(SyncEvent::ResponseReceived {
+                peer_id: peer,
+                response: SyncResponse::Height(1),
+            })
+            .unwrap();
+        assert!(matches!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), cmd_rx.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+            SyncCommand::GetBlocks { peer_id, .. } if peer_id == peer
+        ));
+
+        event_tx.send(SyncEvent::RequestFailed { peer_id: peer }).unwrap();
+        event_tx
+            .send(SyncEvent::ResponseReceived {
+                peer_id: peer,
+                response: SyncResponse::Height(1),
+            })
+            .unwrap();
+        assert!(matches!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), cmd_rx.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+            SyncCommand::GetBlocks { peer_id, .. } if peer_id == peer
+        ));
+
+        orchestrator.abort();
     }
 }
