@@ -285,6 +285,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md).
 | **v0.2** | Devnet stable | Multi-node devnet, single producer, block sync. **SUPERSEDED by v0.3.** |
 | **v0.3** | Receipt anchoring devnet | RFC 0002 implemented: typed transaction payloads, `AnchorReceipt` consensus rules, receipts column family, protocol string bump. Network-incompatible with v0.2; fresh genesis. **SUPERSEDED by v0.4** (see [PROTOCOL_LOCK_v0.3.md](./docs/specs/PROTOCOL_LOCK_v0.3.md)). |
 | **v0.4** | Compute task commitment devnet | RFC 0005 implemented: `ComputeTask` payload, `task_id`, rules (k)–(s), tasks column family (schema 3), receipts bound to committed tasks, rpc_v0.3, reference worker and conformance suite off-chain. Fresh genesis. **FROZEN** (see [PROTOCOL_LOCK_v0.4.md](./docs/specs/PROTOCOL_LOCK_v0.4.md)). |
+| **MVP v0.1** | First product (frozen scope) | One client (Kaayu), one workload (CV text → JSON profile), one Mbongo-operated CPU worker on llama.cpp with a pinned open model, data off-chain on the PUBLIC profile, anchored receipt verified by the client. No protocol change. See [docs/product/MVP_v0.1.md](./docs/product/MVP_v0.1.md). |
 | **v0.5+** | Compute verification expansion | Receipt RPC activation, challenge mechanism, PoS minimal, SDK release. |
 | **v1.0** | Verified inference primitive | Receipt verification live. No on-chain AI execution. |
 | **v2+** | Optional PoUW | On-chain execution as opt-in extension. PoUW, TEE, ZK-ML are **future** — not current. |
