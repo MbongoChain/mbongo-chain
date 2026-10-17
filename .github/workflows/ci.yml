@@ -92,6 +92,11 @@ jobs:
       # model runs here; MVP-B adds execution.
       - name: Mbongo MVP Inference Contract
         run: cargo test -p mbongo-compute --test inference_contract --locked
+      # MVP-B: the CPU inference worker (docs/product/MVP_CPU_INFERENCE_WORKER.md)
+      # with a scripted backend and a fake HTTP server — MOCK_WORKER_TESTS only.
+      # The real llama.cpp + model run is mvp_inference_harness, never CI.
+      - name: Mbongo MVP CPU Inference Worker
+        run: cargo test -p mbongo-compute --test cpu_inference_worker --locked
 
   # ---------------------------------------------------------
   # Mbongo Compute v0.4 Vertical (run on PR + push)
