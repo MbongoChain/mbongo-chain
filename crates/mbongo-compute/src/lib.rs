@@ -59,6 +59,7 @@ pub mod clock;
 pub mod confidential;
 pub mod conformance;
 pub mod control_plane;
+pub mod cpu_inference;
 pub mod data_plane;
 pub mod execution;
 pub mod identity;

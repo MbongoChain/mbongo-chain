@@ -185,7 +185,7 @@ impl Worker {
         let session = cp.open_session(
             self.instance_id,
             executor,
-            vec![self.profile.spec_tag().to_vec()],
+            self.profile.spec_tags(),
             challenge,
             &proof,
         )?;
@@ -299,7 +299,7 @@ impl Worker {
                 });
             }
             cp.report(sid, lease.lease_id, AttemptEvent::InputConsumed, dp)?;
-            if task.execution_spec != self.profile.spec_tag() {
+            if !self.profile.accepts(&task.execution_spec) {
                 cp.report(
                     sid,
                     lease.lease_id,
@@ -312,7 +312,11 @@ impl Worker {
                 });
             }
             cp.report(sid, lease.lease_id, AttemptEvent::Started, dp)?;
-            let output = match self.profile.execute(input.as_bytes()) {
+            let output = match self.profile.execute_task(
+                &task.execution_spec,
+                &task.input_commitment,
+                input.as_bytes(),
+            ) {
                 Ok(o) => Plaintext::new(o),
                 Err(e) => {
                     log::warn!(

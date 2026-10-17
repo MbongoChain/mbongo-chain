@@ -64,6 +64,10 @@ path = "src/bin/compute_conformance.rs"
 name = "confidential_authorization"
 path = "src/bin/confidential_authorization.rs"
 
+[[bin]]
+name = "mvp_inference_harness"
+path = "src/bin/mvp_inference_harness.rs"
+
 [dev-dependencies]
 criterion = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }

@@ -17,3 +17,5 @@ SOM = "SOM"  # Serviceable Obtainable Market
 # Common abbreviations in ASCII diagrams
 COMMUN = "COMMUN"  # Community (abbreviated in tables)
 Determin = "Determin"  # Determination (abbreviated in diagrams)
+# French words in the synthetic CV corpus (test-vectors/inference/synthetic-cv-corpus-v1.json)
+analyste = "analyste"

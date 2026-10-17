@@ -49,6 +49,36 @@ pub trait ExecutionProfile: Send + Sync {
     fn spec_tag(&self) -> &'static [u8];
     /// Runs the transform. Pure: same input, same output.
     fn execute(&self, input: &[u8]) -> Result<Vec<u8>, ExecutionError>;
+
+    /// Every `execution_spec` value this profile answers to, as the session
+    /// advertises them to the control plane (E §6 row 7). Default: exactly
+    /// [`Self::spec_tag`], which is what the reference profile has always
+    /// advertised.
+    fn spec_tags(&self) -> Vec<Vec<u8>> {
+        vec![self.spec_tag().to_vec()]
+    }
+
+    /// Whether this profile runs a task whose `execution_spec` is
+    /// `execution_spec`. Default: byte equality with [`Self::spec_tag`].
+    fn accepts(&self, execution_spec: &[u8]) -> bool {
+        execution_spec == self.spec_tag()
+    }
+
+    /// Runs the profile for one task. Profiles whose execution depends on
+    /// the committed `execution_spec` (the MVP inference profile resolves a
+    /// job spec from it) override this; the default ignores the task context
+    /// and calls [`Self::execute`], so the reference profile is unchanged.
+    /// The worker has already verified `input` against `input_commitment`
+    /// (F §7) before calling this.
+    fn execute_task(
+        &self,
+        execution_spec: &[u8],
+        input_commitment: &[u8; 32],
+        input: &[u8],
+    ) -> Result<Vec<u8>, ExecutionError> {
+        let _ = (execution_spec, input_commitment);
+        self.execute(input)
+    }
 }
 
 /// The reference profile: output is the input reversed.
