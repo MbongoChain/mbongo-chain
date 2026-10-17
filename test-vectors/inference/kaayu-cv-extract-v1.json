@@ -1,0 +1,57 @@
+{
+  "$comment": "Golden vector for mbongo-infer:v1 / kaayu-cv-extract:v1 (docs/product/MVP_INFERENCE_CONTRACT_v1.md section 22). Byte-exact; Rust and any future TypeScript helper must reproduce every field.",
+  "contract": "mbongo-infer:v1",
+  "profile": "kaayu-cv-extract:v1",
+  "job_spec": {
+    "contract": "mbongo-infer:v1",
+    "generation": {
+      "max_tokens": 400,
+      "seed": 42,
+      "temperature_milli": 0,
+      "top_p_milli": 1000
+    },
+    "limits": {
+      "max_input_bytes": 10000,
+      "max_output_bytes": 8000
+    },
+    "model": {
+      "artifact_name": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+      "artifact_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+      "artifact_size_bytes": 2497281120,
+      "family": "Qwen3",
+      "format": "gguf",
+      "license": "Apache-2.0",
+      "name": "Qwen3-4B-Instruct-2507",
+      "quantization": "Q4_K_M",
+      "source": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF",
+      "source_revision": "a06e946bb6b655725eafa393f4a9745d460374c9"
+    },
+    "profile": {
+      "id": "kaayu-cv-extract",
+      "input_contract": "kaayu-cv-extract-input:v1",
+      "output_contract": "kaayu-cv-profile:v1",
+      "output_schema_sha256": "81521447e7b7b45c670ff1717d608fc2304765ab530587aba2370ba0a9191af5",
+      "prompt_template_sha256": "6c950b4863bc339af94d904dbb609b3dd9098259740f01a6539406e641276d63",
+      "version": 1
+    },
+    "runtime": {
+      "commit": "620d2225cc436ab0b001e3200e590e3b286ef9ab",
+      "family": "llama.cpp",
+      "license": "MIT",
+      "mode": "llama-server",
+      "revision": "v0.7.0"
+    }
+  },
+  "job_spec_canonical": "{\"contract\":\"mbongo-infer:v1\",\"generation\":{\"max_tokens\":400,\"seed\":42,\"temperature_milli\":0,\"top_p_milli\":1000},\"limits\":{\"max_input_bytes\":10000,\"max_output_bytes\":8000},\"model\":{\"artifact_name\":\"Qwen3-4B-Instruct-2507-Q4_K_M.gguf\",\"artifact_sha256\":\"3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597\",\"artifact_size_bytes\":2497281120,\"family\":\"Qwen3\",\"format\":\"gguf\",\"license\":\"Apache-2.0\",\"name\":\"Qwen3-4B-Instruct-2507\",\"quantization\":\"Q4_K_M\",\"source\":\"https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF\",\"source_revision\":\"a06e946bb6b655725eafa393f4a9745d460374c9\"},\"profile\":{\"id\":\"kaayu-cv-extract\",\"input_contract\":\"kaayu-cv-extract-input:v1\",\"output_contract\":\"kaayu-cv-profile:v1\",\"output_schema_sha256\":\"81521447e7b7b45c670ff1717d608fc2304765ab530587aba2370ba0a9191af5\",\"prompt_template_sha256\":\"6c950b4863bc339af94d904dbb609b3dd9098259740f01a6539406e641276d63\",\"version\":1},\"runtime\":{\"commit\":\"620d2225cc436ab0b001e3200e590e3b286ef9ab\",\"family\":\"llama.cpp\",\"license\":\"MIT\",\"mode\":\"llama-server\",\"revision\":\"v0.7.0\"}}",
+  "job_spec_canonical_hex": "7b22636f6e7472616374223a226d626f6e676f2d696e6665723a7631222c2267656e65726174696f6e223a7b226d61785f746f6b656e73223a3430302c2273656564223a34322c2274656d70657261747572655f6d696c6c69223a302c22746f705f705f6d696c6c69223a313030307d2c226c696d697473223a7b226d61785f696e7075745f6279746573223a31303030302c226d61785f6f75747075745f6279746573223a383030307d2c226d6f64656c223a7b2261727469666163745f6e616d65223a225177656e332d34422d496e7374727563742d323530372d51345f4b5f4d2e67677566222c2261727469666163745f736861323536223a2233363035383033623938326362363461656164343466366331623261653336653361636462343164386534366338613934633635333362633463363765353937222c2261727469666163745f73697a655f6279746573223a323439373238313132302c2266616d696c79223a225177656e33222c22666f726d6174223a2267677566222c226c6963656e7365223a224170616368652d322e30222c226e616d65223a225177656e332d34422d496e7374727563742d32353037222c227175616e74697a6174696f6e223a2251345f4b5f4d222c22736f75726365223a2268747470733a2f2f68756767696e67666163652e636f2f756e736c6f74682f5177656e332d34422d496e7374727563742d323530372d47475546222c22736f757263655f7265766973696f6e223a2261303665393436626236623635353732356561666133393366346139373435643436303337346339227d2c2270726f66696c65223a7b226964223a226b616179752d63762d65787472616374222c22696e7075745f636f6e7472616374223a226b616179752d63762d657874726163742d696e7075743a7631222c226f75747075745f636f6e7472616374223a226b616179752d63762d70726f66696c653a7631222c226f75747075745f736368656d615f736861323536223a2238313532313434376537623762343563363730666631373137643630386663323330343736356162353330353837616261323337306261306139313931616635222c2270726f6d70745f74656d706c6174655f736861323536223a2236633935306234383633626333333961663934643930346462623630396233646439303938323539373430663031613635333934303665363431323736643633222c2276657273696f6e223a317d2c2272756e74696d65223a7b22636f6d6d6974223a2236323064323232356363343336616230623030316533323030653539306533623238366566396162222c2266616d696c79223a226c6c616d612e637070222c226c6963656e7365223a224d4954222c226d6f6465223a226c6c616d612d736572766572222c227265766973696f6e223a2276302e372e30227d7d",
+  "job_spec_domain": "mbongo:infer-job-spec:v1",
+  "job_spec_digest": "be9ae960334c3e917ad600e2b5220440c27dd79c5e586e998e60cbc148affe0e",
+  "job_spec_digest_rule": "BLAKE3(job_spec_domain || job_spec_canonical)",
+  "execution_spec_hex": "6d626f6e676f2d696e6665723a7631be9ae960334c3e917ad600e2b5220440c27dd79c5e586e998e60cbc148affe0e",
+  "execution_spec_layout": "ASCII tag 'mbongo-infer:v1' (15 bytes) || job_spec_digest (32 bytes) = 47 bytes",
+  "prompt_template_sha256": "6c950b4863bc339af94d904dbb609b3dd9098259740f01a6539406e641276d63",
+  "output_schema_sha256": "81521447e7b7b45c670ff1717d608fc2304765ab530587aba2370ba0a9191af5",
+  "prompt_template_path": "crates/mbongo-compute/profiles/kaayu-cv-extract-v1/prompt-template.txt",
+  "output_schema_path": "crates/mbongo-compute/profiles/kaayu-cv-extract-v1/output-schema.json",
+  "job_spec_path": "crates/mbongo-compute/profiles/kaayu-cv-extract-v1/job-spec.json"
+}

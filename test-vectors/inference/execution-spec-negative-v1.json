@@ -1,0 +1,47 @@
+{
+  "$comment": "Inputs decode_execution_spec must refuse, with the error code (contract sections 5 and 16).",
+  "cases": [
+    {
+      "name": "reference_profile_tag",
+      "execution_spec_hex": "6d626f6e676f2d7265663a726576657273652d62797465733a7631",
+      "expected_error": "MALFORMED_EXECUTION_SPEC",
+      "note": "another application's tag is not an inference spec"
+    },
+    {
+      "name": "empty",
+      "execution_spec_hex": "",
+      "expected_error": "MALFORMED_EXECUTION_SPEC",
+      "note": "empty execution_spec"
+    },
+    {
+      "name": "version_v2",
+      "execution_spec_hex": "6d626f6e676f2d696e6665723a7632be9ae960334c3e917ad600e2b5220440c27dd79c5e586e998e60cbc148affe0e",
+      "expected_error": "UNSUPPORTED_INFERENCE_SPEC_VERSION",
+      "note": "family prefix matches, version does not"
+    },
+    {
+      "name": "prefix_only",
+      "execution_spec_hex": "6d626f6e676f2d696e6665723a",
+      "expected_error": "UNSUPPORTED_INFERENCE_SPEC_VERSION",
+      "note": "family prefix without a version"
+    },
+    {
+      "name": "too_short",
+      "execution_spec_hex": "6d626f6e676f2d696e6665723a7631be9ae960334c3e917ad600e2b5220440c27dd79c5e586e998e60cbc148affe",
+      "expected_error": "MALFORMED_EXECUTION_SPEC",
+      "note": "46 bytes"
+    },
+    {
+      "name": "too_long",
+      "execution_spec_hex": "6d626f6e676f2d696e6665723a7631be9ae960334c3e917ad600e2b5220440c27dd79c5e586e998e60cbc148affe0e00",
+      "expected_error": "MALFORMED_EXECUTION_SPEC",
+      "note": "48 bytes"
+    },
+    {
+      "name": "tag_only",
+      "execution_spec_hex": "6d626f6e676f2d696e6665723a7631",
+      "expected_error": "MALFORMED_EXECUTION_SPEC",
+      "note": "no digest"
+    }
+  ]
+}
