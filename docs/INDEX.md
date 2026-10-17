@@ -15,6 +15,7 @@ document disagrees with one of these, this table wins.
 | Subject | Authority | Status |
 |---|---|---|
 | Project vision and scope | [`VISION_v1.md`](VISION_v1.md) | NORMATIVE |
+| What Mbongo launches first — the MVP: first user, workload, runtime, model, worker, privacy level, provider model, payment, client surface, exit criteria, and the frozen defer list that separates MVP BLOCKING from POST-MVP and PARALLEL RESEARCH | [`product/MVP_v0.1.md`](product/MVP_v0.1.md) | NORMATIVE (FROZEN PRODUCT SCOPE; product decision, non-consensus — every protocol and architecture row above wins on its own subject) |
 | Frozen protocol surfaces, versioning | [`specs/PROTOCOL_LOCK_v0.4.md`](specs/PROTOCOL_LOCK_v0.4.md) | NORMATIVE (FROZEN; tag `v0.4-devnet-stable` @ `fcec8ddc`; SDK `@mbongo/sdk` 0.2.0) |
 | Protocol surfaces before RFC 0005 | [`specs/PROTOCOL_LOCK_v0.3.md`](specs/PROTOCOL_LOCK_v0.3.md) | SUPERSEDED (historical record, kept intact) |
 | JSON-RPC contract | [`specs/rpc_v0.3.md`](specs/rpc_v0.3.md) | NORMATIVE (FROZEN — v0.2 plus the `ComputeTask` payload variant; independently audited by the v0.4 lock gate) |
@@ -112,8 +113,9 @@ authoritative; the authority map above is the only source of that.
 │   └── Project vision, mission, and long-term goals
 ├── mbongo_whitepaper.md [L1]
 │   └── High-level technical whitepaper
-├── roadmap.md [L1]
-│   └── Development roadmap and milestones
+├── roadmap.md [L1] [HISTORICAL]
+│   └── 2025 quarterly plan, predates the protocol lock; the live roadmap is
+│       the README table and product/MVP_v0.1.md
 └── faq.md [L1]
     └── Frequently asked questions
 ```
@@ -169,8 +171,9 @@ authoritative; the authority map above is the only source of that.
 ```
 ├── competitive_analysis.md [L2]
 │   └── Comparison vs Render, Akash, io.net, Gensyn, Bittensor, RunPod
-└── target_market.md [L2]
-    └── Market analysis, customer personas, TAM estimation
+└── target_market.md [L2] [SUPERSEDED]
+    └── Market analysis, customer personas, TAM estimation — superseded by
+        product/MVP_v0.1.md on who the first user is
 ```
 
 ---
@@ -426,8 +429,8 @@ authoritative; the authority map above is the only source of that.
 │   └── Project vision and goals
 ├── mbongo_whitepaper.md [L1]
 │   └── Technical whitepaper
-└── roadmap.md [L1]
-    └── Development roadmap
+└── roadmap.md [L1] [HISTORICAL]
+    └── 2025 quarterly plan; see product/MVP_v0.1.md for the frozen first product
 ```
 
 ### 9.2 Validation & Status
