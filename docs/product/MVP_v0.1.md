@@ -59,7 +59,7 @@ Evaluated before any runtime, model, hardware or privacy choice was made.
 
 ### 3.1 Who, and what they are trying to do
 
-Kaayu's backend already turns candidate documents into structured data with an LLM. It needs, for each CV it processes: a structured profile (schema-fixed JSON) returned within a bounded time, the candidate's document kept out of any public system, and a durable record that *this* extraction was requested, *this* input was used (by commitment, not content) and *this* executor produced *this* output (by commitment).
+Kaayu processes candidate CVs; the MVP workload is the extraction step of that processing, isolated. The backend needs, for each CV: a structured profile (schema-fixed JSON) returned within a bounded time, the candidate's document kept out of any public system, and a durable record that *this* extraction was requested, *this* input was used (by commitment, not content) and *this* executor produced *this* output (by commitment).
 
 ### 3.2 Why Mbongo instead of the alternatives
 
@@ -81,7 +81,7 @@ What is explicitly **not** claimed as MVP value: decentralization, Web3, "AI inf
 **MVP_USE_CASE = private AI inference** (PUBLIC profile, off-chain data).
 **MVP_WORKLOAD = single-turn structured extraction: CV text → JSON candidate profile**, schema-constrained.
 
-- **Input:** the CV as UTF-8 text (Kaayu already extracts text from PDFs; PDF parsing is not Mbongo's job), bounded at 2,500 model tokens, plus the fixed extraction instruction. The whole prompt is one private-data-plane object; its BLAKE3 commitment is the task's `input_commitment` (RFC 0005 §2.4 convention).
+- **Input:** the CV as UTF-8 text (text extraction from PDFs stays on the client side; it is not Mbongo's job), bounded at 2,500 model tokens, plus the fixed extraction instruction. The whole prompt is one private-data-plane object; its BLAKE3 commitment is the task's `input_commitment` (RFC 0005 §2.4 convention).
 - **Output:** one JSON document conforming to a fixed schema (identity-free fields such as skills, roles with date ranges, education, languages, seniority estimate — the exact schema is fixed in the inference contract gate), bounded at 400 generated tokens. Its commitment is the receipt's `output_commitment`.
 - **One turn, no tools, no memory, no retrieval.** The job is a pure function of the prompt bytes and the pinned model/runtime/parameters.
 
@@ -102,9 +102,9 @@ Rejected for the first workload: candidate–job matching explanation (needs two
 | schema-constrained JSON | native (JSON schema → grammar) | yes | partial | — |
 | license | MIT | Apache-2.0 | MIT | — |
 
-Ollama is already in use on the development machine and is a legitimate developer convenience; it is **not** the MVP runtime because a mutable registry tag is not a model identity. vLLM is the natural **post-MVP** GPU runtime if throughput ever matters.
+Ollama is installed on the development machine and is a legitimate developer convenience; it is **not** the MVP runtime because a mutable registry tag is not a model identity. vLLM is the natural **post-MVP** GPU runtime if throughput ever matters.
 
-**MVP_MODEL = Qwen3-4B-Instruct-2507**, GGUF `Q4_K_M` quantization, pinned by the SHA-256 of the exact GGUF file. **MVP_MODEL_LICENSE = Apache-2.0** (open weights; commercial use permitted). Chosen because it is a non-thinking instruct model (no `<think>` blocks to strip), strong at structured extraction at 4B parameters, fits CPU inference with ~3 GB of weights, and its license carries no acceptable-use registry. Alternatives considered: Llama 3.x (community license, not open), Gemma (Gemma terms), Mistral 7B (Apache-2.0, larger, slower on CPU), Phi-4-mini (MIT, weaker at long structured extraction in the maintainer's experience — to be re-checked only if Qwen fails the latency gate).
+**MVP_MODEL = Qwen3-4B-Instruct-2507**, GGUF `Q4_K_M` quantization, pinned by the SHA-256 of the exact GGUF file. **MVP_MODEL_LICENSE = Apache-2.0** (open weights; commercial use permitted). Chosen because it is a non-thinking instruct model (no `<think>` blocks to strip), a 4B-parameter model the gate can measure on CPU, fits CPU inference with ~3 GB of weights, and its license carries no acceptable-use registry. Alternatives considered: Llama 3.x (community license, not open), Gemma (Gemma terms), Mistral 7B (Apache-2.0, larger, slower on CPU), Phi-4-mini (MIT; not evaluated here — the fallback to try only if Qwen fails the latency gate).
 
 **Model identity for the receipt record** (defined precisely in the inference contract gate; not a global registry): runtime id and release, GGUF file digest, tokenizer as embedded in the GGUF, quantization, generation parameters (temperature 0, fixed seed, max tokens), schema digest. The model is **not** protocol authority; it is bytes named by the execution spec.
 
