@@ -1,0 +1,2 @@
+docs/product/inference/** -text
+test-vectors/inference/** -text

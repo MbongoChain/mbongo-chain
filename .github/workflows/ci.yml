@@ -86,6 +86,12 @@ jobs:
       # GitHub-hosted runners have no SEV-SNP guest. See the gated job below.
       - name: Mbongo Compute Hardware Attestation
         run: cargo test -p mbongo-compute --test hardware_attestation --locked
+      # MVP-A: the mbongo-infer:v1 execution contract and the kaayu-cv-extract:v1
+      # profile (docs/product/MVP_INFERENCE_CONTRACT_v1.md). Pins the golden
+      # vector in test-vectors/inference/ and the worker validation order. No
+      # model runs here; MVP-B adds execution.
+      - name: Mbongo MVP Inference Contract
+        run: cargo test -p mbongo-compute --test inference_contract --locked
 
   # ---------------------------------------------------------
   # Mbongo Compute v0.4 Vertical (run on PR + push)
