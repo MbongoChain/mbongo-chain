@@ -583,7 +583,7 @@ fn a20_golden_vector_exact() {
     // The committed job-spec document in docs/ is byte-identical to the canonical bytes.
     let committed = std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../docs/product/inference/kaayu-cv-extract-v1/job-spec.json"
+        "/profiles/kaayu-cv-extract-v1/job-spec.json"
     ))
     .unwrap();
     assert_eq!(committed, spec.canonical_bytes());

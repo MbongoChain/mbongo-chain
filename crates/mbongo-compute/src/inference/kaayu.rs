@@ -7,9 +7,9 @@
 //!
 //! | Artifact | Where | Pinned by |
 //! |---|---|---|
-//! | prompt template (the system message, verbatim) | `docs/product/inference/kaayu-cv-extract-v1/prompt-template.txt` | `profile.prompt_template_sha256` |
-//! | output JSON Schema (`kaayu-cv-profile:v1`) | `docs/product/inference/kaayu-cv-extract-v1/output-schema.json` | `profile.output_schema_sha256` |
-//! | job spec (canonical bytes) | `docs/product/inference/kaayu-cv-extract-v1/job-spec.json` | the digest in `execution_spec` |
+//! | prompt template (the system message, verbatim) | `crates/mbongo-compute/profiles/kaayu-cv-extract-v1/prompt-template.txt` | `profile.prompt_template_sha256` |
+//! | output JSON Schema (`kaayu-cv-profile:v1`) | `crates/mbongo-compute/profiles/kaayu-cv-extract-v1/output-schema.json` | `profile.output_schema_sha256` |
+//! | job spec (canonical bytes) | `crates/mbongo-compute/profiles/kaayu-cv-extract-v1/job-spec.json` | the digest in `execution_spec` |
 //!
 //! The typed output validator below is the executable form of the schema
 //! file; a test asserts the two agree on their field set, bounds and
@@ -25,11 +25,11 @@ use super::ContractError;
 
 /// The prompt template: used verbatim as the chat **system** message.
 pub const PROMPT_TEMPLATE: &str =
-    include_str!("../../../../docs/product/inference/kaayu-cv-extract-v1/prompt-template.txt");
+    include_str!("../../profiles/kaayu-cv-extract-v1/prompt-template.txt");
 /// The output JSON Schema (`kaayu-cv-profile:v1`), passed to llama-server
 /// as `response_format` and mirrored by [`CandidateProfileV1::validate`].
 pub const OUTPUT_SCHEMA: &str =
-    include_str!("../../../../docs/product/inference/kaayu-cv-extract-v1/output-schema.json");
+    include_str!("../../profiles/kaayu-cv-extract-v1/output-schema.json");
 
 /// Profile id.
 pub const PROFILE_ID: &str = "kaayu-cv-extract";

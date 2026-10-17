@@ -146,13 +146,13 @@ Rules: exactly those two fields; `cv_text` non-empty after trimming; the only co
 
 ## 12. Prompt and profile identity
 
-Prompt construction is **worker-owned and pinned**: the chat request is exactly two messages — `system` = the prompt template bytes verbatim (`docs/product/inference/kaayu-cv-extract-v1/prompt-template.txt`, SHA-256 `6c950b4863bc339af94d904dbb609b3dd9098259740f01a6539406e641276d63`), `user` = `cv_text`. No substitution, no additional message, no tool, no retrieval (A23). The model's own chat template is embedded in the GGUF and therefore covered by the artifact digest.
+Prompt construction is **worker-owned and pinned**: the chat request is exactly two messages — `system` = the prompt template bytes verbatim (`crates/mbongo-compute/profiles/kaayu-cv-extract-v1/prompt-template.txt`, SHA-256 `6c950b4863bc339af94d904dbb609b3dd9098259740f01a6539406e641276d63`), `user` = `cv_text`. No substitution, no additional message, no tool, no retrieval (A23). The model's own chat template is embedded in the GGUF and therefore covered by the artifact digest.
 
 `profile = { id: "kaayu-cv-extract", version: 1, input_contract: "kaayu-cv-extract-input:v1", output_contract: "kaayu-cv-profile:v1", prompt_template_sha256, output_schema_sha256 }`. A worker cannot change the instructions silently: the template digest is inside the job spec, so a changed template is a changed digest, a changed `execution_spec` and a different task.
 
 ## 13. Output schema (`kaayu-cv-profile:v1`)
 
-`docs/product/inference/kaayu-cv-extract-v1/output-schema.json` (JSON Schema 2020-12, SHA-256 `81521447e7b7b45c670ff1717d608fc2304765ab530587aba2370ba0a9191af5`). One object, `additionalProperties: false`, all fields required, **no numbers, booleans or nulls anywhere** — only strings, arrays and objects, so the canonical form of §7 is total over valid outputs:
+`crates/mbongo-compute/profiles/kaayu-cv-extract-v1/output-schema.json` (JSON Schema 2020-12, SHA-256 `81521447e7b7b45c670ff1717d608fc2304765ab530587aba2370ba0a9191af5`). One object, `additionalProperties: false`, all fields required, **no numbers, booleans or nulls anywhere** — only strings, arrays and objects, so the canonical form of §7 is total over valid outputs:
 
 | Field | Type | Bound |
 |---|---|---|
@@ -247,7 +247,7 @@ The receipt proves: executor attribution (signed by the key of the executor the 
 
 ## 22. Golden vector
 
-`test-vectors/inference/kaayu-cv-extract-v1.json`, reproduced byte-exactly by test A20 and by the committed document `docs/product/inference/kaayu-cv-extract-v1/job-spec.json`:
+`test-vectors/inference/kaayu-cv-extract-v1.json`, reproduced byte-exactly by test A20 and by the committed document `crates/mbongo-compute/profiles/kaayu-cv-extract-v1/job-spec.json`:
 
 ```
 job_spec_canonical = {"contract":"mbongo-infer:v1","generation":{"max_tokens":400,"seed":42,"temperature_milli":0,"top_p_milli":1000},"limits":{"max_input_bytes":10000,"max_output_bytes":8000},"model":{"artifact_name":"Qwen3-4B-Instruct-2507-Q4_K_M.gguf","artifact_sha256":"3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597","artifact_size_bytes":2497281120,"family":"Qwen3","format":"gguf","license":"Apache-2.0","name":"Qwen3-4B-Instruct-2507","quantization":"Q4_K_M","source":"https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF","source_revision":"a06e946bb6b655725eafa393f4a9745d460374c9"},"profile":{"id":"kaayu-cv-extract","input_contract":"kaayu-cv-extract-input:v1","output_contract":"kaayu-cv-profile:v1","output_schema_sha256":"81521447e7b7b45c670ff1717d608fc2304765ab530587aba2370ba0a9191af5","prompt_template_sha256":"6c950b4863bc339af94d904dbb609b3dd9098259740f01a6539406e641276d63","version":1},"runtime":{"commit":"620d2225cc436ab0b001e3200e590e3b286ef9ab","family":"llama.cpp","license":"MIT","mode":"llama-server","revision":"v0.7.0"}}
@@ -306,7 +306,7 @@ MVP-B implements an `ExecutionProfile` whose `spec_tag` is the 15-byte tag prefi
 |---|---|
 | `execution_spec` parser/encoder | `inference::execution_spec` |
 | job-spec schema, canonical form, digest, validation | `inference::job_spec`, `inference::canonical` |
-| the frozen profile, prompt, schema, parameters, limits | `inference::kaayu` and `docs/product/inference/kaayu-cv-extract-v1/` |
+| the frozen profile, prompt, schema, parameters, limits | `inference::kaayu` and `crates/mbongo-compute/profiles/kaayu-cv-extract-v1/` |
 | golden vector and negative cases | `test-vectors/inference/` |
 | runtime revision policy | §9; `check_runtime` |
 | model digest policy and acquisition | §10; `check_model`; download → SHA-256 → refuse on mismatch |

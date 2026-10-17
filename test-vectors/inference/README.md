@@ -16,7 +16,7 @@ RFC 0005 and never interprets them. The protocol vectors remain
 | `output-canonicalization-v1.json` | one schema-valid model output in two non-canonical forms, the single canonical byte form, its `output_commitment`, and outputs that yield no result and no receipt (A10, A13) |
 
 The committed job-spec document itself is
-`docs/product/inference/kaayu-cv-extract-v1/job-spec.json`: exactly the
+`crates/mbongo-compute/profiles/kaayu-cv-extract-v1/job-spec.json`: exactly the
 canonical bytes, no trailing newline. The three files under that directory
 are marked `-text` in `.gitattributes` so no checkout can alter the bytes
 their digests pin.

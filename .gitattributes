@@ -1,2 +1,2 @@
-docs/product/inference/** -text
+crates/mbongo-compute/profiles/** -text
 test-vectors/inference/** -text
