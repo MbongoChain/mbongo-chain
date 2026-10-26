@@ -1,10 +1,10 @@
 # MVP CPU Inference Worker — `mbongo-infer:v1` on llama.cpp
 
 **Status:** MVP v0.1 IMPLEMENTATION — NON-CONSENSUS. Gate MVP-B of [`MVP_v0.1.md`](MVP_v0.1.md).
-**Implements:** [`MVP_INFERENCE_CONTRACT_v1.md`](MVP_INFERENCE_CONTRACT_v1.md) (frozen; never reinterpreted here). **Code:** `crates/mbongo-compute/src/cpu_inference/`, harness `src/bin/mvp_inference_harness.rs`, setup `scripts/setup-mvp-inference-runtime.sh`. **CI group:** `cpu_inference_worker` (step "Mbongo MVP CPU Inference Worker").
-**Baseline:** `20d46774bdb1890b3f510e0ed8e31552dd41c96a`, measured 2026-10-17.
+**Implements:** [`MVP_INFERENCE_CONTRACT_v1.md`](MVP_INFERENCE_CONTRACT_v1.md) (never reinterpreted here) with the active MVP profile [`kaayu-cv-extract:v2`](KAAYU_CV_EXTRACT_PROFILE_v2.md) (change control CC-1). **Code:** `crates/mbongo-compute/src/cpu_inference/`, harness `src/bin/mvp_inference_harness.rs`, setup `scripts/setup-mvp-inference-runtime.sh`. **CI group:** `cpu_inference_worker` (step "Mbongo MVP CPU Inference Worker").
+**Measured:** 2026-10-17 with profile v1 (blocked, §16.4) and 2026-10-26 with profile v2 (final, §16–§17).
 
-> **Gate result: blocked on the frozen contract, not on the worker.** The worker executes the contract on the pinned runtime and model and fails closed exactly as specified. On the real ten-case synthetic corpus, **8 of 10** produced schema-valid canonical JSON; the other two were cut off by the contract's own `max_tokens = 400` before the JSON closed (`finish_reason: "length"`), so the worker correctly refused them (`OUTPUT_NOT_JSON`, no result, no receipt). The frozen output schema permits far more than 400 tokens of JSON. Resolving that is a change to `kaayu-cv-extract:v1`, which needs the change control of `MVP_v0.1.md` §20 (§16.4).
+> **Gate result: closed.** The worker executes `mbongo-infer:v1` with `kaayu-cv-extract:v2` on the pinned runtime and model, on CPU: **10/10** synthetic CVs produce schema-valid canonical JSON with no truncation, P95 ≤ 120 s on the reference host, and the live-chain end to end passes. The first run, with profile v1, stopped at 8/10 because v1's output schema allowed far more than its own 400-token budget (§16.4); change control CC-1 replaced the profile ([`KAAYU_CV_EXTRACT_PROFILE_v2.md`](KAAYU_CV_EXTRACT_PROFILE_v2.md)), not the worker.
 
 ## 1. Purpose
 
@@ -51,7 +51,7 @@ Only those variables are read; the environment is never logged. No secret is nee
 
 ## 5. Start-up verification
 
-In order, each failing closed with no process left running: (0) the compiled profile is the frozen one — prompt-template and output-schema SHA-256 and the job-spec digest `be9ae960…fe0e` equal pinned constants, so a rebuilt worker with an edited profile file refuses to start; (1) the executable exists and has the pinned SHA-256; (2) `llama-server --version` reports release core `0.7.0`, build 11669 and a commit prefix of the job spec's commit (the upstream CI stamps every build `-dev`; the commit is authoritative); (3) the model file has the job spec's size and SHA-256; (4) nothing already answers on the port; (5) the server is spawned with structured arguments and reports `/health` 200; (6) `/props` reports `build_info` `b11669-620d2225c` and the configured model file. Readiness is logged as runtime, build, commit, model digest prefix, threads and port.
+In order, each failing closed with no process left running: (0) the compiled profile is the frozen one — the v2 prompt-template SHA-256 `93ec9176…1f87`, output-schema SHA-256 `0a81727a…50ab` and job-spec digest `f38886b2…ac6f` equal pinned constants (the superseded v1 profile is refused), so a rebuilt worker with an edited profile file refuses to start; (1) the executable exists and has the pinned SHA-256; (2) `llama-server --version` reports release core `0.7.0`, build 11669 and a commit prefix of the job spec's commit (the upstream CI stamps every build `-dev`; the commit is authoritative); (3) the model file has the job spec's size and SHA-256; (4) nothing already answers on the port; (5) the server is spawned with structured arguments and reports `/health` 200; (6) `/props` reports `build_info` `b11669-620d2225c` and the configured model file. Readiness is logged as runtime, build, commit, model digest prefix, threads and port.
 
 Server arguments: `--model <path> --host 127.0.0.1 --port <p> --n-gpu-layers 0 --threads <t> --threads-batch <t> --ctx-size 8192 --parallel 1 --no-webui --no-slots --no-cache-prompt --log-verbosity 2`. GPU layers default to "auto" at this revision, so `0` is explicit; the build itself is CPU-only. The slots endpoint (which can expose prompts) and the web UI are off.
 
@@ -61,7 +61,7 @@ Server arguments: `--model <path> --host 127.0.0.1 --port <p> --n-gpu-layers 0 -
 
 ## 7. Job spec validation
 
-Every task goes through `inference::preflight` (contract §17 steps 1–8). The job spec is resolved from the repository-defined profile set (`RepositoryProfiles`), re-hashed and compared with the committed digest; there is no chain storage of job specs. Steps 5–6 compare the job spec with the identity the backend proved at start-up; a backend whose runtime or model differs cannot even be bound to the profile.
+Every task goes through `inference::preflight` (contract §17 steps 1–8). The job spec is resolved from the repository-defined profile set (`profiles::KaayuProfiles`, v1 and v2), re-hashed and compared with the committed digest — the worker accepts only the active v2 spec; there is no chain storage of job specs. Steps 5–6 compare the job spec with the identity the backend proved at start-up; a backend whose runtime or model differs cannot even be bound to the profile.
 
 ## 8. Input validation
 
@@ -69,15 +69,15 @@ The worker lifecycle verifies the fetched bytes against `task.input_commitment` 
 
 ## 9. Prompt construction
 
-Exactly two messages: `system` = the frozen template bytes, `user` = `cv_text`. Nothing else — no timestamp, no worker identity, no preamble.
+Exactly two messages: `system` = the v2 template bytes, `user` = `cv_text`. Nothing else — no timestamp, no worker identity, no preamble.
 
 ## 10. llama-server invocation
 
-`POST /v1/chat/completions` on loopback through a bounded HTTP/1.1 client (one request per connection, total deadline, byte cap). Body: the two messages; `temperature` 0.0, `top_p` 1.0, `seed` 42, `max_tokens` 400 — each from the job spec, nothing added; `stream: false`; `cache_prompt: false` (the server documents that KV reuse can change logits); `response_format: {"type": "json_schema", "json_schema": {"schema": <the pinned schema, unmodified>}}`. At this revision the server converts that schema into a sampling grammar (`tools/server/server-common.cpp` at `620d2225`).
+`POST /v1/chat/completions` on loopback through a bounded HTTP/1.1 client (one request per connection, total deadline, byte cap). Body: the two messages; `temperature` 0.0, `top_p` 1.0, `seed` 42, `max_tokens` 600 — each from the job spec, nothing added; `stream: false`; `cache_prompt: false` (the server documents that KV reuse can change logits); `response_format: {"type": "json_schema", "json_schema": {"schema": <the pinned schema bytes, verbatim>}}`. At this revision the server converts that schema into a sampling grammar (`tools/server/server-common.cpp` at `620d2225`) and orders required properties as the schema lists them (`common/json-schema-to-grammar.cpp`), so the schema bytes are spliced into the body verbatim: re-serializing them sorted the keys and made the model write `certifications` first and `summary` last, which on the long CV yielded 3 positions instead of 5. B09 asserts the verbatim bytes and the pinned order.
 
 ## 11. Output validation and canonicalization
 
-`inference::finish`: raw output ≤ 8,000 B, strict parse (no prose stripping, no brace search, no repair), schema validation, canonical bytes, `output_commitment = BLAKE3("mbongo:compute-output:v1" ‖ canonical)`. An oversized output maps to the existing `OUTPUT_SCHEMA_INVALID` ("output exceeds max_output_bytes"); the contract defines no separate code and none is invented. A server body that is not a chat completion is `INFERENCE_FAILED`; model content that is not JSON is `OUTPUT_NOT_JSON`.
+`profiles::finish` (the v2 rule: v2 bounds over the MVP-A validator and serializer): raw output ≤ 8,000 B, strict parse (no prose stripping, no brace search, no repair), schema validation, canonical bytes, `output_commitment = BLAKE3("mbongo:compute-output:v1" ‖ canonical)`. An oversized output maps to the existing `OUTPUT_SCHEMA_INVALID` ("output exceeds max_output_bytes"); the contract defines no separate code and none is invented. A server body that is not a chat completion is `INFERENCE_FAILED`; model content that is not JSON is `OUTPUT_NOT_JSON`.
 
 ## 12. Persistence and receipt
 
@@ -119,25 +119,30 @@ The MVP is **PUBLIC** (J): the Mbongo-operated worker sees the CV plaintext. Inp
 | real corpus run: harness stdout, worker `RUST_LOG=info` log, llama-server log vs 121 private fragments | 0 hits |
 | real live-chain run: same three logs vs 32 fragments | 0 hits |
 | real live-chain run: 81 blocks vs CV lines, input hex, result text and hex, summary | 0 hits |
+| v2 final corpus run (2026-10-26): three logs vs 166 fragments incl. both templates | 0 hits |
+| v2 final live-chain run: three logs vs 46 fragments; 110 blocks vs 12 needles | 0 hits |
 
 ## 16. Performance (reference host)
 
-Intel Core i7-8850H (6 cores / 12 threads), 31.3 GB RAM, Windows 11 Pro 10.0.26200; llama.cpp 0.7.0-dev build 11669 commit `620d2225c`, CPU build, 6 threads, ctx 8,192, GPU layers 0.
+Intel Core i7-8850H (6 cores / 12 threads), 31.3 GB RAM, Windows 11 Pro 10.0.26200; llama.cpp 0.7.0-dev build 11669 commit `620d2225c`, CPU build, 6 threads, ctx 8,192, GPU layers 0. Profile v2, `max_tokens` 600. **Power state matters on this laptop**: on battery with background load it runs about 15–30% slower, so both conditions are recorded.
 
-| Measure | Value |
-|---|---|
-| model SHA-256 verification at start-up | 10.3–10.5 s |
-| cold start (spawn → healthy) | 3.5–3.8 s |
-| warm durations of the 8 completed cases (ms) | 51,173 · 27,955 · 55,388 · 54,385 · 30,481 · 50,228 · 48,623 · 31,581 |
-| warm P50 / P95 / max | 48.6 s / 55.4 s / 55.4 s |
-| R01: prompt / output tokens | 573 / 342 |
-| generation rate | ≈ 8.8 tokens/s; prompt processing ≈ 60 tokens/s |
-| peak llama-server working set / private memory | 6,262 MB / 3,967 MB (≈ 4.8 GB working set warm) |
-| live chain: attempt after restart | 52.5 s |
+| Case | in / out tokens | AC, 2026-10-26 (ms) | battery, final commit (ms) |
+|---|---|---|---|
+| R01 simple | 568 / 190 | 35,369 | 40,727 |
+| R02 sparse | 439 / 86 | 19,674 | 22,547 |
+| R03 French | 597 / 221 | 39,767 | 45,906 |
+| R04 Unicode | 584 / 192 | 36,091 | 41,364 |
+| R05 injection | 527 / 140 | 28,848 | 33,281 |
+| R06 repeat | 568 / 190 | 35,605 | 40,596 |
+| R07 multilingual | 537 / 174 | 32,822 | 37,317 |
+| R08 long | 1,221 / 466 | 98,480 | 113,539 |
+| R09 student | 499 / 99 | 23,302 | 26,094 |
+| R10 executive | 558 / 251 | 42,763 | 48,656 |
+| **P50 / P95 / max** | | **35.4 s / 98.5 s / 98.5 s** | **40.6 s / 113.5 s / 113.5 s** |
 
-**MVP_LATENCY_TARGET (P95 ≤ 120 s) is plausible** for outputs that fit 400 tokens on this host: 55 s observed. It is **not** plausible for the long CV at a budget large enough to finish it: R08 needed 1,331 tokens and 223 s. One host; not a claim about other hardware.
+Every case finished with `finish_reason: stop`; token counts were identical in both runs. **MVP_LATENCY_TARGET (P95 ≤ 120 s) is met** in both conditions — with margin on AC, narrowly on battery. Model verification 10.7 s on AC (35.8 s on battery), cold start 3.8 s (10.1 s on battery). Peak llama-server working set 5.4–5.6 GB, private 3.1–3.3 GB. One host; not a claim about other hardware.
 
-### 16.4 The blocking finding
+### 16.4 The v1 blocking finding (resolved by CC-1)
 
 | Case | Budget | `finish_reason` | completion tokens | duration | parses |
 |---|---|---|---|---|---|
@@ -146,16 +151,16 @@ Intel Core i7-8850H (6 cores / 12 threads), 31.3 GB RAM, Windows 11 Pro 10.0.262
 | R10 executive (3 positions) | 400 | `length` | 400 | 56 s | no |
 | R10 | 1,500 (diagnostic) | `stop` | 463 | 63 s | yes |
 
-Grammar enforcement works — every response that was allowed to finish was valid, schema-shaped JSON. What fails is the frozen contract's arithmetic: `kaayu-cv-profile:v1` allows up to 15 positions with 300-character descriptions, 40 skills and a 600-character summary, roughly 2,000 tokens of JSON at its maximum, while `generation.max_tokens` is 400. Any realistic CV with more than about three described positions can be truncated. The worker refuses those correctly, but the closing bar of this gate (10/10 structurally valid) cannot be met without changing the frozen profile, which this gate is not allowed to do. Resolving it is a `kaayu-cv-extract` version 2 under `MVP_v0.1.md` §20, choosing between: **(a)** tighter output bounds so the schema's worst case fits the budget (keeps the latency target; drops older positions and long descriptions), **(b)** a larger `max_tokens` with the same schema (completes every case; breaks P95 ≤ 120 s on this host for long CVs), or **(c)** both moderately. Recommendation: (a) with an explicit worst-case serialized size ≤ the budget, verified by a test that serializes a maximal valid profile and counts its tokens.
+Grammar enforcement worked — every response allowed to finish was valid, schema-shaped JSON — but `kaayu-cv-profile:v1` allowed roughly 2,000 tokens of JSON against a 400-token budget. Change control CC-1 ([`MVP_v0.1.md`](MVP_v0.1.md) §20.1, #154, #155) replaced the profile with `kaayu-cv-extract:v2`: the five most recent positions with 160-character descriptions, fewer and shorter list fields, compact single-line output, and a 600-token budget whose maximal legal output measures 530 tokens. R08 now finishes in 466 tokens with its five most recent positions; R10 in 251.
 
 ## 17. Real-model proof
 
 | Class | What ran | Result |
 |---|---|---|
-| MOCK_WORKER_TESTS | `cpu_inference_worker`, 31 tests (B01–B25, crash matrix, runtime negatives) | 31/31 |
+| MOCK_WORKER_TESTS | `cpu_inference_worker`, 31 tests (B01–B25, crash matrix, runtime negatives), on v2 | 31/31 |
 | REAL_LLAMA_CPP_TEST | pinned binary verified (digest, `--version`, `/props`), started, health, restart after kill | PASS |
-| REAL_MODEL_TEST | 10 synthetic CVs (R01–R10) through the real profile | 8/10 schema-valid; 2 truncated by the frozen budget (§16.4); 3/3 invalid inputs refused before the model (0 reached it); in-flight kill → `INFERENCE_FAILED` then recovery |
-| REAL_WORKER_E2E | live producer node; task accepted; first attempt killed mid-inference; retry; receipt anchored and verified by the client; result retrieved and commitment matched; chain and log scans | PASS |
+| REAL_MODEL_TEST | 10 synthetic CVs (R01–R10) through the real profile | v1: 8/10 (§16.4). **v2: 10/10 schema-valid, 0 truncations**, R08 five most recent positions, R10 three real positions, R09 none; 3/3 invalid inputs refused before the model; in-flight kill → `INFERENCE_FAILED` then recovery |
+| REAL_WORKER_E2E | live producer node; v2 task accepted; first attempt killed mid-inference; retry after restart (50.6 s); receipt anchored and verified by the client; result retrieved and commitment matched; 110 blocks and all logs clean | PASS (v1 and v2) |
 
 Qualitative sanity: R01 and its repeat R06 produced **byte-identical** canonical results on the same host (not a cross-platform claim); the prompt-injection CV produced no `@` and no out-of-enum seniority; sparse, French, Unicode and multilingual CVs produced schema-valid profiles with non-ASCII strings canonicalized stably. Extraction quality is not graded; `OUTPUT_CORRECTNESS_PROVEN = NO`.
 
@@ -171,9 +176,9 @@ The worker trusts its own host: post-setup tampering with the runtime's shared l
 
 GPU, vLLM, routing, a second model or profile, agents, ODS, remote model APIs (none is called — inference is local and offline after setup by construction; not separately tested with the network disabled), marketplace, MBO, trusted metering, pricing, attestation, a process-supervision framework.
 
-## 21. MVP-C handoff (once §16.4 is resolved)
+## 21. MVP-C handoff
 
-MVP-C builds a worker as `Worker::new(ids, executor, Box::new(ProfileDispatch::new(vec![Box::new(ReverseBytesProfile), Box::new(InferenceProfile::new(Arc::new(LlamaServer::start(RuntimeConfig::from_env(..)?, &kaayu::job_spec())?.0))?)])))` and never touches llama.cpp. The client computes `execution_spec` and `input_commitment` per the contract (helpers must reproduce `test-vectors/inference/kaayu-cv-extract-v1.json`), and exposes the observation fields of §15. The lease must exceed the inference timeout.
+MVP-C builds a worker as `Worker::new(ids, executor, Box::new(ProfileDispatch::new(vec![Box::new(ReverseBytesProfile), Box::new(InferenceProfile::new(Arc::new(LlamaServer::start(RuntimeConfig::from_env(..)?, &profiles::active_job_spec())?.0))?)])))` and never touches llama.cpp. The client computes `execution_spec` and `input_commitment` per the contract (helpers must reproduce `test-vectors/inference/kaayu-cv-extract-v2.json`, the active profile), and exposes the observation fields of §15. The lease must exceed the inference timeout.
 
 ## Invariants
 
