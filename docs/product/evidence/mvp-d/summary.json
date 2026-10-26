@@ -1,0 +1,238 @@
+{
+  "baseline_sha": "bb778a7d64ebaddfb28fef5d8490c2ac0e115ad1",
+  "power_state": "AC",
+  "power_state_after": "AC",
+  "total_jobs": 20,
+  "successful_jobs": 20,
+  "failed_jobs": 0,
+  "success_rate_pct": 100,
+  "failure_classes": {},
+  "percentile_method": "nearest-rank over successful jobs: the value at 1-based rank ceil(p/100 * n) of the ascending list (n = 20 → P50 = 10th, P90 = 18th, P95 = 19th)",
+  "latency_total_ms": {
+    "p50": 41468,
+    "p90": 55627,
+    "p95": 77868,
+    "max": 98158,
+    "min": 21278,
+    "n": 20
+  },
+  "latency_inference_ms": {
+    "p50": 36130,
+    "p90": 53437,
+    "p95": 75552,
+    "max": 94788,
+    "n": 20
+  },
+  "invalid_receipts": 0,
+  "result_commitment_mismatches": 0,
+  "duplicate_anchored_receipts": 0,
+  "receipts_per_task": [
+    1
+  ],
+  "foreign_receipts": 0,
+  "tx_counts": {
+    "producer": {
+      "blocks": 945,
+      "transfer": 1,
+      "compute_task": 20,
+      "anchor_receipt": 20,
+      "other": 0
+    },
+    "follower1": {
+      "blocks": 945,
+      "transfer": 1,
+      "compute_task": 20,
+      "anchor_receipt": 20,
+      "other": 0
+    },
+    "follower2": {
+      "blocks": 945,
+      "transfer": 1,
+      "compute_task": 20,
+      "anchor_receipt": 20,
+      "other": 0
+    }
+  },
+  "nodes_identical_chain": true,
+  "schema_failures_on_successful_jobs": 0,
+  "reverify_all_verified": true,
+  "recovery": {
+    "job": "D07",
+    "attempts": 2,
+    "fault": "llama-server process killed mid-inference (Stop-Process -Force)",
+    "killed_at": "2026-10-26T22:06:12.612Z",
+    "worker_busy_at_kill": true,
+    "final_receipt_count": 1,
+    "final_receipt_count_by_node": {
+      "producer": 1,
+      "follower1": 1,
+      "follower2": 1
+    },
+    "recovery_reason": {
+      "failed_attempts": [
+        {
+          "at": "2026-10-26T22:06:13Z",
+          "input": "af0b22c1b226c1ab",
+          "duration_ms": 12367,
+          "outcome": "INFERENCE_FAILED"
+        }
+      ],
+      "control_plane_reports": [
+        {
+          "at": "2026-10-26T22:06:13Z",
+          "task": "0881b177b8b6cd51",
+          "report": "Failed(Execution)"
+        }
+      ],
+      "llama_server_restarts_logged": 1,
+      "inference_attempts_logged": 21,
+      "inference_attempt_failures": [
+        {
+          "at": "2026-10-26T22:06:13Z",
+          "input": "af0b22c1b226c1ab",
+          "duration_ms": 12367,
+          "outcome": "INFERENCE_FAILED"
+        }
+      ],
+      "control_plane_failure_reports": [
+        {
+          "at": "2026-10-26T22:06:13Z",
+          "task": "0881b177b8b6cd51",
+          "report": "Failed(Execution)"
+        }
+      ]
+    },
+    "result": "SUCCESS",
+    "total_duration_ms": 51525
+  },
+  "privacy": {
+    "needles": {
+      "cv_lines": 167,
+      "result_fragments": 212,
+      "prompt_lines": 13,
+      "secrets": 4
+    },
+    "scanned": {
+      "chain_blocks": {
+        "producer": 945,
+        "follower1": 945,
+        "follower2": 945
+      },
+      "log_bytes": 1057060,
+      "cli_diagnostic_files": 40
+    },
+    "CHAIN_PRIVATE_HITS": 0,
+    "HTTP_LOG_PRIVATE_HITS": 0,
+    "WORKER_LOG_PRIVATE_HITS": 0,
+    "LLAMA_LOG_PRIVATE_HITS": 0,
+    "CLI_DIAGNOSTIC_PRIVATE_HITS": 0,
+    "NODE_AND_FUNDING_LOG_PRIVATE_HITS": 0,
+    "SECRET_HITS": 0
+  },
+  "service_unexpected_restarts": 0,
+  "worker_unexpected_restarts": 0,
+  "llama_server_restarts_logged": 1,
+  "llama_server_unexpected_restarts": 0,
+  "llama_pid_changes_outside_recovery": 0,
+  "front_responsive_between_jobs": true,
+  "memory_working_set_mib": {
+    "mvp_service": [
+      9,
+      10,
+      10,
+      10,
+      10,
+      11,
+      11,
+      11,
+      11,
+      11,
+      11,
+      11,
+      11,
+      11,
+      11,
+      11,
+      11,
+      11,
+      11,
+      11,
+      11,
+      11,
+      11,
+      11,
+      11,
+      11,
+      11,
+      11,
+      11,
+      11,
+      11,
+      11
+    ],
+    "llama_server": [
+      5286,
+      5369,
+      5370,
+      5370,
+      5370,
+      5369,
+      5369,
+      5371,
+      5367,
+      5368,
+      5370,
+      5370,
+      5371,
+      5606,
+      5608,
+      5608,
+      5609,
+      5753,
+      5751,
+      5753,
+      5878,
+      5876,
+      5878,
+      6029,
+      6028,
+      6029,
+      6153,
+      6150,
+      6151,
+      6153,
+      6153,
+      6153
+    ]
+  },
+  "disk_bytes": {
+    "node_data_before": [
+      169490,
+      169513,
+      169510
+    ],
+    "node_data_after": [
+      456130,
+      456152,
+      456149
+    ],
+    "service": "none (in-memory)"
+  },
+  "reference_cost_rate_usd_per_hour": 0.5,
+  "reference_cost_usd_max": 0.013165,
+  "business_extraction_accuracy": "NOT_ASSESSED",
+  "checks": {
+    "twenty_jobs": true,
+    "at_least_19_successes": true,
+    "p95_le_120s": true,
+    "zero_invalid_receipts": true,
+    "zero_output_mismatches": true,
+    "zero_duplicate_receipts": true,
+    "zero_private_leaks": true,
+    "zero_schema_failures": true,
+    "recovery_case_passes": true,
+    "ac_power_throughout": true,
+    "service_continuous": true
+  },
+  "acceptance": "PASS"
+}
