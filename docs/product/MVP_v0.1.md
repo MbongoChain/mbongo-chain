@@ -360,6 +360,20 @@ The MVP is **not**: a full decentralized AI cloud; an open GPU marketplace; an a
 
 This document is **frozen** until the MVP exit criteria (§12) are met or a gate proves one of its decisions wrong. A change needs a dedicated pull request that names the decision, the evidence that invalidated it, and the single replacement — not a widening. Adding a feature to the MVP path requires showing which exit criterion cannot be met without it.
 
+### 20.1 Change record CC-1 — Kaayu CV profile v2 (gate MVP-B.1, 2026-10-26)
+
+| | |
+|---|---|
+| **Decision changed** | the MVP inference profile: the job spec of §11, the output of §4, and the "≤ 400 output tokens" bound of §4 and §12 |
+| **Evidence** | MVP-B real run (#152, #153): 8/10 synthetic CVs; R08 and R10 stopped at exactly 400 tokens (`finish_reason: length`); allowed to finish they needed 1,331 and 463 tokens. Measured with the model's tokenizer, a maximal legal `kaayu-cv-profile:v1`-shaped output costs over 1,300 tokens. **v1 allowed output cardinality incompatible with its own generation budget.** |
+| **Old** | `kaayu-cv-extract:v1` — 15 positions × 300-character descriptions, 40 skills, 600-character summary, `max_tokens` 400 |
+| **Replacement** | [`kaayu-cv-extract:v2`](KAAYU_CV_EXTRACT_PROFILE_v2.md) — the five most recent positions × 160-character descriptions, 10 skills, 200-character summary, 2 education entries, 3 languages, 3 certifications, compact single-line output, `max_tokens` 600 (hard ceiling of this change: 600). **v2 narrows the output to the recruiting information needed by the MVP.** |
+| **Result** | real corpus 10/10, 0 truncations, P50 35.4 s, P95 98.5 s ≤ 120 s on the reference host (AC power); R08 466/600 tokens with its five most recent positions; R10 251/600 |
+| **Not changed** | the product statement, the first user, the workload, the runtime, the model, the provider model, the privacy level, payment, the client surface, every exit criterion other than the token bound, the protocol, the input contract |
+| **Why this is not a widening** | the MVP still extracts one structured profile from one CV on one CPU worker; it now asks for less. `FULL_CV_TRANSCRIPTION = NO`, `MOST_RELEVANT_EXPERIENCE_ONLY = YES` |
+| **Generic-contract consequence** | `mbongo-infer:v1` capped `max_tokens` at 400 for every profile; CC-1 keys that cap by profile version (version 1 unchanged, version ≥ 2 ≤ 600). **Requires maintainer approval** ([contract §14](MVP_INFERENCE_CONTRACT_v1.md)) |
+| **Active MVP profile** | `kaayu-cv-extract:v2`; v1 is SUPERSEDED_FOR_MVP, frozen and reproducible |
+
 ## See also
 
 - [`docs/INDEX.md`](../INDEX.md) — authority map (this document is the product-scope row)

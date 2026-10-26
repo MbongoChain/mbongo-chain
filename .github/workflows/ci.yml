@@ -92,6 +92,11 @@ jobs:
       # model runs here; MVP-B adds execution.
       - name: Mbongo MVP Inference Contract
         run: cargo test -p mbongo-compute --test inference_contract --locked
+      # MVP-B.1 (change control CC-1): the kaayu-cv-extract:v2 profile — v2
+      # golden vector, bounds, budget and maximal-output analysis; v1 and the
+      # generic contract still reproduce. No model runs here.
+      - name: Mbongo Kaayu CV Profile v2
+        run: cargo test -p mbongo-compute --test kaayu_profile_v2 --locked
 
   # ---------------------------------------------------------
   # Mbongo Compute v0.4 Vertical (run on PR + push)
