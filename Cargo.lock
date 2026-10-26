@@ -2998,11 +2998,14 @@ name = "mbongo-compute"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "blake3",
  "chacha20poly1305",
+ "clap",
  "criterion",
  "ed25519-dalek",
  "env_logger",
+ "getrandom 0.2.16",
  "hex",
  "log",
  "mbongo-core",

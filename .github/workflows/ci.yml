@@ -105,6 +105,12 @@ jobs:
       # The real llama.cpp + model run is mvp_inference_harness, never CI.
       - name: Mbongo MVP CPU Inference Worker
         run: cargo test -p mbongo-compute --test cpu_inference_worker --locked
+      # MVP-C: the loopback HTTP front and the mbongo-mvp CLI
+      # (docs/product/MVP_HTTP_CLI.md) — route semantics, privacy redaction,
+      # golden vectors, CLI orchestration, and receipt / result / schema
+      # verification kept separate. Fake chain and scripted backend; no model.
+      - name: Mbongo MVP HTTP + CLI
+        run: cargo test -p mbongo-compute --test mvp_http_cli --locked
 
   # ---------------------------------------------------------
   # Mbongo Compute v0.4 Vertical (run on PR + push)

@@ -64,6 +64,7 @@ pub mod data_plane;
 pub mod execution;
 pub mod identity;
 pub mod inference;
+pub mod mvp;
 pub mod policy;
 pub mod profiles;
 pub mod worker;
