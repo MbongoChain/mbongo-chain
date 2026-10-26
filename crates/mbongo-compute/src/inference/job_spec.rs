@@ -41,6 +41,16 @@ pub mod bounds {
     /// `max_tokens` ∈ `[1, 600]` for profile version 2 and later: the hard
     /// ceiling of change control CC-1 (`docs/product/MVP_v0.1.md` §20.1).
     pub const MAX_TOKENS_CEILING_V2: u64 = 600;
+
+    /// The `max_tokens` cap for a profile version (CC-1): 400 for version 1,
+    /// 600 for version 2 and later.
+    pub fn max_tokens_cap(profile_version: u64) -> u64 {
+        if profile_version >= 2 {
+            MAX_TOKENS_CEILING_V2
+        } else {
+            MAX_TOKENS_MAX
+        }
+    }
     /// `limits.max_input_bytes` ∈ `[1, 10000]`.
     pub const MAX_INPUT_BYTES_MAX: u64 = 10_000;
     /// `limits.max_output_bytes` ∈ `[1, 8000]`.
@@ -418,13 +428,8 @@ impl InferenceJobSpecV1 {
                 "seed above u32::MAX".into(),
             ));
         }
-        // CC-1: the cap is keyed by profile version, so every version-1 job
-        // spec keeps exactly the MVP-A bound.
-        let max_tokens_cap = if self.profile.version >= 2 {
-            bounds::MAX_TOKENS_CEILING_V2
-        } else {
-            bounds::MAX_TOKENS_MAX
-        };
+        // CC-1: keyed by profile version; version 1 keeps the MVP-A bound.
+        let max_tokens_cap = bounds::max_tokens_cap(self.profile.version);
         if g.max_tokens == 0 || g.max_tokens > max_tokens_cap {
             return Err(ContractError::InvalidGenerationParameters(format!(
                 "max_tokens outside [1, {max_tokens_cap}]"
