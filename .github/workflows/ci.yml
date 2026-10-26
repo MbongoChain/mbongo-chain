@@ -15,7 +15,10 @@ jobs:
   # ---------------------------------------------------------
   checks:
     name: Rust Checks (fmt, clippy, test, replay)
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: on ubuntu-26.04 the newer GCC cannot build
+    # librocksdb-sys 0.16 (RocksDB 8.10 omits <cstdint>). Every green run used
+    # ubuntu-24.04. Revisit when the rocksdb crate is upgraded.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     steps:
@@ -92,6 +95,11 @@ jobs:
       # model runs here; MVP-B adds execution.
       - name: Mbongo MVP Inference Contract
         run: cargo test -p mbongo-compute --test inference_contract --locked
+      # MVP-B.1 (change control CC-1): the kaayu-cv-extract:v2 profile — v2
+      # golden vector, bounds, budget and maximal-output analysis; v1 and the
+      # generic contract still reproduce. No model runs here.
+      - name: Mbongo Kaayu CV Profile v2
+        run: cargo test -p mbongo-compute --test kaayu_profile_v2 --locked
       # MVP-B: the CPU inference worker (docs/product/MVP_CPU_INFERENCE_WORKER.md)
       # with a scripted backend and a fake HTTP server — MOCK_WORKER_TESTS only.
       # The real llama.cpp + model run is mvp_inference_harness, never CI.
@@ -111,7 +119,7 @@ jobs:
   # "MBONGO COMPUTE V0.4 VERTICAL: PASS".
   compute-vertical:
     name: Mbongo Compute v0.4 Vertical
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     needs: checks
 
@@ -183,7 +191,7 @@ jobs:
 
   devnet:
     name: Devnet Convergence Harness
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     needs: checks
     if: github.event_name == 'push'
@@ -216,7 +224,7 @@ jobs:
   # the process-mode harness, this one covers the Docker/Compose path.
   docker-devnet:
     name: Docker Devnet Bootstrap
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The bootstrap already bounds itself: docker-devnet.sh waits at most
     # DEVNET_WAIT_TIMEOUT (420s) for the three nodes to become healthy, and
     # .env.ci caps readiness and convergence at 240s each, so about 15
@@ -258,7 +266,7 @@ jobs:
   # into CI would freeze assumptions the RFC deliberately leaves open.
   monetary-model:
     name: Monetary Policy Model
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A stdlib-only model over 100 simulated years runs in well under a
     # second; five minutes is generous and still bounds a hang.
     timeout-minutes: 5
@@ -320,7 +328,7 @@ jobs:
   # from ever reaching the wire.
   sdk-typescript:
     name: TypeScript SDK (Node ${{ matrix.node-version }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Install, typecheck and a stdlib test runner over one small package.
     timeout-minutes: 10
 

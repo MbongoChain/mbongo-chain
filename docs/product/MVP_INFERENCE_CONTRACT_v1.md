@@ -86,7 +86,7 @@ A flat tree of objects whose leaves are ASCII strings or non-negative integers. 
 | `generation.temperature_milli` | integer | temperature × 1000, ∈ [0, 200] |
 | `generation.top_p_milli` | integer | top-p × 1000, ∈ [500, 1000] |
 | `generation.seed` | integer | ≤ 2³²−1 |
-| `generation.max_tokens` | integer | ∈ [1, 400] |
+| `generation.max_tokens` | integer | ∈ [1, 400] for `profile.version` 1; ∈ [1, 600] for version ≥ 2 (amendment CC-1, §14) |
 | `limits.max_input_bytes` | integer | ∈ [1, 10000] |
 | `limits.max_output_bytes` | integer | ∈ [1, 8000] |
 
@@ -170,6 +170,8 @@ The profile is **identity-free by design**: no name, contact, address, birth dat
 ## 14. Generation parameters
 
 `generation = { temperature_milli: 0, top_p_milli: 1000, seed: 42, max_tokens: 400 }`; allowed ranges in §6. Temperature 0 with a fixed seed is supported by llama-server (greedy decoding) and makes output variance low; it **does not** make inference bit-reproducible across CPU builds, thread counts or hardware, and this contract claims no such thing (§21). A job spec outside the ranges is `INVALID_GENERATION_PARAMETERS` before any inference (A11).
+
+**Amendment CC-1 (MVP-B.1).** The `max_tokens` range is keyed by `profile.version`: version 1 keeps `[1, 400]` exactly, so every version-1 job spec, vector and test of this contract has the outcome it had; version 2 and later may declare up to 600 tokens, the hard ceiling of change control CC-1 ([`MVP_v0.1.md`](MVP_v0.1.md) §20.1). Nothing else in `mbongo-infer:v1` changes: not the `execution_spec` framing, not the job-spec field set, canonicalization or digest, not the validation order or the error taxonomy. The reason is a profile defect, not a contract defect: `kaayu-cv-extract:v1` allowed more output than 400 tokens can hold; its successor [`kaayu-cv-extract:v2`](KAAYU_CV_EXTRACT_PROFILE_v2.md) narrows the output and needs a moderately larger budget.
 
 ## 15. Result canonicalization
 
