@@ -279,8 +279,7 @@ impl InferenceBackend for LlamaServer {
 
     fn complete(&self, request: &ChatRequest) -> Result<Completion, ContractError> {
         self.ensure_ready()?;
-        let body = serde_json::to_vec(&request.body())
-            .map_err(|_| ContractError::InferenceFailed("cannot encode request".into()))?;
+        let body = request.body_bytes();
         let r = http::request(
             self.cfg.port,
             "POST",

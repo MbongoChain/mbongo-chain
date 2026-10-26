@@ -9,21 +9,23 @@ use std::path::Path;
 use sha2::{Digest, Sha256};
 
 use crate::inference::job_spec::InferenceJobSpecV1;
-use crate::inference::{kaayu, ContractError};
+use crate::inference::ContractError;
+use crate::profiles::kaayu_v2;
 
 use super::config::LLAMA_CPP_BUILD_NUMBER;
 
-/// The frozen MVP-A job-spec digest (`test-vectors/inference/kaayu-cv-extract-v1.json`).
+/// The frozen job-spec digest of the active MVP profile `kaayu-cv-extract:v2`
+/// (`test-vectors/inference/kaayu-cv-extract-v2.json`, change control CC-1).
 /// A rebuilt worker whose profile files changed computes another digest and
 /// refuses to start.
 pub const FROZEN_JOB_SPEC_DIGEST: &str =
-    "be9ae960334c3e917ad600e2b5220440c27dd79c5e586e998e60cbc148affe0e";
-/// The frozen prompt-template SHA-256.
+    "f38886b234dd411be1b90b25f94b21e4ec10afa5720317c3630dc0b9df4aac6f";
+/// The frozen v2 prompt-template SHA-256.
 pub const FROZEN_PROMPT_TEMPLATE_SHA256: &str =
-    "6c950b4863bc339af94d904dbb609b3dd9098259740f01a6539406e641276d63";
-/// The frozen output-schema SHA-256.
+    "93ec9176e8d267ec1753476cbdc26862f8672cff14c1c41e2104b084c39a1f87";
+/// The frozen v2 output-schema SHA-256.
 pub const FROZEN_OUTPUT_SCHEMA_SHA256: &str =
-    "81521447e7b7b45c670ff1717d608fc2304765ab530587aba2370ba0a9191af5";
+    "0a81727a7cebdc73e97869f82211c07c7a67912e44b0ee24274003a67d9750ab";
 
 /// Streaming SHA-256 of a file, lowercase hex.
 pub fn sha256_file(path: &Path) -> std::io::Result<String> {
@@ -42,14 +44,14 @@ pub fn sha256_file(path: &Path) -> std::io::Result<String> {
 
 /// Step 0: the profile the worker was built with is the frozen one.
 pub fn verify_profile_assets(spec: &InferenceJobSpecV1) -> Result<(), ContractError> {
-    if kaayu::prompt_template_sha256() != FROZEN_PROMPT_TEMPLATE_SHA256
+    if kaayu_v2::prompt_template_sha256() != FROZEN_PROMPT_TEMPLATE_SHA256
         || spec.profile.prompt_template_sha256 != FROZEN_PROMPT_TEMPLATE_SHA256
     {
         return Err(ContractError::JobSpecInvalid(
             "prompt template differs from the frozen profile".into(),
         ));
     }
-    if kaayu::output_schema_sha256() != FROZEN_OUTPUT_SCHEMA_SHA256
+    if kaayu_v2::output_schema_sha256() != FROZEN_OUTPUT_SCHEMA_SHA256
         || spec.profile.output_schema_sha256 != FROZEN_OUTPUT_SCHEMA_SHA256
     {
         return Err(ContractError::JobSpecInvalid(

@@ -5,7 +5,9 @@
 //! `docs/product/MVP_CPU_INFERENCE_WORKER.md` on top of the frozen contract
 //! of `docs/product/MVP_INFERENCE_CONTRACT_v1.md` (module
 //! [`crate::inference`]), which it never reinterprets: every task goes
-//! through [`crate::inference::preflight`] and [`crate::inference::finish`].
+//! through [`crate::inference::preflight`] and the profile's finish step
+//! ([`crate::profiles::finish`]); the worker serves the active MVP profile
+//! `kaayu-cv-extract:v2` (change control CC-1).
 //!
 //! | Module | Concern |
 //! |---|---|

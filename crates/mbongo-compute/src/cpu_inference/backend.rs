@@ -24,6 +24,11 @@ pub struct ChatRequest {
     pub max_tokens: u64,
     /// The frozen output schema, parsed from its pinned bytes.
     pub schema: serde_json::Value,
+    /// The pinned schema bytes, sent verbatim when present. Property order
+    /// matters: llama.cpp v0.7.0 builds the grammar with required properties
+    /// in the order the schema lists them, so a re-serialized (key-sorted)
+    /// schema would change the order in which the model writes fields.
+    pub schema_text: Option<String>,
 }
 
 impl std::fmt::Debug for ChatRequest {
@@ -56,7 +61,29 @@ impl ChatRequest {
             seed: spec.generation.seed,
             max_tokens: spec.generation.max_tokens,
             schema,
+            schema_text: None,
         }
+    }
+
+    /// Sends `text` — the pinned schema file — verbatim as the schema.
+    #[must_use]
+    pub fn with_schema_text(mut self, text: &str) -> Self {
+        self.schema_text = Some(text.to_owned());
+        self
+    }
+
+    /// The exact request bytes: [`Self::body`] serialized, with the pinned
+    /// schema bytes spliced in verbatim when [`Self::schema_text`] is set.
+    pub fn body_bytes(&self) -> Vec<u8> {
+        const SLOT: &str = "__mbongo_pinned_schema__";
+        let Some(text) = &self.schema_text else {
+            return self.body().to_string().into_bytes();
+        };
+        let mut body = self.body();
+        body["response_format"]["json_schema"]["schema"] = serde_json::Value::String(SLOT.into());
+        body.to_string()
+            .replacen(&format!("\"{SLOT}\""), text.trim_end(), 1)
+            .into_bytes()
     }
 
     /// The `/v1/chat/completions` body for llama.cpp v0.7.0. Besides the

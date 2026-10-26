@@ -43,6 +43,7 @@ use mbongo_compute::policy::{
     compose, dimension as d, eligible, Advertisement, Claim, DerivedFacts, Input, PolicyFragment,
     Scope, SessionFacts, Source, TaskFacts, Value,
 };
+use mbongo_compute::profiles::{self, kaayu_v2};
 use mbongo_compute::worker::{AttemptOutcome, Fault, Worker};
 use mbongo_core::{
     Address, ComputeTask, Transaction, TransactionPayload, TransactionType, COMPUTE_TASK_VERSION,
@@ -112,7 +113,7 @@ fn canonical_output() -> Vec<u8> {
 
 fn infer_spec() -> Vec<u8> {
     InferenceExecutionSpec {
-        job_spec_digest: kaayu::job_spec().digest(),
+        job_spec_digest: profiles::active_job_spec().digest(),
     }
     .encode()
 }
@@ -320,7 +321,11 @@ async fn b02_unknown_profile_is_refused_and_never_falls_back() {
     ]);
     for spec in [
         b"mbongo-other:v1".to_vec(),
-        [b"mbongo-infer:v2".as_slice(), &kaayu::job_spec().digest()].concat(),
+        [
+            b"mbongo-infer:v2".as_slice(),
+            &profiles::active_job_spec().digest(),
+        ]
+        .concat(),
         Vec::new(),
     ] {
         assert!(!dispatch.accepts(&spec));
@@ -340,7 +345,7 @@ async fn b02_unknown_profile_is_refused_and_never_falls_back() {
 
 #[tokio::test]
 async fn b03_job_spec_digest_mismatch_blocks_execution() {
-    let mut wrong = kaayu::job_spec().digest();
+    let mut wrong = profiles::active_job_spec().digest();
     wrong[0] ^= 1;
     let spec = InferenceExecutionSpec {
         job_spec_digest: wrong,
@@ -485,7 +490,7 @@ async fn b08_valid_input_builds_the_exact_frozen_prompt() {
     let req = &w.backend.requests()[0];
     assert_eq!(
         req.system,
-        kaayu::PROMPT_TEMPLATE,
+        kaayu_v2::PROMPT_TEMPLATE,
         "template verbatim, nothing prepended or appended"
     );
     assert_eq!(req.user, cv_text(), "the CV text verbatim");
@@ -525,14 +530,29 @@ async fn b09_exact_generation_params_are_sent() {
     assert_eq!(body["temperature"], 0.0);
     assert_eq!(body["top_p"], 1.0);
     assert_eq!(body["seed"], 42);
-    assert_eq!(body["max_tokens"], 400);
+    assert_eq!(body["max_tokens"], 600);
     assert_eq!(body["stream"], false);
     assert_eq!(body["cache_prompt"], false);
     assert_eq!(body["response_format"]["type"], "json_schema");
-    let schema: serde_json::Value = serde_json::from_str(kaayu::OUTPUT_SCHEMA).unwrap();
+    let schema: serde_json::Value = serde_json::from_str(kaayu_v2::OUTPUT_SCHEMA).unwrap();
     assert_eq!(
         body["response_format"]["json_schema"]["schema"], schema,
         "the pinned schema, unmodified"
+    );
+    // The bytes sent carry the pinned schema verbatim, so the grammar keeps
+    // the profile's property order (summary first), not a key-sorted order.
+    let req = &w.backend.requests()[0];
+    let sent = String::from_utf8(req.body_bytes()).unwrap();
+    assert!(
+        sent.contains(kaayu_v2::OUTPUT_SCHEMA.trim_end()),
+        "schema bytes verbatim"
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&sent).unwrap();
+    assert_eq!(parsed["response_format"]["json_schema"]["schema"], schema);
+    let schema_at = sent.find("\"$id\"").unwrap();
+    assert!(
+        sent[schema_at..].find("\"summary\"").unwrap()
+            < sent[schema_at..].find("\"certifications\": {").unwrap()
     );
 }
 
@@ -736,7 +756,7 @@ async fn b18_a_different_model_is_never_used_as_fallback() {
 fn private_fragments() -> Vec<String> {
     let mut v: Vec<String> =
         cv_text().lines().filter(|l| l.len() >= 12).map(str::to_owned).collect();
-    v.push(kaayu::PROMPT_TEMPLATE.lines().next().unwrap().to_owned());
+    v.push(kaayu_v2::PROMPT_TEMPLATE.lines().next().unwrap().to_owned());
     v.push(String::from_utf8(canonical_output()).unwrap());
     for s in [
         "Designed the event-sourced order pipeline",
@@ -928,7 +948,7 @@ async fn b24_wrong_capability_worker_is_ineligible_and_gets_no_lease() {
 
 #[test]
 fn b25_golden_job_spec_vector_is_consumed_exactly() {
-    let g = fixture("kaayu-cv-extract-v1.json");
+    let g = fixture("kaayu-cv-extract-v2.json");
     let p = InferenceProfile::new(Arc::new(FakeBackend::pinned())).unwrap();
     assert_eq!(
         hex::encode(p.execution_spec()),
@@ -938,9 +958,11 @@ fn b25_golden_job_spec_vector_is_consumed_exactly() {
         FROZEN_JOB_SPEC_DIGEST,
         g["job_spec_digest"].as_str().unwrap()
     );
-    assert_eq!(verify_profile_assets(&kaayu::job_spec()), Ok(()));
+    assert_eq!(verify_profile_assets(&profiles::active_job_spec()), Ok(()));
+    // The superseded v1 profile is not what this worker serves.
+    assert!(verify_profile_assets(&kaayu::job_spec()).is_err());
     // A drifted profile is refused at start-up.
-    let mut drifted = kaayu::job_spec();
+    let mut drifted = profiles::active_job_spec();
     drifted.generation.seed = 43;
     assert_eq!(
         verify_profile_assets(&drifted),

@@ -7,9 +7,8 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use crate::execution::{ExecutionError, ExecutionProfile};
 use crate::inference::execution_spec::{InferenceExecutionSpec, INFER_TAG_V1};
 use crate::inference::job_spec::InferenceJobSpecV1;
-use crate::inference::{
-    finish, kaayu, preflight, ContractError, RepositoryProfiles, WorkerInferenceConfig,
-};
+use crate::inference::{preflight, ContractError, WorkerInferenceConfig};
+use crate::profiles::{self, KaayuProfiles};
 
 use super::backend::{ChatRequest, InferenceBackend};
 
@@ -40,14 +39,18 @@ pub struct InferenceObservation {
     pub result_bytes: Option<usize>,
     /// The contract error code, when failed.
     pub failure_code: Option<&'static str>,
+    /// `finish_reason` as the runtime reported it (`stop`, `length`, …).
+    pub finish_reason: Option<String>,
 }
 
 /// One worker → one pinned model → one pinned profile (MVP-B §13).
 pub struct InferenceProfile {
     backend: Arc<dyn InferenceBackend>,
+    system: &'static str,
     verified: WorkerInferenceConfig,
     spec_bytes: Vec<u8>,
     schema: serde_json::Value,
+    schema_text: &'static str,
     observations: Arc<Mutex<Vec<InferenceObservation>>>,
 }
 
@@ -57,7 +60,8 @@ impl InferenceProfile {
     /// (`RUNTIME_REVISION_MISMATCH`, `MODEL_DIGEST_MISMATCH`): there is no
     /// fallback model and no fallback runtime.
     pub fn new(backend: Arc<dyn InferenceBackend>) -> Result<Self, ContractError> {
-        let spec = kaayu::job_spec();
+        // One worker, one pinned profile: the active MVP profile (CC-1).
+        let spec = profiles::active_job_spec();
         let id = backend.identity();
         let verified = WorkerInferenceConfig {
             runtime_family: id.runtime_family,
@@ -68,16 +72,21 @@ impl InferenceProfile {
         };
         crate::inference::check_runtime(&spec, &verified)?;
         crate::inference::check_model(&spec, &verified)?;
-        let schema = serde_json::from_str(kaayu::OUTPUT_SCHEMA)
+        let (system, schema_text) = profiles::assets(&spec).ok_or_else(|| {
+            ContractError::JobSpecInvalid("no repository assets for the active profile".into())
+        })?;
+        let schema = serde_json::from_str(schema_text)
             .map_err(|_| ContractError::JobSpecInvalid("output schema is not JSON".into()))?;
         Ok(Self {
             backend,
+            system,
             verified,
             spec_bytes: InferenceExecutionSpec {
                 job_spec_digest: spec.digest(),
             }
             .encode(),
             schema,
+            schema_text,
             observations: Arc::new(Mutex::new(Vec::new())),
         })
     }
@@ -120,6 +129,7 @@ impl InferenceProfile {
             output_tokens: None,
             result_bytes: None,
             failure_code: None,
+            finish_reason: None,
         };
         let outcome = self.run_inner(execution_spec, input_commitment, input, &mut obs);
         obs.completed_at_ms = unix_ms();
@@ -152,24 +162,25 @@ impl InferenceProfile {
     ) -> Result<Vec<u8>, ContractError> {
         let pre = preflight(
             execution_spec,
-            &RepositoryProfiles,
+            &KaayuProfiles,
             &self.verified,
             input,
             input_commitment,
         )?;
         obs.job_spec_digest = pre.execution_spec.job_spec_digest;
         obs.model_id = model_id(&pre.job_spec);
-        let prompt = kaayu::build_prompt(&pre.input);
         let request = ChatRequest::new(
             &pre.job_spec,
-            prompt.system,
-            prompt.user,
+            self.system,
+            &pre.input.cv_text,
             self.schema.clone(),
-        );
+        )
+        .with_schema_text(self.schema_text);
         let completion = self.backend.complete(&request)?;
         obs.input_tokens = completion.prompt_tokens;
         obs.output_tokens = completion.completion_tokens;
-        let result = finish(&pre.job_spec, &completion.content)?;
+        obs.finish_reason.clone_from(&completion.finish_reason);
+        let result = profiles::finish(&pre.job_spec, &completion.content)?;
         Ok(result.bytes)
     }
 }

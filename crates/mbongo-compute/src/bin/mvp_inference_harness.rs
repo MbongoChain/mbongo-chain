@@ -1,6 +1,7 @@
 //! MVP-B real-model harness: the pinned llama.cpp runtime and the pinned
 //! Qwen3-4B-Instruct-2507 GGUF on CPU, executing the frozen
-//! `mbongo-infer:v1` / `kaayu-cv-extract:v1` contract.
+//! `mbongo-infer:v1` contract with the active MVP profile
+//! `kaayu-cv-extract:v2` (change control CC-1).
 //!
 //! **Not run in CI** (it needs the 2.5 GB model). Prerequisite:
 //! `scripts/setup-mvp-inference-runtime.sh` has populated the cache.
@@ -34,9 +35,8 @@ use mbongo_compute::data_plane::{
 use mbongo_compute::execution::{reference_output_commitment, ReverseBytesProfile};
 use mbongo_compute::identity::{ExecutorKey, IdSource};
 use mbongo_compute::inference::canonical;
-use mbongo_compute::inference::kaayu::{
-    self, CandidateProfileV1, CvExtractionInputV1, MAX_OUTPUT_BYTES,
-};
+use mbongo_compute::inference::kaayu::{CvExtractionInputV1, MAX_OUTPUT_BYTES};
+use mbongo_compute::profiles::{self, kaayu_v2};
 use mbongo_compute::worker::{AttemptOutcome, Worker};
 use mbongo_core::{
     Address, ComputeTask, Transaction, TransactionPayload, TransactionType, COMPUTE_TASK_VERSION,
@@ -99,7 +99,7 @@ fn corpus() -> (Vec<Case>, Vec<(String, String, String)>) {
 }
 
 fn start_backend() -> Result<(Arc<LlamaServer>, InferenceProfile), String> {
-    let spec = kaayu::job_spec();
+    let spec = profiles::active_job_spec();
     let cfg = RuntimeConfig::from_env(&spec.model.artifact_name)?;
     println!(
         "runtime_path_file={}",
@@ -147,10 +147,8 @@ fn structural(bytes: &[u8]) -> Result<String, String> {
     if !canonical::is_canonical(bytes, MAX_OUTPUT_BYTES) {
         return Err("result is not canonical".into());
     }
-    let p = CandidateProfileV1::from_model_output(
-        std::str::from_utf8(bytes).map_err(|_| "result not UTF-8")?,
-    )
-    .map_err(|e| e.code().to_string())?;
+    let p = kaayu_v2::parse_output(std::str::from_utf8(bytes).map_err(|_| "result not UTF-8")?)
+        .map_err(|e| e.code().to_string())?;
     if p.canonical_bytes() != bytes {
         return Err("re-canonicalization changed the bytes".into());
     }
@@ -215,11 +213,21 @@ fn run_corpus(scan: &mut Vec<String>) -> Result<(), String> {
                     );
                 }
                 println!(
-                    "  {} {:<22} OK  duration_ms={ms} input_tokens={:?} output_tokens={:?} result_bytes={} {s}",
-                    c.id, c.name, obs.input_tokens, obs.output_tokens, result.len()
+                    "  {} {:<22} OK  duration_ms={ms} input_tokens={:?} output_tokens={:?} finish={:?} result_bytes={} {s}",
+                    c.id, c.name, obs.input_tokens, obs.output_tokens, obs.finish_reason, result.len()
                 );
             }
-            Err(e) => println!("  {} {:<22} FAIL {}", c.id, c.name, e.code()),
+            Err(e) => {
+                let obs = profile.observations().lock().unwrap().last().cloned().unwrap();
+                println!(
+                    "  {} {:<22} FAIL {} output_tokens={:?} finish={:?}",
+                    c.id,
+                    c.name,
+                    e.code(),
+                    obs.output_tokens,
+                    obs.finish_reason
+                );
+            }
         }
     }
     println!("REAL_MODEL_SCHEMA_PASS={schema_ok}/{}", cases.len());
@@ -580,8 +588,7 @@ async fn run_e2e(chain: &RpcChainClient, scan: &mut Vec<String>) -> Result<(), S
     needles.push(hex::encode(&input_bytes));
     needles.push(hex::encode(&result));
     needles.push(result_text.clone());
-    let profile_value =
-        CandidateProfileV1::from_model_output(&result_text).map_err(|e| e.to_string())?;
+    let profile_value = kaayu_v2::parse_output(&result_text).map_err(|e| e.to_string())?;
     needles.push(profile_value.summary.clone());
     let mut blocks = 0;
     for h in 0..=latest {
