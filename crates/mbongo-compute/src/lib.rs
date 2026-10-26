@@ -64,4 +64,5 @@ pub mod execution;
 pub mod identity;
 pub mod inference;
 pub mod policy;
+pub mod profiles;
 pub mod worker;
