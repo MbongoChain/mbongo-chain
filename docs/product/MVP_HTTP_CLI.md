@@ -181,9 +181,22 @@ No TypeScript helper is added in MVP-C, so there is no cross-language result to 
 
 ## 16. Smoke-test evidence
 
-One real synthetic job end to end, on the reference host, on AC power: the CLI → HTTP upload → `ComputeTask` on a live local producer node → registration → the MVP-B worker on the pinned `llama-server` and model → canonical result → anchored receipt → client verification; then a second job through `submit --wait --json` (the MVP-D record form). This is a smoke proof, not MVP-D's measurement.
+One real synthetic job end to end, on the reference host, on AC power: the CLI → HTTP upload → `ComputeTask` on a live local producer node → registration → the MVP-B worker on the pinned `llama-server` and model → canonical result → anchored receipt → client verification; then a second job through `submit --wait --json` (the MVP-D record form). This is a smoke proof, not MVP-D's measurement: four jobs in total over two runs, no percentile, no reliability figure.
 
-*(Recorded in the MVP-C pull request; see §16.1.)*
+**Setup (2026-10-26).** i7-8850H, CPU only, 6 inference threads, `POWER_STATE = AC` (`Win32_Battery.BatteryStatus = 2` before and after each run). `llama-server` b11669 (v0.7.0 @ `620d2225`), model SHA-256 `3605803b…e597` verified at start-up, cold start 3.8–4.0 s. A fresh single-producer node (1-second blocks); the executor account funded with `mvp_service fund-executor`; the synthetic fixture as input (1,405 canonical bytes, `input_commitment` `af341a39…e052`).
+
+| Run | Source | Job | Task height → receipt height | Inference | Submission → verified | Receipt / result / schema / business |
+|---|---|---|---|---|---|---|
+| A | `d105250` | `cd86f345…` (`submit --wait`) | 21 → 77 | 54.6 s | 57.9 s | VERIFIED / VERIFIED / VERIFIED / NOT ASSESSED |
+| A | `d105250` | `4ff2b890…` (`submit --wait --json`) | 79 → 136 | 55.3 s | 58.9 s | VERIFIED / VERIFIED / VERIFIED / NOT ASSESSED |
+| B | `0c57539` | `45b63caf…` (`submit --wait`) | 20 → 76 | 54.5 s | 57.6 s | VERIFIED / VERIFIED / VERIFIED / NOT ASSESSED |
+| B | `0c57539` | `f9e83ce9…` (`submit --wait --json`) | 78 → 135 | 54.8 s | 58.5 s | VERIFIED / VERIFIED / VERIFIED / NOT ASSESSED |
+
+Every job: one attempt, `finish_reason: stop`, 714 prompt / 312 completion tokens (reported, untrusted), a 1,255-byte canonical result; `verify --json` exit 0; `status` and `result --out` exit 0. All four results have the same output commitment `3aa0640b…eaff` — an observation of this runtime at temperature 0 and seed 42 on one host, not a reproducibility guarantee ([`MVP_v0.1.md`](MVP_v0.1.md) §13).
+
+**Privacy scans, per run:** every block of the node (137–139 blocks, 5 transactions: the funding transfer, two tasks, two receipts) contains no CV line, no result fragment, and neither as bytes, hex or text — 0 hits; the service log, `llama-server` log, funding and CLI diagnostics (12 files) contain no CV fragment, result fragment or prompt-template fragment — 0 hits; the CLI's standard output without `--show-result` (3 files) — 0 hits.
+
+**Finding fixed by run B.** Run A's service answered no request between the start and the end of each inference: the CLI's status poll waited 55 s. The `llama-server` call blocks inside the worker attempt, and on the service's multi-threaded runtime that stalled the routes. Since `0c57539` the attempt runs under `tokio::task::block_in_place`; in run B the front answered 53 and 52 status requests (≤ 1 ms each) inside the two inference windows, and the CLI saw `receipt_submitted` before `completed`. Test C16c guards the behaviour.
 
 ## 17. Non-goals
 
