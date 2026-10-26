@@ -49,6 +49,13 @@ env_logger = { workspace = true }
 # HTTP client (live chain client for the harness)
 reqwest = { workspace = true }
 
+# MVP HTTP front and CLI (MVP-C). Already in the lock through
+# mbongo-api, mbongo-node and the transitive RNG stack; no new crate enters
+# the workspace.
+axum = { workspace = true }
+clap = { workspace = true, features = ["env"] }
+getrandom = "0.2"
+
 # Utilities
 hex = { workspace = true }
 
@@ -67,6 +74,14 @@ path = "src/bin/confidential_authorization.rs"
 [[bin]]
 name = "mvp_inference_harness"
 path = "src/bin/mvp_inference_harness.rs"
+
+[[bin]]
+name = "mvp_service"
+path = "src/bin/mvp_service.rs"
+
+[[bin]]
+name = "mbongo-mvp"
+path = "src/bin/mbongo_mvp.rs"
 
 [dev-dependencies]
 criterion = { workspace = true }

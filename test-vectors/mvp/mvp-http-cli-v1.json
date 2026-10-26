@@ -1,0 +1,30 @@
+{
+  "$comment": "Golden vector for the MVP HTTP front and CLI (docs/product/MVP_HTTP_CLI.md §15). Synthetic data only. Regenerate with: cargo test -p mbongo-compute --test mvp_http_cli generate_mvp_vector -- --ignored --nocapture",
+  "auth": {
+    "body": "{\"object_ref\":\"00\",\"executor\":\"00\"}",
+    "key_seed": "0707070707070707070707070707070707070707070707070707070707070707",
+    "method": "POST",
+    "nonce": "09090909090909090909090909090909",
+    "path": "/v1/tasks/8a8291588f2fd86eeb78265914869b95e7d2d8c52626429092aa7b15cfaaa314/register",
+    "signature": "36a24ac8a37dc1b2f75dc814c5be1253cc974904901336dd4b6212db0b24bc3ac423670d6a5fe9a60db8c318276872568bd546c007e341bc0b2146fcaff29205",
+    "signing_message": "mbongo-mvp-http:v1\nPOST\n/v1/tasks/8a8291588f2fd86eeb78265914869b95e7d2d8c52626429092aa7b15cfaaa314/register\n1790000000\n09090909090909090909090909090909\n0912d625adbe55f175f3b2d8c6b6206cec127b415105f63f09102e40691efeeb",
+    "timestamp": 1790000000
+  },
+  "fixture": {
+    "input_canonical_bytes": 1405,
+    "input_commitment": "af341a39acacdfbe9813a4424513d5f7c06abfd4564d732f7f8f352eac61e052",
+    "input_commitment_rule": "BLAKE3(\"mbongo:compute-input:v1\" || canonical input object)",
+    "input_contract": "kaayu-cv-extract-input:v1",
+    "path": "crates/mbongo-compute/fixtures/synthetic-cv.txt",
+    "sha256": "54083c66159007fa6e4756344c8f7adfbaa8aea5a6c8ee1e042674f93414edf1"
+  },
+  "task": {
+    "execution_spec": "6d626f6e676f2d696e6665723a7631f38886b234dd411be1b90b25f94b21e4ec10afa5720317c3630dc0b9df4aac6f",
+    "executor": "25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78",
+    "executor_seed": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+    "salt": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+    "submitter": "e734ea6c2b6257de72355e472aa05a4c487e6b463c029ed306df2f01b5636b58",
+    "submitter_seed": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "task_id": "8a8291588f2fd86eeb78265914869b95e7d2d8c52626429092aa7b15cfaaa314"
+  }
+}

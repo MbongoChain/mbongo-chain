@@ -1,2 +1,4 @@
 crates/mbongo-compute/profiles/** -text
 test-vectors/inference/** -text
+crates/mbongo-compute/fixtures/** -text
+test-vectors/mvp/** -text
