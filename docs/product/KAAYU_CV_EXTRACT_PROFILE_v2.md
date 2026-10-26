@@ -2,7 +2,7 @@
 
 **Status:** NORMATIVE APPLICATION PROFILE — NON-CONSENSUS — MVP v0.1, **active MVP profile**. Change control CC-1 of [`MVP_v0.1.md`](MVP_v0.1.md) §20.1 (gate MVP-B.1).
 **Supersedes for the MVP:** `kaayu-cv-extract:v1` ([`MVP_INFERENCE_CONTRACT_v1.md`](MVP_INFERENCE_CONTRACT_v1.md) §11–§15), which stays frozen, byte-reproducible and resolvable.
-**Generic contract:** `mbongo-infer:v1`, unchanged except the amendment of §6 below, which is isolated and **requires maintainer approval**.
+**Generic contract:** `mbongo-infer:v1`, unchanged except the amendment of §3 below, **approved by the maintainer on 2026-10-26** ([#154](https://github.com/MbongoChain/mbongo-chain/issues/154)).
 **Code:** `crates/mbongo-compute/src/profiles/`. **Assets:** `crates/mbongo-compute/profiles/kaayu-cv-extract-v2/`. **Vector:** [`test-vectors/inference/kaayu-cv-extract-v2.json`](../../test-vectors/inference/kaayu-cv-extract-v2.json). **Test group:** `kaayu_profile_v2` (CI step "Mbongo Kaayu CV Profile v2").
 
 > **One sentence.** v2 asks the model for a concise recruiting profile — the five most recent positions, one-sentence descriptions, a short summary — instead of an exhaustive transcription, so that its largest legal output fits a 600-token budget; on the reference CPU it completes all ten synthetic CVs, including the two v1 truncated, with P95 98.5 s.
@@ -64,7 +64,7 @@ The v2 job spec is the v1 job spec with exactly five fields changed:
 
 Runtime (llama.cpp `llama-server` v0.7.0 @ `620d2225`), model (Qwen3-4B-Instruct-2507 Q4_K_M, SHA-256 `3605803b…e597`), temperature 0, top-p 1.0, seed 42, input contract `kaayu-cv-extract-input:v1` and the byte limits are unchanged. `job_spec_digest = f38886b234dd411be1b90b25f94b21e4ec10afa5720317c3630dc0b9df4aac6f`; `execution_spec = "mbongo-infer:v1" ‖ digest` (47 bytes, framing unchanged).
 
-## 3. The generic-contract amendment (requires approval)
+## 3. The generic-contract amendment (approved 2026-10-26)
 
 `mbongo-infer:v1` §6 bounded `generation.max_tokens` to `[1, 400]` for **every** profile, so a v2 job spec with 600 is invalid under the contract as frozen. MVP-B.1 asks for a budget of 512–600 and also for the generic contract to stay unchanged; both cannot hold. The smallest amendment that resolves it keys the cap by `profile.version`: version 1 keeps `[1, 400]` exactly, version ≥ 2 may declare up to 600 (`bounds::max_tokens_cap`). Every version-1 job spec, vector, negative vector and test keeps its outcome (`inference_contract` 25/25 unchanged). Framing, field set, canonicalization, digest, validation order and error taxonomy are untouched. It is a separate commit so it can be accepted or rejected alone.
 

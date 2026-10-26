@@ -371,7 +371,7 @@ This document is **frozen** until the MVP exit criteria (§12) are met or a gate
 | **Result** | real corpus 10/10, 0 truncations, P50 35.4 s, P95 98.5 s ≤ 120 s on the reference host (AC power); R08 466/600 tokens with its five most recent positions; R10 251/600 |
 | **Not changed** | the product statement, the first user, the workload, the runtime, the model, the provider model, the privacy level, payment, the client surface, every exit criterion other than the token bound, the protocol, the input contract |
 | **Why this is not a widening** | the MVP still extracts one structured profile from one CV on one CPU worker; it now asks for less. `FULL_CV_TRANSCRIPTION = NO`, `MOST_RELEVANT_EXPERIENCE_ONLY = YES` |
-| **Generic-contract consequence** | `mbongo-infer:v1` capped `max_tokens` at 400 for every profile; CC-1 keys that cap by profile version (version 1 unchanged, version ≥ 2 ≤ 600). **Requires maintainer approval** ([contract §14](MVP_INFERENCE_CONTRACT_v1.md)) |
+| **Generic-contract consequence** | `mbongo-infer:v1` capped `max_tokens` at 400 for every profile; CC-1 keys that cap by profile version (version 1 unchanged, version ≥ 2 ≤ 600). **Approved by the maintainer on 2026-10-26** ([#154](https://github.com/MbongoChain/mbongo-chain/issues/154); [contract §14](MVP_INFERENCE_CONTRACT_v1.md)): version 1 `max_tokens` = 400, version ≥ 2 `max_tokens` ≤ 600 |
 | **Active MVP profile** | `kaayu-cv-extract:v2`; v1 is SUPERSEDED_FOR_MVP, frozen and reproducible |
 
 ## See also
