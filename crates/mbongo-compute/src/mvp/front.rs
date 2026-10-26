@@ -358,7 +358,17 @@ impl<C: ChainClient + Clone + 'static> Front<C> {
         if open {
             self.inner.busy.store(true, Ordering::SeqCst);
             let seen = self.observation_count();
-            let result = core.worker.run_once(&mut core.cp, &mut core.dp, &self.inner.chain).await;
+            let attempt = core.worker.run_once(&mut core.cp, &mut core.dp, &self.inner.chain);
+            // The inference is a blocking call inside the attempt. On the
+            // multi-threaded runtime it runs under `block_in_place`, which
+            // hands this thread's scheduler duties (its queued tasks, the I/O
+            // and timer drivers) to another thread for the duration, so the
+            // routes keep answering while the worker runs.
+            let result = if multi_threaded() {
+                tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(attempt))
+            } else {
+                attempt.await
+            };
             self.inner.busy.store(false, Ordering::SeqCst);
             match result {
                 Ok(o) => {
@@ -788,6 +798,15 @@ impl<C: ChainClient + Clone + 'static> Front<C> {
         h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
         Ok(response)
     }
+}
+
+fn multi_threaded() -> bool {
+    tokio::runtime::Handle::try_current().is_ok_and(|h| {
+        matches!(
+            h.runtime_flavor(),
+            tokio::runtime::RuntimeFlavor::MultiThread
+        )
+    })
 }
 
 fn outcome_task(o: &AttemptOutcome) -> Option<[u8; 32]> {

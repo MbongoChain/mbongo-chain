@@ -127,15 +127,40 @@ struct Rig {
 }
 
 async fn rig_with(backend: FakeBackend) -> Rig {
-    rig_clocked(backend, Arc::new(SystemClock)).await
+    rig_clocked(backend, Arc::new(SystemClock), Duration::ZERO).await
 }
 
-/// A rig whose front and client share `clock`.
-async fn rig_clocked(backend: FakeBackend, clock: Arc<dyn Clock>) -> Rig {
+/// A backend that blocks its thread for `delay` per completion, as the
+/// real llama-server client does for the length of an inference.
+struct Slow {
+    inner: Arc<FakeBackend>,
+    delay: Duration,
+}
+
+impl InferenceBackend for Slow {
+    fn identity(&self) -> mbongo_compute::cpu_inference::BackendIdentity {
+        self.inner.identity()
+    }
+    fn complete(
+        &self,
+        request: &mbongo_compute::cpu_inference::ChatRequest,
+    ) -> Result<mbongo_compute::cpu_inference::Completion, ContractError> {
+        std::thread::sleep(self.delay);
+        self.inner.complete(request)
+    }
+}
+
+/// A rig whose front and client share `clock`, with a backend that takes
+/// `delay` per completion.
+async fn rig_clocked(backend: FakeBackend, clock: Arc<dyn Clock>, delay: Duration) -> Rig {
     install_logger();
     let chain = FakeChain::new();
     let backend = Arc::new(backend);
-    let profile = InferenceProfile::new(Arc::clone(&backend) as Arc<dyn InferenceBackend>).unwrap();
+    let slow: Arc<dyn InferenceBackend> = Arc::new(Slow {
+        inner: Arc::clone(&backend),
+        delay,
+    });
+    let profile = InferenceProfile::new(slow).unwrap();
     let observations = profile.observations();
     let executor = ExecutorKey::from_seed(&[0xE1u8; 32]);
     let front = Front::new(
@@ -679,7 +704,7 @@ async fn c10b_result_lifetime_is_the_data_planes() {
     let clock = ManualClock::starting_at(now);
     let backend = FakeBackend::pinned();
     backend.push_content(&raw_output());
-    let r = rig_clocked(backend, Arc::new(clock.clone())).await;
+    let r = rig_clocked(backend, Arc::new(clock.clone()), Duration::ZERO).await;
     let j = completed_job(&r).await;
     assert!(r.client.result(j.task_id).await.is_ok());
     clock.advance(3_590);
@@ -910,6 +935,73 @@ async fn c16_status_maps_lifecycle() {
     assert!(out.contains("Status: completed"));
     assert!(out.contains("not verified here"));
     assert_no_cv("status output", &out);
+}
+
+/// The worker blocks a thread for the whole inference; the front must keep
+/// answering status meanwhile (from its snapshot, `worker_busy`). The
+/// server runs as `mvp_service` runs it — a multi-threaded runtime with a
+/// timer-driven tick loop — and the client on its own runtime and thread,
+/// as the CLI is a separate process.
+#[test]
+fn c16c_status_answers_during_inference() {
+    let server = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let backend = FakeBackend::pinned();
+    backend.push_content(&raw_output());
+    let (r, j) = server.block_on(async {
+        let r = rig_clocked(backend, Arc::new(SystemClock), Duration::from_millis(3_000)).await;
+        let j = commit_job(&r, &cv_text(), 0x16).await;
+        register(&r, &j).await;
+        r.chain.produce_block();
+        (r, j)
+    });
+    let front = r.front.clone();
+    server.spawn(async move {
+        loop {
+            let _ = front.tick().await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    });
+    let base = r.base.clone();
+    let key = r.client_key.clone();
+    let task_id = j.task_id;
+    let client = std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async move {
+            let client = FrontClient::new(&base, key).unwrap();
+            tokio::time::sleep(Duration::from_millis(600)).await;
+            let mut answers = Vec::new();
+            for _ in 0..8 {
+                let t = std::time::Instant::now();
+                let s = tokio::time::timeout(Duration::from_millis(1_000), client.status(task_id))
+                    .await
+                    .map(Result::unwrap);
+                answers.push((s.map(|s| s.worker_busy), t.elapsed()));
+                tokio::time::sleep(Duration::from_millis(150)).await;
+            }
+            answers
+        })
+    });
+    let answers = client.join().unwrap();
+    assert_eq!(answers.len(), 8);
+    let busy = answers.iter().filter(|(a, _)| matches!(a, Ok(true))).count();
+    assert!(
+        answers.iter().all(|(a, _)| a.is_ok()),
+        "every status request answered within 1 s while the worker ran: {answers:?}"
+    );
+    assert!(busy >= 5, "answers during inference: {answers:?}");
+    server.block_on(async {
+        for _ in 0..50 {
+            if r.client.status(task_id).await.unwrap().state == "receipt_submitted" {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("the attempt did not finish");
+    });
 }
 
 #[tokio::test]
