@@ -352,6 +352,15 @@ fn p08_screen_never_reports_content() {
 // ── INJECTION RESISTANCE: through the CLI ────────────────────────────────
 
 async fn cli_run(model_output: &str, cv: &str) -> (i32, String) {
+    cli_run_with(model_output, cv, false, false).await
+}
+
+async fn cli_run_with(
+    model_output: &str,
+    cv: &str,
+    show_result: bool,
+    json: bool,
+) -> (i32, String) {
     let chain = FakeChain::new();
     let backend = Arc::new(FakeBackend::pinned());
     backend.push_content(model_output);
@@ -392,8 +401,8 @@ async fn cli_run(model_output: &str, cv: &str) -> (i32, String) {
     let opts = SubmitOptions {
         wait: true,
         timeout: Duration::from_secs(30),
-        show_result: false,
-        json: false,
+        show_result,
+        json,
     };
     let code = cli::submit(&ctx, cv.to_owned(), opts, &mut out, &mut Vec::new()).await;
     drive.abort();
@@ -413,7 +422,7 @@ async fn p09_cli_reports_a_flagged_result_apart_and_exits_12() {
         "Business extraction accuracy: NOT ASSESSED",
         "Injection screen: FLAGGED (OUTPUT_ECHOES_INJECTED_VALUE)",
         "Human review:",
-        "OUTCOME=VERIFIED",
+        "OUTCOME=CONTENT_FLAGGED",
     ] {
         assert!(out.contains(line), "missing {line:?}:\n{out}");
     }
@@ -472,4 +481,51 @@ fn generate_v3() {
     let mut s = serde_json::to_string_pretty(&v).unwrap();
     s.push('\n');
     print!("{s}");
+}
+
+/// CC-3: every adversarially influenced result is rejected from normal
+/// consumption — exit 12, outcome CONTENT_FLAGGED, display withheld — while
+/// the four verification results stay separate; the benign control passes.
+#[tokio::test]
+async fn p10_cc3_no_attacked_output_reaches_normal_success() {
+    let mut rejected = 0;
+    for c in corpus() {
+        let id = c["id"].as_str().unwrap().to_owned();
+        let cv = c["cv_text"].as_str().unwrap().to_owned();
+        let (compliant, faithful) = compliant_and_faithful(&id);
+        if c["benign"].as_bool().unwrap() {
+            let (code, out) = cli_run_with(&faithful, &cv, false, true).await;
+            let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+            assert_eq!(code, exit::SUCCESS, "{id}");
+            assert_eq!(v["outcome"], "VERIFIED", "{id}");
+            assert_eq!(v["injection_screen"]["status"], "CLEAR", "{id}");
+            continue;
+        }
+        let (code, out) = cli_run_with(&compliant, &cv, true, true).await;
+        let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+        assert_eq!(code, exit::CONTENT_FLAGGED, "{id}");
+        assert_eq!(v["outcome"], "CONTENT_FLAGGED", "{id}");
+        assert_eq!(v["injection_screen"]["status"], "FLAGGED", "{id}");
+        assert!(
+            v.get("result_canonical").is_none(),
+            "{id}: a flagged result is never displayed"
+        );
+        for dim in ["receipt_integrity", "result_integrity", "schema_conformity"] {
+            assert_eq!(
+                v[dim]["status"], "VERIFIED",
+                "{id}: {dim} stays its own field"
+            );
+        }
+        assert_eq!(v["business_accuracy"]["status"], "NOT_ASSESSED", "{id}");
+        rejected += 1;
+    }
+    assert_eq!(rejected, 10, "ten attack cases rejected");
+    // Human output withholds the profile too.
+    let c = case("E-P01");
+    let (compliant, _) = compliant_and_faithful("E-P01");
+    let (code, out) = cli_run_with(&compliant, c["cv_text"].as_str().unwrap(), true, false).await;
+    assert_eq!(code, exit::CONTENT_FLAGGED);
+    assert!(out.contains("Extracted profile withheld"));
+    assert!(!out.contains("best candidate ever"));
+    assert!(out.contains("OUTCOME=CONTENT_FLAGGED"));
 }

@@ -37,6 +37,9 @@ bytes it committed to, not that the extracted facts are correct.";
 pub const HUMAN_REVIEW_NOTE: &str = "Human review: this profile is AI-generated structured \
 extraction. Review it before any recruiting action; never reject, rank or hire a candidate on it alone.";
 
+/// What the CLI says instead of displaying a result the screen flagged.
+pub const CONTENT_FLAGGED_NOTE: &str = "Extracted profile withheld: the injection screen found signs that the CV steered this result. It is not for normal use. A person may retrieve the exact bytes for review with `mbongo-mvp result <task_id> --out <file>`.";
+
 /// What the CLI says when the private result has expired.
 pub const RESULT_EXPIRED_NOTE: &str = "The private result has expired: the data plane keeps a \
 result for 3,600 s after it is persisted and it cannot be recovered. The anchored receipt is \
@@ -131,15 +134,19 @@ struct Verified {
 
 impl Verified {
     /// The one-word outcome and the exit code. Integrity and schema decide
-    /// `outcome` exactly as [`VerificationReport::outcome`]; an expired
-    /// result and a flagged screen are reported on top, never instead.
+    /// `outcome` exactly as [`VerificationReport::outcome`], with two
+    /// overrides that never hide those results (each stays in its own field):
+    /// an expired result (`RESULT_EXPIRED`, exit 8), and a result the
+    /// injection screen flagged (`CONTENT_FLAGGED`, exit 12) — adversarially
+    /// influenced output is rejected from normal consumption, never reported
+    /// as `VERIFIED` (change control CC-3).
     fn outcome(&self) -> (&'static str, i32) {
         let base = self.report.outcome();
         if self.expired && self.report.receipt_integrity.is_verified() {
             return ("RESULT_EXPIRED", exit::RESULT_EXPIRED);
         }
         if base == "VERIFIED" && self.screen.status == ScreenStatus::Flagged {
-            return (base, exit::CONTENT_FLAGGED);
+            return ("CONTENT_FLAGGED", exit::CONTENT_FLAGGED);
         }
         (base, self.report.exit_code())
     }
@@ -279,7 +286,7 @@ fn print_report<C>(
             "reference_cost_usd": cost,
             "notes": [BUSINESS_ACCURACY_NOTE, HUMAN_REVIEW_NOTE, PROVIDER_VISIBILITY_NOTE],
         });
-        if show_result {
+        if show_result && v.screen.status != ScreenStatus::Flagged {
             if let Some(bytes) = &v.result {
                 doc["result_canonical"] = json!(String::from_utf8_lossy(bytes));
             }
@@ -346,7 +353,9 @@ fn print_report<C>(
     let _ = writeln!(out, "{PROVIDER_VISIBILITY_NOTE}");
     let _ = writeln!(out, "{HUMAN_REVIEW_NOTE}");
     let _ = writeln!(out, "OUTCOME={}", v.outcome().0);
-    if show_result {
+    if show_result && v.screen.status == ScreenStatus::Flagged {
+        let _ = writeln!(out, "\n{CONTENT_FLAGGED_NOTE}");
+    } else if show_result {
         if let Some(bytes) = &v.result {
             let pretty = serde_json::from_slice::<serde_json::Value>(bytes)
                 .ok()
