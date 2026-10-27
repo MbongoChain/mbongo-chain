@@ -36,11 +36,12 @@ The v3 prompt keeps v2's opening and v2's rules 1–4 and 6–12 verbatim, and a
 | input tokens per job | 439–1,221 | 886–1,668 (+≈ 447: the longer system prompt) |
 | output tokens, max | 466 | 495 (budget 600) |
 | inference, P50 / P95 / max | 36.1 / 75.6 / 94.8 s | **50.7 / 98.6 / 119.8 s** |
+| 20-job end-to-end campaign (same harness, host, devnet): successes, P95 submission → verified | 20/20, 77.9 s (MVP-D) | **20/20, 102.2 s** (max 123.4 s, D08) |
 
 Prompt design ran in lab mode first (four candidates; the shorter ones held the corpus as well but generalized worse to unseen variants); the frozen v3 was then measured through the worker's own profile. Details and the full matrix: [`MVP_LAUNCH_SECURITY_REVIEW.md`](../security/MVP_LAUNCH_SECURITY_REVIEW.md) §3.
 
 ## 4. What v3 does not promise
 
-- **No immunity.** A 4-billion-parameter model still followed one of ten attacks (and one of two unseen ones); the client-side injection screen is the second layer, and it detects only artifacts it can see (a quoted value echoed, prompt text copied). `PROMPT_INJECTION_IMMUNITY_CLAIMED = NO`.
+- **No immunity.** A 4-billion-parameter model still followed one of ten attacks (and one of two unseen ones). Under change control CC-3 ([`MVP_v0.1.md`](MVP_v0.1.md) §20.3) model resistance is best effort; the launch property is that every adversarially influenced result is detected and rejected from normal use (`CONTENT_FLAGGED`), measured 0 undetected and 0 client-accepted on the real path. The screen detects only artifacts it can see (a quoted value echoed, prompt text copied). `PROMPT_INJECTION_IMMUNITY_CLAIMED = NO`.
 - **No accuracy.** v3 changes how the model is told to treat the CV, not what Mbongo can prove: `BUSINESS_EXTRACTION_ACCURACY = NOT_ASSESSED`. v3 judges seniority differently from v2 on 6 of 20 corpus CVs (D18 among them, as intended); neither is verified.
-- **A latency cost.** +≈ 15 s of inference per job on the reference host; MVP-D's end-to-end P95 (77.9 s, v2) is not inherited — see the security review §3.6.
+- **A latency cost.** +≈ 15 s of inference per job on the reference host. MVP-D's v2 acceptance was not inherited: the 20-job campaign re-run with v3 measured P95 102.2 s ≤ 120 s ([evidence](evidence/mvp-e-v3-revalidation/), security review §3.6).

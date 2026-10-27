@@ -105,7 +105,7 @@ node scripts/mvp-launch.mjs smoke  --config <env>           # 9: launch smoke
 | parked tasks | 0 | `PARKED_TASKS` |
 | auth replays | 0 | `AUTH_REPLAYS` → investigate the source |
 
-**Metrics** (from the service log, which carries no content): requests and responses by status and code; registrations; receipts observed; inference outcomes by contract code; failed attempts; parked tasks; authentication failures and replays; `llama-server` restarts; worker errors. Per job, the client's `submit --wait --json` record carries end-to-end and inference latency, attempts and the four verification results — the MVP-D record schema. Receipt-integrity, result-commitment and schema failures are client-side: alert on any `outcome` other than `VERIFIED`, any exit 10 or 11, and any exit 12 (screen flagged).
+**Metrics** (from the service log, which carries no content): requests and responses by status and code; registrations; receipts observed; inference outcomes by contract code; failed attempts; parked tasks; authentication failures and replays; `llama-server` restarts; worker errors. Per job, the client's `submit --wait --json` record carries end-to-end and inference latency, attempts and the four verification results — the MVP-D record schema. Receipt-integrity, result-commitment and schema failures are client-side: alert on any `outcome` other than `VERIFIED`, any exit 10 or 11, and any exit 12 (`CONTENT_FLAGGED`: the injection screen flagged the result and the client rejected it).
 
 **Memory policy.** MVP-B peaked at 6.3 GB; MVP-D saw 5.3 → 6.15 GB, flattening, after a restart. That is not shown to be a leak and no automatic restart is configured. The alert threshold, 7,168 MiB, is ~14 % above the highest observation. On the alert, **between jobs** (status shows no task executing), stop `llama-server`; the worker restarts it before the next job — the recovery path MVP-D measured (D07). Never during an inference.
 
@@ -128,7 +128,7 @@ None is launch-blocking for a controlled launch with this procedure: **finish or
 
 ## 8. Operating limits
 
-- **One job at a time.** One inference runs; other uploads and result reads wait for it (status does not). Capacity on the reference host: one job per ~20–100 s.
+- **One job at a time.** One inference runs; other uploads and result reads wait for it (status does not). Capacity on the reference host with v3: one job per ~37–125 s (v3 revalidation: P50 56.7 s, P95 102.2 s).
 - **Parking.** A task whose attempts fail three times is *parked*: never offered again. The operator sees it in `health` (`PARKED_TASKS`), in the service log (`task <id> parked after 3 failed attempts`) and in the client's status (`state: failed`, `attempts_exhausted: true`, failure code). There is no un-park: inspect the failure code, fix the cause, and have the client submit a new task.
 - **Result lifetime: 3,600 s** after the result is persisted. After it, the private result is gone and cannot be recovered: `GET …/result` answers `410 RESULT_EXPIRED`; `verify` exits `8` and says the receipt is unaffected — the anchored receipt remains on-chain and its integrity still verifies.
 - **Duplicate submission.** `submit` is not idempotent: each run creates a new task (new salt, new `task_id`), a new inference and a new receipt. The CLI never resubmits on its own; a client retries **status and result**, never submit.
@@ -156,7 +156,7 @@ Stops the service, `llama-server`, then the nodes. **Every uploaded input, every
 | HTTP front down | HIGH | `mvp_service` exited: restart it (§5); in-memory state is lost (§7); clients re-submit |
 | result expired | LOW | expected after 3,600 s; the receipt stays verifiable; re-run the job if the result is still needed |
 | auth replay detected (`AUTH_REPLAYED`) | MEDIUM | the request was refused; identify the source (the log line names the signer prefix); if it is not the known client, treat it as a key compromise (§11) |
-| screen flagged (exit 12) | MEDIUM | do not use the result; a person reviews the CV; the injection corpus may need the case (security review §3) |
+| screen flagged (exit 12, `outcome: CONTENT_FLAGGED`) | MEDIUM | the client already rejected it from normal use (CC-3) and withheld its display; do not use the result; a person reviews the CV (and, if needed, the exact bytes via `result --out`); add the case to the injection corpus (security review §3) |
 
 ## 11. Key compromise
 
