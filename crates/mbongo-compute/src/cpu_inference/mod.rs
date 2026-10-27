@@ -7,7 +7,7 @@
 //! [`crate::inference`]), which it never reinterprets: every task goes
 //! through [`crate::inference::preflight`] and the profile's finish step
 //! ([`crate::profiles::finish`]); the worker serves the active MVP profile
-//! `kaayu-cv-extract:v2` (change control CC-1).
+//! (`kaayu-cv-extract:v3` since change control CC-2; v2 under CC-1).
 //!
 //! | Module | Concern |
 //! |---|---|

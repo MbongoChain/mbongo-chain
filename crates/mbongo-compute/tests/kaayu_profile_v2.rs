@@ -551,8 +551,9 @@ fn v221_registry_resolves_both_profiles_and_nothing_else() {
         Some(kaayu::job_spec())
     );
     assert_eq!(KaayuProfiles.resolve(&[0u8; 32]), None);
-    assert_eq!(ACTIVE_MVP_PROFILE, "kaayu-cv-extract:v2");
-    assert_eq!(profiles::active_job_spec(), kaayu_v2::job_spec());
+    // Superseded by v3 (change control CC-2), still resolvable above.
+    assert_eq!(ACTIVE_MVP_PROFILE, "kaayu-cv-extract:v3");
+    assert_ne!(profiles::active_job_spec(), kaayu_v2::job_spec());
 }
 
 #[test]
@@ -633,6 +634,6 @@ fn v225_profile_assets_are_pinned_per_version() {
         Some((kaayu::PROMPT_TEMPLATE, kaayu::OUTPUT_SCHEMA))
     );
     let mut other = kaayu_v2::job_spec();
-    other.profile.version = 3;
+    other.profile.version = 4;
     assert_eq!(profiles::assets(&other), None);
 }

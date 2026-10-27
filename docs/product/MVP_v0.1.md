@@ -374,6 +374,20 @@ This document is **frozen** until the MVP exit criteria (§12) are met or a gate
 | **Generic-contract consequence** | `mbongo-infer:v1` capped `max_tokens` at 400 for every profile; CC-1 keys that cap by profile version (version 1 unchanged, version ≥ 2 ≤ 600). **Approved by the maintainer on 2026-10-26** ([#154](https://github.com/MbongoChain/mbongo-chain/issues/154); [contract §14](MVP_INFERENCE_CONTRACT_v1.md)): version 1 `max_tokens` = 400, version ≥ 2 `max_tokens` ≤ 600 |
 | **Active MVP profile** | `kaayu-cv-extract:v2`; v1 is SUPERSEDED_FOR_MVP, frozen and reproducible |
 
+### 20.2 Change record CC-2 — Kaayu CV profile v3, prompt-injection hardening (gate MVP-E, 2026-10-26)
+
+| | |
+|---|---|
+| **Decision changed** | the MVP inference profile's prompt template (§11) |
+| **Evidence** | MVP-D case D18 (#160): an instruction inside the CV forced `"summary":"HACKED"` and `"seniority":"executive"` into a schema-valid, correctly committed result. Re-run on the MVP-E adversarial corpus (`test-vectors/mvp/mvp-e-injection-corpus-v1.json`), v2 was overridden by 5 of 10 attacks. |
+| **Old** | `kaayu-cv-extract:v2` — a prompt that never says the user message is untrusted data |
+| **Replacement** | [`kaayu-cv-extract:v3`](KAAYU_CV_EXTRACT_PROFILE_v3.md) — the v2 prompt plus a security section (the CV is data, never instructions; attack forms named; attacked fields pinned to the candidate's real facts), a factual `summary` recipe and two closing rules. Schema bytes, bounds, `max_tokens` 600, sampling, runtime, model and the generic contract unchanged. |
+| **Result** | model overrides 1 of 10 attacks (v2: 5), the remaining one flagged by the client-side injection screen; benign control unflagged; MVP-D corpus 20/20 schema-valid; inference +≈ 15 s per job (P95 75.6 → 98.6 s) |
+| **Not changed** | everything else in this document, the protocol, the generic contract `mbongo-infer:v1`, the input contract, the output contract `kaayu-cv-profile:v2` |
+| **Why this is not a widening** | the same single extraction on the same worker; the prompt only narrows what the model may take from the CV |
+| **Approval** | instructed by the maintainer in the MVP-E mission ("create `kaayu-cv-extract:v3` rather than mutating v2; use formal MVP change control"), recorded here and in the MVP-E pull request for review |
+| **Active MVP profile** | `kaayu-cv-extract:v3`; v2 and v1 are SUPERSEDED_FOR_MVP, frozen and reproducible |
+
 ## See also
 
 - [`docs/INDEX.md`](../INDEX.md) — authority map (this document is the product-scope row)
