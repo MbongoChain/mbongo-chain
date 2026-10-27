@@ -19,7 +19,8 @@
 //! would be refused as a replay.
 //!
 //! The front accepts a timestamp within ±[`MAX_SKEW_SECS`] of its clock and
-//! refuses a signature it has already seen in that window. Who may do what
+//! refuses a `(signer, nonce)` pair it has already accepted in that window
+//! ([`ReplayGuard`]). Who may do what
 //! is decided elsewhere, by the chain: only the task's on-chain submitter may
 //! register it, read its status or retrieve its result. No key or secret is
 //! ever sent; nothing here is logged.
@@ -87,24 +88,64 @@ pub enum AuthError {
     /// The timestamp is outside the accepted window.
     #[error("stale or future timestamp")]
     Stale,
-    /// The signature was already used.
-    #[error("replayed request")]
+    /// The signer already used this nonce within the window.
+    #[error("replayed request or reused nonce")]
     Replayed,
+    /// The replay guard is full; the request was not processed.
+    #[error("replay guard full")]
+    Busy,
     /// The signature does not verify for the claimed address.
     #[error("bad signature")]
     BadSignature,
 }
 
-/// Remembers signatures seen within the skew window.
+/// Most `(signer, nonce)` pairs the replay guard holds at once. Only
+/// requests whose signature verified are recorded, so an unauthenticated
+/// flood cannot fill it; when it is full, new requests are refused rather
+/// than letting memory grow.
+pub const MAX_REPLAY_ENTRIES: usize = 100_000;
+
+/// Remembers every `(signer, nonce)` pair accepted within twice the skew
+/// window — long enough to cover every timestamp the front would still
+/// accept. A request reusing a pair is a replay, whatever its body: an
+/// identical resubmission and a different request under a reused nonce are
+/// both refused.
+///
+/// **Durability: process lifetime only.** The guard is in memory; a restart
+/// of the service forgets it. A request captured before a restart can be
+/// replayed after it only while its timestamp is still inside the
+/// ±[`MAX_SKEW_SECS`] window.
 #[derive(Debug, Default)]
 pub struct ReplayGuard {
-    seen: HashMap<[u8; 64], u64>,
+    seen: HashMap<(Address, [u8; 16]), u64>,
 }
 
 impl ReplayGuard {
-    fn check_and_record(&mut self, sig: [u8; 64], now: u64) -> bool {
+    fn check_and_record(
+        &mut self,
+        signer: Address,
+        nonce: [u8; 16],
+        now: u64,
+    ) -> Result<(), AuthError> {
         self.seen.retain(|_, ts| ts.saturating_add(2 * MAX_SKEW_SECS) >= now);
-        self.seen.insert(sig, now).is_none()
+        if self.seen.contains_key(&(signer, nonce)) {
+            return Err(AuthError::Replayed);
+        }
+        if self.seen.len() >= MAX_REPLAY_ENTRIES {
+            return Err(AuthError::Busy);
+        }
+        self.seen.insert((signer, nonce), now);
+        Ok(())
+    }
+
+    /// Pairs currently remembered.
+    pub fn len(&self) -> usize {
+        self.seen.len()
+    }
+
+    /// Whether nothing is remembered.
+    pub fn is_empty(&self) -> bool {
+        self.seen.is_empty()
     }
 }
 
@@ -154,9 +195,7 @@ pub fn verify_request(
     if !verify_signature(&address, &message, &sig) {
         return Err(AuthError::BadSignature);
     }
-    if !replay.check_and_record(sig, now) {
-        return Err(AuthError::Replayed);
-    }
+    replay.check_and_record(address, nonce, now)?;
     Ok(address)
 }
 

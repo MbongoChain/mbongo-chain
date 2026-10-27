@@ -19,3 +19,5 @@ COMMUN = "COMMUN"  # Community (abbreviated in tables)
 Determin = "Determin"  # Determination (abbreviated in diagrams)
 # French words in the synthetic CV corpus (test-vectors/inference/synthetic-cv-corpus-v1.json)
 analyste = "analyste"
+# Spanish prompt-injection marker matched by the MVP injection screen (crates/mbongo-compute/src/mvp/screen.rs)
+ignora = "ignora"

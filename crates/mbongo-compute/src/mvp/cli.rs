@@ -24,13 +24,26 @@ use super::client::{
     ClientError, FrontClient,
 };
 use super::dto::StatusView;
-use super::verify::{evaluate, VerificationReport};
+use super::screen::{screen, ScreenReport, ScreenStatus};
+use super::verify::{evaluate, Check, VerificationReport};
 use super::{exit, RUNTIME_PROFILE};
 
 /// The note shown with every verification report (MVP-C §25).
 pub const BUSINESS_ACCURACY_NOTE: &str = "Business accuracy has not been evaluated by Mbongo: \
 the receipt and the output commitment prove which executor answered and that these are the exact \
 bytes it committed to, not that the extracted facts are correct.";
+
+/// The human-review notice (MVP-E): extraction output is advisory.
+pub const HUMAN_REVIEW_NOTE: &str = "Human review: this profile is AI-generated structured \
+extraction. Review it before any recruiting action; never reject, rank or hire a candidate on it alone.";
+
+/// What the CLI says instead of displaying a result the screen flagged.
+pub const CONTENT_FLAGGED_NOTE: &str = "Extracted profile withheld: the injection screen found signs that the CV steered this result. It is not for normal use. A person may retrieve the exact bytes for review with `mbongo-mvp result <task_id> --out <file>`.";
+
+/// What the CLI says when the private result has expired.
+pub const RESULT_EXPIRED_NOTE: &str = "The private result has expired: the data plane keeps a \
+result for 3,600 s after it is persisted and it cannot be recovered. The anchored receipt is \
+unaffected and remains on-chain; its integrity is reported above.";
 
 /// The provider-visibility disclosure (PUBLIC profile).
 pub const PROVIDER_VISIBILITY_NOTE: &str = "Provider visibility: the Mbongo-operated worker \
@@ -114,6 +127,34 @@ struct Verified {
     task_height: Option<u64>,
     receipt: Option<(u64, Receipt)>,
     result: Option<Vec<u8>>,
+    /// The front answered 410: the result outlived its data-plane lifetime.
+    expired: bool,
+    screen: ScreenReport,
+}
+
+impl Verified {
+    /// The one-word outcome and the exit code. Integrity and schema decide
+    /// `outcome` exactly as [`VerificationReport::outcome`], with two
+    /// overrides that never hide those results (each stays in its own field):
+    /// an expired result (`RESULT_EXPIRED`, exit 8), and a result the
+    /// injection screen flagged (`CONTENT_FLAGGED`, exit 12) — adversarially
+    /// influenced output is rejected from normal consumption, never reported
+    /// as `VERIFIED` (change control CC-3).
+    fn outcome(&self) -> (&'static str, i32) {
+        let base = self.report.outcome();
+        if self.expired && self.report.receipt_integrity.is_verified() {
+            return ("RESULT_EXPIRED", exit::RESULT_EXPIRED);
+        }
+        if base == "VERIFIED" && self.screen.status == ScreenStatus::Flagged {
+            return ("CONTENT_FLAGGED", exit::CONTENT_FLAGGED);
+        }
+        (base, self.report.exit_code())
+    }
+}
+
+/// The active profile's system prompt, for the injection screen.
+fn active_prompt() -> &'static str {
+    crate::profiles::assets(&crate::profiles::active_job_spec()).map_or("", |(p, _)| p)
 }
 
 /// Client-side verification in the frozen order: the committed task from
@@ -123,6 +164,7 @@ async fn run_verification<C: ChainClient>(
     ctx: &Context<'_, C>,
     task_id: [u8; 32],
     from_height: u64,
+    cv_text: Option<&str>,
 ) -> Result<Verified, (i32, String)> {
     let observed = find_task(ctx.chain, task_id, from_height)
         .await
@@ -136,24 +178,40 @@ async fn run_verification<C: ChainClient>(
     let receipt = find_anchored_receipt(ctx.chain, task_id, observed.height)
         .await
         .map_err(|e| (chain_exit(&e), format!("chain: {e}")))?;
+    let mut expired = false;
     let result = match ctx.front.result(task_id).await {
         Ok(bytes) => Some(bytes),
         Err(e) if is_not_yet(&e) => None,
+        Err(e) if e.code() == Some("RESULT_EXPIRED") => {
+            expired = true;
+            None
+        }
         Err(e) => return Err((client_exit(&e), e.to_string())),
     };
-    let report = evaluate(
+    let mut report = evaluate(
         task_id,
         &observed.task,
         receipt.as_ref().map(|(_, r)| r),
         result.as_deref(),
         ctx.executor,
     );
+    if expired {
+        report.result_integrity =
+            Check::NotFound("private result expired; the anchored receipt is unaffected".into());
+        report.schema_conformity = Check::NotFound("private result expired".into());
+    }
+    let screen = match (cv_text, result.as_deref()) {
+        (Some(cv), Some(bytes)) => screen(cv, bytes, active_prompt()),
+        _ => ScreenReport::not_run(),
+    };
     Ok(Verified {
         report,
         task_height: Some(observed.height),
         task: Some(observed.task),
         receipt,
         result,
+        expired,
+        screen,
     })
 }
 
@@ -197,7 +255,14 @@ fn print_report<C>(
             "result_integrity": check(&r.result_integrity),
             "schema_conformity": check(&r.schema_conformity),
             "business_accuracy": check(&r.business_accuracy),
-            "outcome": r.outcome(),
+            "outcome": v.outcome().0,
+            "injection_screen": {
+                "status": v.screen.status,
+                "findings": v.screen.findings,
+                "instruction_like_lines": v.screen.instruction_like_lines,
+            },
+            "result_expired": v.expired,
+            "human_review_required": true,
             "executor": executor,
             "runtime_profile": RUNTIME_PROFILE,
             "task_height": v.task_height,
@@ -219,9 +284,9 @@ fn print_report<C>(
             "input_tokens": status.and_then(|s| s.input_tokens),
             "output_tokens": status.and_then(|s| s.output_tokens),
             "reference_cost_usd": cost,
-            "notes": [BUSINESS_ACCURACY_NOTE, PROVIDER_VISIBILITY_NOTE],
+            "notes": [BUSINESS_ACCURACY_NOTE, HUMAN_REVIEW_NOTE, PROVIDER_VISIBILITY_NOTE],
         });
-        if show_result {
+        if show_result && v.screen.status != ScreenStatus::Flagged {
             if let Some(bytes) = &v.result {
                 doc["result_canonical"] = json!(String::from_utf8_lossy(bytes));
             }
@@ -239,8 +304,25 @@ fn print_report<C>(
         "Business extraction accuracy: {}",
         r.business_accuracy.label()
     );
+    let _ = writeln!(
+        out,
+        "Injection screen: {}",
+        match v.screen.status {
+            ScreenStatus::Clear =>
+                "CLEAR (no instruction-following artifact detected; this is not an accuracy check)"
+                    .to_owned(),
+            ScreenStatus::Flagged => format!(
+                "FLAGGED ({}): the result shows signs of following instructions embedded in the CV; review it before any use",
+                v.screen.findings.join(", ")
+            ),
+            ScreenStatus::NotRun => "NOT RUN (the CV text was not provided: pass --input)".to_owned(),
+        }
+    );
     if !r.task_profile.is_verified() {
         let _ = writeln!(out, "Task profile: {}", r.task_profile.label());
+    }
+    if v.expired {
+        let _ = writeln!(out, "{RESULT_EXPIRED_NOTE}");
     }
     if let Some(e) = &executor {
         let _ = writeln!(out, "Executor: {e}");
@@ -269,8 +351,11 @@ fn print_report<C>(
     }
     let _ = writeln!(out, "{BUSINESS_ACCURACY_NOTE}");
     let _ = writeln!(out, "{PROVIDER_VISIBILITY_NOTE}");
-    let _ = writeln!(out, "OUTCOME={}", r.outcome());
-    if show_result {
+    let _ = writeln!(out, "{HUMAN_REVIEW_NOTE}");
+    let _ = writeln!(out, "OUTCOME={}", v.outcome().0);
+    if show_result && v.screen.status == ScreenStatus::Flagged {
+        let _ = writeln!(out, "\n{CONTENT_FLAGGED_NOTE}");
+    } else if show_result {
         if let Some(bytes) = &v.result {
             let pretty = serde_json::from_slice::<serde_json::Value>(bytes)
                 .ok()
@@ -338,6 +423,7 @@ pub async fn submit<C: ChainClient>(
             return client_exit(&e);
         }
     };
+    let cv_text = input.cv_text.clone();
     drop(input);
     if upload.input_commitment != hex::encode(commitment) {
         let _ = writeln!(
@@ -455,7 +541,7 @@ pub async fn submit<C: ChainClient>(
     timings.completed_at_ms = Some(now_ms());
 
     // 5. Client-side verification.
-    match run_verification(ctx, task_id, task_height).await {
+    match run_verification(ctx, task_id, task_height, Some(&cv_text)).await {
         Ok(v) => {
             timings.verified_at_ms = Some(now_ms());
             print_report(
@@ -467,7 +553,7 @@ pub async fn submit<C: ChainClient>(
                 opts.json,
                 opts.show_result,
             );
-            v.report.exit_code()
+            v.outcome().1
         }
         Err((code, msg)) => {
             let _ = writeln!(err, "error: {msg}");
@@ -560,6 +646,13 @@ pub async fn result<C>(
     let bytes = match ctx.front.result(task_id).await {
         Ok(b) => b,
         Err(e) => {
+            if e.code() == Some("RESULT_EXPIRED") {
+                let _ = writeln!(
+                    err,
+                    "{RESULT_EXPIRED_NOTE} Run verify to check the receipt."
+                );
+                return exit::RESULT_EXPIRED;
+            }
             let _ = writeln!(err, "error: result: {e}");
             return if is_not_yet(&e) {
                 exit::NOT_READY
@@ -590,10 +683,12 @@ pub async fn result<C>(
 
 /// `verify`: receipt and result integrity, and schema conformity,
 /// reported separately.
+#[allow(clippy::too_many_arguments)]
 pub async fn verify<C: ChainClient>(
     ctx: &Context<'_, C>,
     task_id: &str,
     from_height: u64,
+    cv_text: Option<&str>,
     json_mode: bool,
     show_result: bool,
     out: &mut dyn Write,
@@ -604,7 +699,7 @@ pub async fn verify<C: ChainClient>(
         Err(code) => return code,
     };
     let status = ctx.front.status(task_id).await.ok();
-    match run_verification(ctx, task_id, from_height).await {
+    match run_verification(ctx, task_id, from_height, cv_text).await {
         Ok(v) => {
             let timings = JobTimings {
                 verified_at_ms: Some(now_ms()),
@@ -619,7 +714,7 @@ pub async fn verify<C: ChainClient>(
                 json_mode,
                 show_result,
             );
-            v.report.exit_code()
+            v.outcome().1
         }
         Err((code, msg)) => {
             let _ = writeln!(err, "error: {msg}");

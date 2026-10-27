@@ -273,7 +273,7 @@ pub fn is_not_yet(e: &ClientError) -> bool {
 
 // ── chain operations ────────────────────────────────────────────────────
 
-/// The frozen MVP task: `mbongo-infer:v1` over `kaayu-cv-extract:v2`,
+/// The frozen MVP task: `mbongo-infer:v1` over the active profile `kaayu-cv-extract:v3`,
 /// naming `executor`, committing `input_commitment`. Only the existing
 /// `ComputeTask` fields; `task_id` is the chain's own derivation.
 pub fn build_task(

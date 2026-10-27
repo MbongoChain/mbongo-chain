@@ -870,11 +870,12 @@ async fn c13_c14_c15_submit_builds_the_frozen_task() {
     assert_eq!(run.code, exit::SUCCESS, "{}", run.err);
     let task_id = task_id_from(&run.out);
     let task = committed(&r, task_id).await;
-    // C13: the frozen v2 execution spec, byte for byte the golden vector.
-    let v2 = json_file("inference/kaayu-cv-extract-v2.json");
+    // C13: the frozen execution spec of the active profile (v3 since change
+    // control CC-2), byte for byte its golden vector.
+    let v3 = json_file("inference/kaayu-cv-extract-v3.json");
     assert_eq!(
         hex::encode(&task.execution_spec),
-        v2["execution_spec_hex"].as_str().unwrap()
+        v3["execution_spec_hex"].as_str().unwrap()
     );
     assert_eq!(task.execution_spec, frozen_execution_spec());
     assert_eq!(task.execution_spec.len(), 47);
@@ -1091,7 +1092,7 @@ async fn c18_c22_c23_submit_wait_verifies_and_keeps_layers_apart() {
         "Schema conformity: VERIFIED",
         // C22
         "Business extraction accuracy: NOT ASSESSED",
-        "Runtime profile: mbongo-infer:v1 / kaayu-cv-extract:v2",
+        "Runtime profile: mbongo-infer:v1 / kaayu-cv-extract:v3",
         "Business accuracy has not been evaluated by Mbongo",
         "processes the CV in plaintext (PUBLIC profile)",
         "OUTCOME=VERIFIED",
@@ -1125,6 +1126,7 @@ async fn c18_c22_c23_submit_wait_verifies_and_keeps_layers_apart() {
         &ctx(&r),
         &hex::encode(task_id),
         1,
+        None,
         true,
         false,
         &mut out,
@@ -1150,6 +1152,7 @@ async fn c18_c22_c23_submit_wait_verifies_and_keeps_layers_apart() {
         &ctx(&r),
         &hex::encode(task_id),
         1,
+        None,
         false,
         true,
         &mut out,
@@ -1528,8 +1531,14 @@ async fn c23b_cli_errors_carry_no_cv_text() {
 
 #[test]
 fn c24_golden_vectors_match_rust() {
-    // The frozen v2 profile, unchanged and reproduced.
+    // The active profile (v3 since change control CC-2), reproduced; the
+    // superseded v2 vector still reproduces from its own job spec.
     let v2 = json_file("inference/kaayu-cv-extract-v2.json");
+    assert_eq!(
+        hex::encode(profiles::kaayu_v2::job_spec().digest()),
+        v2["job_spec_digest"].as_str().unwrap()
+    );
+    let v2 = json_file("inference/kaayu-cv-extract-v3.json");
     let spec = profiles::active_job_spec();
     assert_eq!(
         hex::encode(spec.digest()),
@@ -1584,15 +1593,22 @@ fn c24_golden_vectors_match_rust() {
         hex::encode(executor.address().0),
         m["task"]["executor"].as_str().unwrap()
     );
-    let task = build_task(
+    let mut task = build_task(
         submitter.address(),
         executor.address(),
         seed("salt"),
         fi.input_commitment(),
     );
+    // build_task constructs the active profile's spec (v3 since change
+    // control CC-2); the MVP-C vector pinned the task with the spec active
+    // then (v2), which it records — the derivation is the same.
+    assert_eq!(task.execution_spec, frozen_execution_spec());
+    task.execution_spec = hex::decode(m["task"]["execution_spec"].as_str().unwrap()).unwrap();
     assert_eq!(
         hex::encode(&task.execution_spec),
-        m["task"]["execution_spec"].as_str().unwrap()
+        json_file("inference/kaayu-cv-extract-v2.json")["execution_spec_hex"]
+            .as_str()
+            .unwrap()
     );
     assert_eq!(
         hex::encode(task.task_id()),

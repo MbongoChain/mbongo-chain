@@ -81,6 +81,12 @@ struct Args {
     #[arg(long, default_value = "30333")]
     p2p_port: u16,
 
+    /// P2P bind host (IPv4 literal). The default listens on all interfaces,
+    /// as multi-host and container devnets need; a single-host deployment
+    /// passes 127.0.0.1 so no other host can reach the P2P port.
+    #[arg(long, default_value = "0.0.0.0")]
+    p2p_host: std::net::Ipv4Addr,
+
     /// Bootnodes (multiaddr format)
     #[arg(long)]
     bootnodes: Vec<String>,
@@ -162,7 +168,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut p2p = P2PNode::new()?;
     println!("  PeerId:   {}", p2p.peer_id);
 
-    p2p.listen(args.p2p_port)?;
+    p2p.listen_on_host(args.p2p_host, args.p2p_port)?;
 
     for addr in &args.bootnodes {
         if let Err(e) = p2p.dial(addr) {

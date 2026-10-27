@@ -12,7 +12,7 @@
 //!
 //! `task_profile` records whether the committed task is the one asked for
 //! (its recomputed `task_id`) and the frozen `mbongo-infer:v1` /
-//! `kaayu-cv-extract:v2` task at all.
+//! active-profile task (`kaayu-cv-extract:v3`) at all.
 //!
 //! Receipt-signature verification is `mbongo_verification::verify_receipt_signature`,
 //! the same function the node uses; this module only orders the checks and
@@ -163,7 +163,9 @@ pub fn evaluate(
     let task_profile = if task_id != requested_task_id {
         Check::Failed("committed task does not hash to the requested task_id".into())
     } else if task.execution_spec != frozen_execution_spec() {
-        Check::Failed("execution_spec is not mbongo-infer:v1 / kaayu-cv-extract:v2".into())
+        Check::Failed(
+            "execution_spec is not the active mbongo-infer:v1 / kaayu-cv-extract profile".into(),
+        )
     } else {
         Check::Verified
     };

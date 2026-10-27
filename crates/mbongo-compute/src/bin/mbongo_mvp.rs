@@ -4,7 +4,7 @@
 //! mbongo-mvp submit <cv.txt | -> [--wait] [--timeout <s>] [--show-result] [--json]
 //! mbongo-mvp status <task_id> [--json]
 //! mbongo-mvp result <task_id> [--out <file>] [--show-result]
-//! mbongo-mvp verify <task_id> [--from-height <h>] [--json] [--show-result]
+//! mbongo-mvp verify <task_id> [--from-height <h>] [--input <cv.txt>] [--json] [--show-result]
 //! ```
 //!
 //! Configuration comes from the environment (or the matching flag):
@@ -13,7 +13,7 @@
 //! key seed — the key itself is never an argument), and optionally
 //! `MBONGO_MVP_REFERENCE_USD_PER_HOUR` for the displayed reference cost.
 //! There is no model, runtime, executor-routing or `execution_spec` option:
-//! the task is always `mbongo-infer:v1 / kaayu-cv-extract:v2`.
+//! the task is always the active `mbongo-infer:v1 / kaayu-cv-extract:v3`.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -30,7 +30,7 @@ use mbongo_core::Address;
 #[derive(Parser)]
 #[command(
     name = "mbongo-mvp",
-    about = "Mbongo MVP client: Kaayu CV extraction (mbongo-infer:v1 / kaayu-cv-extract:v2) through the MVP HTTP front and the chain",
+    about = "Mbongo MVP client: Kaayu CV extraction (mbongo-infer:v1 / kaayu-cv-extract:v3) through the MVP HTTP front and the chain",
     after_help = "The Mbongo-operated worker processes the CV in plaintext (PUBLIC profile); the input and the result stay off-chain.\nBusiness accuracy of an extraction is not assessed by Mbongo."
 )]
 struct Cli {
@@ -70,7 +70,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Submit a CV text file as a kaayu-cv-extract:v2 task: upload the
+    /// Submit a CV text file as a kaayu-cv-extract:v3 task: upload the
     /// private input, commit the ComputeTask on-chain, register it.
     Submit {
         /// CV text file, or `-` for standard input. Plain text only.
@@ -113,7 +113,9 @@ enum Command {
 executor signature and its task, executor and input-commitment bindings, then the retrieved \
 result bytes against the receipt's output commitment.\n\nValidate output schema: the retrieved \
 bytes against kaayu-cv-profile:v2, reported separately.\n\nBusiness extraction accuracy is not \
-assessed; NOT ASSESSED is not an error."
+assessed; NOT ASSESSED is not an error.\n\nInjection screen (with --input): whether the result \
+echoes a value an instruction inside the CV asked for, or system-prompt text; reported on its own \
+line, never an accuracy check."
     )]
     Verify {
         /// Task id (64 hex characters).
@@ -121,6 +123,10 @@ assessed; NOT ASSESSED is not an error."
         /// First block to search for the task.
         #[arg(long, default_value_t = 1)]
         from_height: u64,
+        /// The CV text file the task was submitted with: enables the
+        /// injection screen (never uploaded, never printed).
+        #[arg(long)]
+        input: Option<String>,
         /// Print the report as one JSON object.
         #[arg(long)]
         json: bool,
@@ -236,13 +242,22 @@ async fn main() -> ExitCode {
         Command::Verify {
             task_id,
             from_height,
+            input,
             json,
             show_result,
         } => {
+            let cv = match input.as_deref().map(read_input).transpose() {
+                Ok(cv) => cv,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return code(exit::CONFIG);
+                }
+            };
             cli::verify(
                 &ctx,
                 &task_id,
                 from_height,
+                cv.as_deref(),
                 json,
                 show_result,
                 &mut out,

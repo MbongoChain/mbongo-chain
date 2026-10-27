@@ -76,6 +76,10 @@ name = "mvp_inference_harness"
 path = "src/bin/mvp_inference_harness.rs"
 
 [[bin]]
+name = "mvp_injection_harness"
+path = "src/bin/mvp_injection_harness.rs"
+
+[[bin]]
 name = "mvp_service"
 path = "src/bin/mvp_service.rs"
 

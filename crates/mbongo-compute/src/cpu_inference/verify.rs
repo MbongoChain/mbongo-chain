@@ -10,20 +10,20 @@ use sha2::{Digest, Sha256};
 
 use crate::inference::job_spec::InferenceJobSpecV1;
 use crate::inference::ContractError;
-use crate::profiles::kaayu_v2;
+use crate::profiles::{kaayu_v2, kaayu_v3};
 
 use super::config::LLAMA_CPP_BUILD_NUMBER;
 
-/// The frozen job-spec digest of the active MVP profile `kaayu-cv-extract:v2`
-/// (`test-vectors/inference/kaayu-cv-extract-v2.json`, change control CC-1).
-/// A rebuilt worker whose profile files changed computes another digest and
-/// refuses to start.
+/// The frozen job-spec digest of the active MVP profile `kaayu-cv-extract:v3`
+/// (`test-vectors/inference/kaayu-cv-extract-v3.json`, change control CC-2;
+/// v2 was `f38886b2…ac6f`, CC-1). A rebuilt worker whose profile files
+/// changed computes another digest and refuses to start.
 pub const FROZEN_JOB_SPEC_DIGEST: &str =
-    "f38886b234dd411be1b90b25f94b21e4ec10afa5720317c3630dc0b9df4aac6f";
-/// The frozen v2 prompt-template SHA-256.
+    "d767501bc595c7447ecb4b6ec3a6ee96b3bb71dbaf5571114f6c48b30142a2a0";
+/// The frozen v3 prompt-template SHA-256.
 pub const FROZEN_PROMPT_TEMPLATE_SHA256: &str =
-    "93ec9176e8d267ec1753476cbdc26862f8672cff14c1c41e2104b084c39a1f87";
-/// The frozen v2 output-schema SHA-256.
+    "87be4340f639002422ee4fb52d6aba13efe9201c180a7ba7cf5998da96a80b3e";
+/// The frozen output-schema SHA-256 (`kaayu-cv-profile:v2`, shared by v2 and v3).
 pub const FROZEN_OUTPUT_SCHEMA_SHA256: &str =
     "0a81727a7cebdc73e97869f82211c07c7a67912e44b0ee24274003a67d9750ab";
 
@@ -44,7 +44,7 @@ pub fn sha256_file(path: &Path) -> std::io::Result<String> {
 
 /// Step 0: the profile the worker was built with is the frozen one.
 pub fn verify_profile_assets(spec: &InferenceJobSpecV1) -> Result<(), ContractError> {
-    if kaayu_v2::prompt_template_sha256() != FROZEN_PROMPT_TEMPLATE_SHA256
+    if kaayu_v3::prompt_template_sha256() != FROZEN_PROMPT_TEMPLATE_SHA256
         || spec.profile.prompt_template_sha256 != FROZEN_PROMPT_TEMPLATE_SHA256
     {
         return Err(ContractError::JobSpecInvalid(

@@ -25,6 +25,8 @@
 // Options: --run-dir <dir> (default: a fresh directory under the OS temp
 // directory) · --recovery-job <Dnn> (default D07; "none" disables) ·
 // --recovery-delay-ms <ms> (default 10000) · --jobs <n> (default 20) ·
+// --profile-vector <file> (the golden vector of the profile the service runs;
+// default the v2 vector MVP-D used) ·
 // --rate <usd/h> (displayed reference cost rate, default 0.50 = the MVP
 // infrastructure ceiling of MVP_v0.1.md §12) · --build · --allow-battery
 // (records the run as invalid for acceptance).
@@ -40,8 +42,10 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EXE = process.platform === "win32" ? ".exe" : "";
 const BIN = (n) => path.join(ROOT, "target", "release", n + EXE);
 const CORPUS = path.join(ROOT, "test-vectors", "mvp", "mvp-d-corpus-v1.json");
-const V2_VECTOR = path.join(ROOT, "test-vectors", "inference", "kaayu-cv-extract-v2.json");
-const PROFILE_DIR = path.join(ROOT, "crates", "mbongo-compute", "profiles", "kaayu-cv-extract-v2");
+// The golden vector of the profile the service runs: v2 for MVP-D, the active
+// profile for a later revalidation (--profile-vector). Its prompt and schema
+// paths are verified and its prompt is a privacy-scan needle.
+const DEFAULT_PROFILE_VECTOR = path.join(ROOT, "test-vectors", "inference", "kaayu-cv-extract-v2.json");
 const INFER_HOME = path.join(os.homedir(), ".cache", "mbongo", "inference");
 const RUNTIME_EXE = path.join(INFER_HOME, "runtime", "b11669-win-cpu-x64", "llama-server.exe");
 const PINNED_RUNTIME_SHA256 = "6a4635aeb35656153d4bfeeddf761d24ed84aada9c9108d580737cbed465141b";
@@ -69,6 +73,7 @@ const RECOVERY_JOB = opt("--recovery-job", "D07");
 const RECOVERY_DELAY_MS = Number(opt("--recovery-delay-ms", "10000"));
 const JOBS = Number(opt("--jobs", "20"));
 const RATE = opt("--rate", "0.50");
+const PROFILE_VECTOR = path.resolve(opt("--profile-vector", DEFAULT_PROFILE_VECTOR));
 if (!EVIDENCE) die("--evidence <dir> is required");
 if (RUN.startsWith(ROOT + path.sep)) die("--run-dir must be outside the repository: it holds private material");
 fs.mkdirSync(RUN, { recursive: true });
@@ -181,10 +186,17 @@ const corpus = JSON.parse(fs.readFileSync(CORPUS, "utf8")).cases.slice(0, JOBS);
 for (const c of corpus) {
   if (sha256(Buffer.from(c.cv_text, "utf8")) !== c.cv_text_sha256) die(`${c.id}: fixture changed (sha256)`);
 }
-const v2 = JSON.parse(fs.readFileSync(V2_VECTOR, "utf8"));
+const v2 = JSON.parse(fs.readFileSync(PROFILE_VECTOR, "utf8"));
+const PROMPT_PATH = path.join(ROOT, v2.prompt_template_path);
+const SCHEMA_PATH = path.join(ROOT, v2.output_schema_path);
+env.profile = v2.profile;
+env.profile_vector = path.relative(ROOT, PROFILE_VECTOR).split(path.sep).join("/");
 const verify = {};
-verify.prompt_template_sha256 = sha256(fs.readFileSync(path.join(PROFILE_DIR, "prompt-template.txt")));
-verify.output_schema_sha256 = sha256(fs.readFileSync(path.join(PROFILE_DIR, "output-schema.json")));
+verify.profile = v2.profile;
+verify.prompt_template_sha256 = sha256(fs.readFileSync(PROMPT_PATH));
+verify.output_schema_sha256 = sha256(fs.readFileSync(SCHEMA_PATH));
+// Field name kept from MVP-D for comparable evidence: "the profile's assets
+// match its golden vector" (v2 for MVP-D, `verify.profile` otherwise).
 verify.profile_v2_verified =
   verify.prompt_template_sha256 === v2.prompt_template_sha256 && verify.output_schema_sha256 === v2.output_schema_sha256;
 const modelPath = path.join(INFER_HOME, "models", v2.job_spec.model.artifact_name);
@@ -563,7 +575,7 @@ const foreignReceipts = receipts.producer.filter((r) => !jobTasks.has(r.task_id)
 
 // ── 8. privacy and secret scans ───────────────────────────────────────────
 log("privacy scans");
-const promptFragments = [fs.readFileSync(path.join(PROFILE_DIR, "prompt-template.txt"), "utf8")];
+const promptFragments = [fs.readFileSync(PROMPT_PATH, "utf8")];
 const cvNeedles = new Set();
 for (const c of corpus) for (const l of c.cv_text.split("\n")) if (l.trim().length >= 12) cvNeedles.add(l.trim());
 const resultNeedles = new Set();

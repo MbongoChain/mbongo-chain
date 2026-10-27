@@ -489,9 +489,9 @@ async fn b08_valid_input_builds_the_exact_frozen_prompt() {
     w.run(&mut worker).await;
     let req = &w.backend.requests()[0];
     assert_eq!(
-        req.system,
-        kaayu_v2::PROMPT_TEMPLATE,
-        "template verbatim, nothing prepended or appended"
+        Some(req.system.as_str()),
+        profiles::assets(&profiles::active_job_spec()).map(|(p, _)| p),
+        "the active profile's template verbatim, nothing prepended or appended"
     );
     assert_eq!(req.user, cv_text(), "the CV text verbatim");
     let body = req.body();
@@ -948,7 +948,8 @@ async fn b24_wrong_capability_worker_is_ineligible_and_gets_no_lease() {
 
 #[test]
 fn b25_golden_job_spec_vector_is_consumed_exactly() {
-    let g = fixture("kaayu-cv-extract-v2.json");
+    // The active profile's vector (v3 since change control CC-2).
+    let g = fixture("kaayu-cv-extract-v3.json");
     let p = InferenceProfile::new(Arc::new(FakeBackend::pinned())).unwrap();
     assert_eq!(
         hex::encode(p.execution_spec()),

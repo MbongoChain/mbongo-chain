@@ -1,7 +1,7 @@
 //! MVP-B real-model harness: the pinned llama.cpp runtime and the pinned
 //! Qwen3-4B-Instruct-2507 GGUF on CPU, executing the frozen
 //! `mbongo-infer:v1` contract with the active MVP profile
-//! `kaayu-cv-extract:v2` (change control CC-1).
+//! (`kaayu-cv-extract:v3` since change control CC-2; v2 under CC-1).
 //!
 //! **Not run in CI** (it needs the 2.5 GB model). Prerequisite:
 //! `scripts/setup-mvp-inference-runtime.sh` has populated the cache.

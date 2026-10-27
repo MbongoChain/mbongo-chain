@@ -39,3 +39,6 @@ target/
 
 # Local devnet overrides (layered on top of the versioned .env.base)
 .env.local
+
+# Controlled MVP launch configuration: only the template is versioned
+config/mvp-launch.env
