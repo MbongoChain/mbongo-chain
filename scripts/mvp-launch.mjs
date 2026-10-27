@@ -321,7 +321,8 @@ async function smoke() {
   fs.mkdirSync(out, { recursive: true });
   const report = { at: new Date().toISOString(), head: git("rev-parse", "HEAD") };
   const h0 = await health();
-  if (!h0.healthy) die(`environment not healthy before the smoke: ${JSON.stringify(h0.alerts)}`, 1);
+  if (!h0.healthy && !(h0.alerts.length === 1 && h0.alerts[0].startsWith("AUTH_REPLAYS=")))
+    die(`environment not healthy before the smoke: ${JSON.stringify(h0.alerts)}`, 1);
   const job = async (name, text) => {
     const t = Date.now();
     const r = await run(BIN("mbongo-mvp"), ["submit", "-", "--wait", "--json"], { stdin: text });
@@ -372,7 +373,11 @@ async function smoke() {
   // 4. Health after, privacy scan.
   report.health_after = await health();
   report.privacy = await privacyScan(out, [fs.readFileSync(FIXTURE, "utf8"), e11.cv_text]);
-  report.pass = report.launch.pass && report.adversarial.pass && report.auth.pass && report.privacy.pass && report.health_after.healthy;
+  // The smoke's own replay probe is one expected AUTH_REPLAYED; any other
+  // alert, or any other replay, fails the smoke.
+  const replaysBySmoke = report.health_after.metrics.auth_replays - h0.metrics.auth_replays;
+  report.health_after.unexpected_alerts = report.health_after.alerts.filter((a) => !(a.startsWith("AUTH_REPLAYS=") && replaysBySmoke === 1 && h0.metrics.auth_replays === 0));
+  report.pass = report.launch.pass && report.adversarial.pass && report.auth.pass && report.privacy.pass && replaysBySmoke === 1 && report.health_after.unexpected_alerts.length === 0;
   fs.writeFileSync(path.join(STATE, "smoke-report.json"), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
   process.exit(report.pass ? 0 : 1);
