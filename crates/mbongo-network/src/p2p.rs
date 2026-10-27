@@ -289,7 +289,21 @@ impl P2PNode {
     ///
     /// Returns an error if the listen address cannot be parsed or bound.
     pub fn listen(&mut self, port: u16) -> Result<(), Box<dyn std::error::Error>> {
-        let listen_addr: Multiaddr = format!("/ip4/0.0.0.0/tcp/{port}").parse()?;
+        self.listen_on_host(std::net::Ipv4Addr::UNSPECIFIED, port)
+    }
+
+    /// Start listening on the given port on one IPv4 interface
+    /// (`127.0.0.1` keeps a single-host devnet off the network).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the listen address cannot be parsed or bound.
+    pub fn listen_on_host(
+        &mut self,
+        host: std::net::Ipv4Addr,
+        port: u16,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let listen_addr: Multiaddr = format!("/ip4/{host}/tcp/{port}").parse()?;
         self.swarm.listen_on(listen_addr)?;
         Ok(())
     }
