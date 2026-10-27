@@ -111,6 +111,17 @@ jobs:
       # verification kept separate. Fake chain and scripted backend; no model.
       - name: Mbongo MVP HTTP + CLI
         run: cargo test -p mbongo-compute --test mvp_http_cli --locked
+      # MVP-E: launch hardening (docs/security/MVP_LAUNCH_SECURITY_REVIEW.md,
+      # docs/product/MVP_LAUNCH_RUNBOOK.md). Request-signing adversarial cases,
+      # profile kaayu-cv-extract:v3 identity and the injection screen,
+      # operational limits. Fake chain and scripted backend; the real-model
+      # injection runs are mvp_injection_harness, never CI.
+      - name: Mbongo MVP Launch Auth Hardening
+        run: cargo test -p mbongo-compute --test mvp_launch_auth --locked
+      - name: Mbongo MVP Prompt Injection Hardening
+        run: cargo test -p mbongo-compute --test mvp_prompt_injection --locked
+      - name: Mbongo MVP Launch Operations
+        run: cargo test -p mbongo-compute --test mvp_launch_ops --locked
 
   # ---------------------------------------------------------
   # Mbongo Compute v0.4 Vertical (run on PR + push)

@@ -1,13 +1,13 @@
 # MVP HTTP Front and CLI — `mbongo-mvp`
 
 **Status:** MVP v0.1 IMPLEMENTATION — NON-CONSENSUS. Gate MVP-C of [`MVP_v0.1.md`](MVP_v0.1.md).
-**Builds on:** [`MVP_INFERENCE_CONTRACT_v1.md`](MVP_INFERENCE_CONTRACT_v1.md), the active profile [`kaayu-cv-extract:v2`](KAAYU_CV_EXTRACT_PROFILE_v2.md) and the CPU worker of [`MVP_CPU_INFERENCE_WORKER.md`](MVP_CPU_INFERENCE_WORKER.md), none of which this gate changes. **Code:** `crates/mbongo-compute/src/mvp/`, binaries `src/bin/mvp_service.rs` and `src/bin/mbongo_mvp.rs`. **CI group:** `mvp_http_cli` (step "Mbongo MVP HTTP + CLI"). **Vector:** [`test-vectors/mvp/mvp-http-cli-v1.json`](../../test-vectors/mvp/mvp-http-cli-v1.json). **Fixture:** `crates/mbongo-compute/fixtures/synthetic-cv.txt` (synthetic, no real person).
+**Builds on:** [`MVP_INFERENCE_CONTRACT_v1.md`](MVP_INFERENCE_CONTRACT_v1.md), the active profile — [`kaayu-cv-extract:v3`](KAAYU_CV_EXTRACT_PROFILE_v3.md) since MVP-E (change control CC-2; [`v2`](KAAYU_CV_EXTRACT_PROFILE_v2.md) when MVP-C shipped) — and the CPU worker of [`MVP_CPU_INFERENCE_WORKER.md`](MVP_CPU_INFERENCE_WORKER.md). **MVP-E additions** (launch hardening, [`MVP_LAUNCH_SECURITY_REVIEW.md`](../security/MVP_LAUNCH_SECURITY_REVIEW.md)): nonce-based replay protection, the injection screen, exit codes 8 and 12, strict re-registration, the signer in request logs. **Code:** `crates/mbongo-compute/src/mvp/`, binaries `src/bin/mvp_service.rs` and `src/bin/mbongo_mvp.rs`. **CI group:** `mvp_http_cli` (step "Mbongo MVP HTTP + CLI"). **Vector:** [`test-vectors/mvp/mvp-http-cli-v1.json`](../../test-vectors/mvp/mvp-http-cli-v1.json). **Fixture:** `crates/mbongo-compute/fixtures/synthetic-cv.txt` (synthetic, no real person).
 
 > **What a successful run lets Mbongo say — and not say.** *The anchored receipt and the retrieved result bytes verify cryptographically* (receipt integrity, result integrity). *The result conforms to the pinned application schema* (schema conformity). These are reported separately. *The business or factual accuracy of the extraction has not been demonstrated*: it is reported as `NOT ASSESSED`, always.
 
 ## 1. Purpose
 
-Give the MVP's first client one supported path through the frozen workload: prepare a `kaayu-cv-extract:v2` request, upload the private input off-chain, commit the `ComputeTask` on-chain, register it, follow its status, retrieve the private canonical result, resolve the anchored receipt, and verify — client-side — the receipt, the result bytes and the schema, each on its own. It is a thin adapter over operations that already exist; it is not a public API platform.
+Give the MVP's first client one supported path through the frozen workload: prepare a `kaayu-cv-extract` request for the active profile, upload the private input off-chain, commit the `ComputeTask` on-chain, register it, follow its status, retrieve the private canonical result, resolve the anchored receipt, and verify — client-side — the receipt, the result bytes and the schema, each on its own. It is a thin adapter over operations that already exist; it is not a public API platform.
 
 ## 2. Scope
 
@@ -41,7 +41,7 @@ Base `http://127.0.0.1:8740` by default (`HTTP_FRONT_DEFAULT_BIND = 127.0.0.1`).
 | `GET /v1/tasks/{task_id}/result` | F §10 `get_result` under a single-use get-result grant | — | `200` the exact canonical result bytes |
 
 - **Upload.** The front validates the input object with the worker's own type (`CvExtractionInputV1`: non-empty, no control characters other than `\n` `\r` `\t`, ≤ 10,000 canonical bytes), computes `input_commitment = BLAKE3("mbongo:compute-input:v1" ‖ canonical input object)` with the worker's own function, and stores the canonical bytes. The `task_id` is the one the client computed for the task it is about to submit — the chain's derivation, never a front-made id. `object_ref` is an identifier, not a capability: it grants nothing. Re-uploading before registration replaces the earlier object.
-- **Register** takes the `object_ref` and the `executor` the MVP v0.1 §9 surface names, and only checks them against what exists. It is idempotent.
+- **Register** takes the `object_ref` and the `executor` the MVP v0.1 §9 surface names, and only checks them against what exists. It is idempotent for the same facts; re-registering with another executor or object is refused (`422 EXECUTOR_MISMATCH` / `OBJECT_REF_MISMATCH`).
 - **Status view** fields: `task_id`, `state`, `task_height`, `attempts`, `attempts_exhausted`, `last_failure`, `failure_code`, `uploaded_at`, `registered_at`, `started_at_ms`, `completed_at_ms`, `inference_ms`, `input_tokens`, `output_tokens`, `finish_reason`, `result_available`, `receipt_submitted`, `receipt_height`, `worker_busy`, `as_of`. `state` is `not_registered` before registration, then the control plane's own states: `queued` (E `Discovered`), `leased`, `input_authorized`, `input_consumed`, `executing`, `result_persisted`, `receipt_submitted`, `completed` (a receipt observed on-chain), `failed`. While the worker is mid-attempt it holds the front's state; status is then served from the last snapshot with `worker_busy: true`. Timestamps and token counts are observations, not metering.
 - **Result.** `Content-Type: application/octet-stream`, `Cache-Control: no-store`; the body is the canonical bytes exactly as the data plane holds them (≤ 8,000 bytes), never parsed or re-serialized. Those bytes, and only those, are what `output_commitment` covers.
 - **Bounds.** Request bodies over 64 KiB are refused (`413`) before a handler reads them; an input over the contract's 10,000 canonical bytes is refused (`413 INPUT_TOO_LARGE`) before anything is stored; at most 64 uploads await registration.
@@ -52,17 +52,17 @@ Base `http://127.0.0.1:8740` by default (`HTTP_FRONT_DEFAULT_BIND = 127.0.0.1`).
 mbongo-mvp submit <cv.txt | -> [--wait] [--timeout <s>] [--show-result] [--json]
 mbongo-mvp status <task_id> [--json]
 mbongo-mvp result <task_id> [--out <file>] [--show-result]
-mbongo-mvp verify <task_id> [--from-height <h>] [--json] [--show-result]
+mbongo-mvp verify <task_id> [--from-height <h>] [--input <cv.txt>] [--json] [--show-result]
 ```
 
-Configuration is minimal and comes from the environment (or the matching flag): `MBONGO_MVP_FRONT`, `MBONGO_MVP_RPC_URL`, `MBONGO_MVP_REST_URL`, `MBONGO_MVP_EXECUTOR` (the configured executor address), `MBONGO_MVP_KEY_FILE` (a file holding the client key seed; the key is never an argument), and optionally `MBONGO_MVP_REFERENCE_USD_PER_HOUR`. There is no `--model`, `--runtime`, executor-selection or `execution_spec` option: the CLI always constructs `mbongo-infer:v1 / kaayu-cv-extract:v2`. Input is plain UTF-8 text from a file or standard input; no PDF, DOCX, OCR or URL.
+Configuration is minimal and comes from the environment (or the matching flag): `MBONGO_MVP_FRONT`, `MBONGO_MVP_RPC_URL`, `MBONGO_MVP_REST_URL`, `MBONGO_MVP_EXECUTOR` (the configured executor address), `MBONGO_MVP_KEY_FILE` (a file holding the client key seed; the key is never an argument), and optionally `MBONGO_MVP_REFERENCE_USD_PER_HOUR`. There is no `--model`, `--runtime`, executor-selection or `execution_spec` option: the CLI always constructs `mbongo-infer:v1` over the active profile (`kaayu-cv-extract:v3`). Input is plain UTF-8 text from a file or standard input; no PDF, DOCX, OCR or URL.
 
 The service: `mvp_service serve [--bind 127.0.0.1:8740]` (refuses a non-loopback address), `mvp_service executor-address`, and the devnet operator step `mvp_service fund-executor --amount <n>` (the executor's account must exist before it can anchor, RFC 0002 rule d). Keys come from `MBONGO_MVP_EXECUTOR_KEY_FILE` and `MBONGO_MVP_FUNDER_KEY_FILE`.
 
 ## 6. Submit flow
 
 1. Read the CV text; validate it as `kaayu-cv-extract-input:v1`; compute `input_commitment`.
-2. Build the task: `version`, `submitter` = the client key's address, `executor` = the configured executor, a random 32-byte `salt`, `input_commitment`, `execution_spec` = `"mbongo-infer:v1" ‖ f38886b2…ac6f` (47 bytes). `task_id` is `ComputeTask::task_id()`.
+2. Build the task: `version`, `submitter` = the client key's address, `executor` = the configured executor, a random 32-byte `salt`, `input_commitment`, `execution_spec` = `"mbongo-infer:v1" ‖` the active job-spec digest (47 bytes; `d767501b…a2a0` for v3, `f38886b2…ac6f` for v2). `task_id` is `ComputeTask::task_id()`.
 3. `PUT /v1/inputs`; refuse to continue if the front's `input_commitment` differs from the local one.
 4. Submit the signed `ComputeTask` transaction at the account's next nonce; wait until a block carries it.
 5. `POST /v1/tasks/{task_id}/register`, retrying only while the front has not yet observed the block (`404 TASK_NOT_ON_CHAIN`).
@@ -115,17 +115,23 @@ Receipt integrity: VERIFIED
 Result commitment: VERIFIED
 Schema conformity: VERIFIED
 Business extraction accuracy: NOT ASSESSED
+Injection screen: CLEAR (no instruction-following artifact detected; this is not an accuracy check)
 Executor: 0x<address>
-Runtime profile: mbongo-infer:v1 / kaayu-cv-extract:v2
+Runtime profile: mbongo-infer:v1 / kaayu-cv-extract:v3
 Receipt anchored at height: <h>
 Duration: inference <s>; submission to verified <s>
 Reference cost: US$<x> (display only, not charged)
 Business accuracy has not been evaluated by Mbongo: …
+Human review: this profile is AI-generated structured extraction. Review it before any recruiting action; …
 Provider visibility: the Mbongo-operated worker processes the CV in plaintext (PUBLIC profile); …
 OUTCOME=VERIFIED
 ```
 
-`--show-result` then prints the profile, pretty-printed *for display* from the verified canonical bytes and labelled as such; no commitment is ever computed over that rendering. `--json` prints one JSON object with the same fields (`{"status","reason"}` each), `execution_status`, `outcome`, timings and the reference cost.
+`--show-result` then prints the profile, pretty-printed *for display* from the verified canonical bytes and labelled as such; no commitment is ever computed over that rendering. `--json` prints one JSON object with the same fields (`{"status","reason"}` each), `execution_status`, `outcome`, `injection_screen`, `result_expired`, `human_review_required`, timings and the reference cost.
+
+**Injection screen (MVP-E).** With the CV text available — always for `submit`, with `--input` for `verify` — the CLI screens the result for obvious instruction-following artifacts: a value quoted in an instruction-like line of the CV echoed in a result field, or system-prompt text in the result. It is reported on its own line (`CLEAR`, `FLAGGED (codes)`, `NOT RUN`), never folded into the integrity results; `FLAGGED` exits `12`; `CLEAR` is not an accuracy check. Design and limits: [`MVP_LAUNCH_SECURITY_REVIEW.md`](../security/MVP_LAUNCH_SECURITY_REVIEW.md) §3.
+
+**Expired result (MVP-E).** When the front answers `410 RESULT_EXPIRED`, `verify` still checks the receipt, reports `Result commitment: NOT FOUND (private result expired; …)`, prints that the result cannot be recovered and that the receipt is unaffected, and exits `8` (`OUTCOME=RESULT_EXPIRED`) — never `VERIFICATION_FAILED`.
 
 The reference cost is the MVP v0.1 §8 rule — inference seconds × the configured hourly rate — printed only when a rate is configured; nothing is charged.
 
@@ -139,13 +145,13 @@ Mbongo does not evaluate whether the model found the right skills, years or empl
 
 ## 12. Authentication and capabilities
 
-Every request is signed by the client's chain key — the key that signs its `ComputeTask` — over `"mbongo-mvp-http:v1\n" METHOD "\n" PATH "\n" TIMESTAMP "\n" NONCE "\n" hex(BLAKE3(body))`, in headers `x-mbongo-address`, `x-mbongo-timestamp`, `x-mbongo-nonce` (16 random bytes) and `x-mbongo-signature`. The front accepts ±120 s of clock skew and refuses a signature it has seen in that window. Only the task's on-chain `submitter` may register it, read its status or retrieve its result. This is not an account system: it adds no identity beyond the chain account, and it is the smallest scheme that lets the existing E/F authorization decide over HTTP. No secret is ever sent.
+Every request is signed by the client's chain key — the key that signs its `ComputeTask` — over `"mbongo-mvp-http:v1\n" METHOD "\n" PATH "\n" TIMESTAMP "\n" NONCE "\n" hex(BLAKE3(body))`, in headers `x-mbongo-address`, `x-mbongo-timestamp`, `x-mbongo-nonce` (16 random bytes) and `x-mbongo-signature`. The front accepts ±120 s of clock skew and refuses any `(signer, nonce)` pair it has already accepted in that window — an identical replay and a different request under a reused nonce alike (MVP-E). The replay guard holds at most 100,000 recent pairs (then `503 AUTH_REPLAY_STORE_FULL`), records only requests whose signature verified, and lives in memory: it is forgotten when the service restarts. Only the task's on-chain `submitter` may register it, read its status or retrieve its result. This is not an account system: it adds no identity beyond the chain account, and it is the smallest scheme that lets the existing E/F authorization decide over HTTP. No secret is ever sent.
 
 Capabilities never leave the service: the fetch and put grants are the worker's (E/F, unchanged), and the get-result grant is single-use, 30 s, issued by the front to itself and consumed in the same request. Nothing prints one. The client key is read from a file named by an environment variable, never from the command line.
 
 ## 13. Privacy and logging
 
-The service logs one line per request — method, route template, task-id prefix, status, error code, duration — and nothing from any body; no framework middleware logs requests. It never logs CV text, the input body, the prompt, result JSON, a capability or a key. Error bodies are `{"error":"<CODE>"}` and nothing else; the CLI's errors carry the code or a transport class. `Debug` of the request types redacts the CV. The CLI prints CV text never, and result content only when asked, after the integrity report.
+The service logs one line per request — method, route template, task-id prefix, the authenticated signer's public-address prefix, status, error code, duration — and nothing from any body; no framework middleware logs requests. It never logs CV text, the input body, the prompt, result JSON, a capability or a key. Error bodies are `{"error":"<CODE>"}` and nothing else; the CLI's errors carry the code or a transport class. `Debug` of the request types redacts the CV. The CLI prints CV text never, and result content only when asked, after the integrity report.
 
 **Provider visibility.** This is the PUBLIC profile (`MVP_PRIVACY_LEVEL = PRIVATE_OFFCHAIN`): the Mbongo-operated worker processes the CV in plaintext. The input and the result stay off-chain — the smoke scans every block for them (§16).
 
@@ -165,15 +171,16 @@ The service logs one line per request — method, route template, task-id prefix
 | 413 | `INPUT_TOO_LARGE` (or a bare 413 over 64 KiB) | size bounds |
 | 422 | `UNSUPPORTED_EXECUTION_SPEC`, `EXECUTOR_MISMATCH`, `EXECUTOR_NOT_SERVED`, `OBJECT_REF_MISMATCH`, `INPUT_COMMITMENT_MISMATCH` | the committed task is not one this front may register |
 | 429 | `TOO_MANY_PENDING_UPLOADS` | more than 64 unregistered uploads |
+| 503 | `AUTH_REPLAY_STORE_FULL` | the replay guard is full; retry later |
 | 5xx | `CHAIN_UNAVAILABLE`, `REGISTRATION_FAILED`, `RESULT_UNAVAILABLE`, `INTERNAL_ERROR` | internal; no detail is returned |
 
-CLI exit codes: `0` success (for `verify`: profile, receipt, result and schema all `VERIFIED`); `2` usage; `3` local configuration (key file, executor, input refused); `4` front or chain unreachable; `5` refused by the front or the chain; `6` not ready (no result, no anchored receipt, wait timed out); `7` task failed and no longer retried; `10` `VERIFICATION_FAILED` (task, receipt or result integrity); `11` integrity verified, schema conformity failed. `business_accuracy` never changes the code.
+CLI exit codes: `0` success (for `verify`: profile, receipt, result and schema all `VERIFIED`); `2` usage; `3` local configuration (key file, executor, input refused); `4` front or chain unreachable; `5` refused by the front or the chain; `6` not ready (no result, no anchored receipt, wait timed out); `7` task failed and no longer retried; `8` the private result expired (receipt still verified); `10` `VERIFICATION_FAILED` (task, receipt or result integrity); `11` integrity verified, schema conformity failed; `12` receipt, result and schema verified but the injection screen flagged the result. `business_accuracy` never changes the code.
 
 ## 15. Golden vectors
 
 `mvp_http_cli` test C24 checks, byte for byte:
 
-- the frozen profile: job-spec digest `f38886b2…ac6f` and the 47-byte `execution_spec`, against [`kaayu-cv-extract-v2.json`](../../test-vectors/inference/kaayu-cv-extract-v2.json) — the vector MVP-B.1 committed, not regenerated here;
+- the active profile: job-spec digest and the 47-byte `execution_spec`, against [`kaayu-cv-extract-v3.json`](../../test-vectors/inference/kaayu-cv-extract-v3.json) (MVP-E); the v2 vector of MVP-B.1 still reproduces from v2's own job spec;
 - the MVP-A input and output vectors (canonical input bytes, `input_commitment`, `output_commitment`) through the MVP-C code paths;
 - [`mvp-http-cli-v1.json`](../../test-vectors/mvp/mvp-http-cli-v1.json): the synthetic fixture's SHA-256, canonical length and `input_commitment`; a fixed task (seeds, salt) and its `task_id`; one signed request (signing message and signature). This vector was produced by the Rust implementation (`generate_mvp_vector`) and pins it against drift; no second implementation exists yet.
 
