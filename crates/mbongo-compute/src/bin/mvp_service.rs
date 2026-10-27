@@ -129,11 +129,7 @@ async fn fund(
 }
 
 async fn serve(chain: RpcChainClient, executor: LocalKey, bind: SocketAddr) -> Result<(), String> {
-    if !bind.ip().is_loopback() {
-        return Err(format!(
-            "refusing to bind {bind}: the MVP front binds loopback only"
-        ));
-    }
+    mbongo_compute::mvp::check_loopback_bind(bind)?;
     let spec = profiles::active_job_spec();
     let cfg = RuntimeConfig::from_env(&spec.model.artifact_name)?;
     let (server, report) =
@@ -166,6 +162,10 @@ async fn serve(chain: RpcChainClient, executor: LocalKey, bind: SocketAddr) -> R
     );
     println!("EXECUTOR={}", front.executor());
     println!("RUNTIME_PROFILE={RUNTIME_PROFILE}");
+    println!("STATE=IN_MEMORY (lost when this process stops):");
+    for (item, consequence) in mbongo_compute::mvp::IN_MEMORY_STATE {
+        println!("  {item}: {consequence}");
+    }
 
     let ticker = {
         let front = front.clone();

@@ -23,8 +23,9 @@
 //! the upload. It never stores a result copy of its own: result bytes are
 //! read from the data plane on each request.
 //!
-//! **Logging.** One line per request — method, route, task-id prefix,
-//! status, duration — and nothing from any body. No framework middleware
+//! **Logging.** One line per request — method, route, task-id prefix, the
+//! authenticated signer's public-address prefix, status, error code,
+//! duration — and nothing from any body. No framework middleware
 //! logs requests.
 
 use std::collections::{HashMap, HashSet};
@@ -114,6 +115,7 @@ struct Upload {
 
 /// A registered task.
 struct Registration {
+    object: ObjectId,
     uploaded_at: u64,
     registered_at: u64,
 }
@@ -539,17 +541,13 @@ impl<C: ChainClient + Clone + 'static> Front<C> {
             self.inner.clock.now(),
             &mut replay,
         )
-        .map_err(|e| {
-            ApiError(
-                StatusCode::UNAUTHORIZED,
-                match e {
-                    AuthError::Missing => "AUTH_MISSING",
-                    AuthError::Malformed => "AUTH_MALFORMED",
-                    AuthError::Stale => "AUTH_STALE",
-                    AuthError::Replayed => "AUTH_REPLAYED",
-                    AuthError::BadSignature => "AUTH_BAD_SIGNATURE",
-                },
-            )
+        .map_err(|e| match e {
+            AuthError::Busy => ApiError(StatusCode::SERVICE_UNAVAILABLE, "AUTH_REPLAY_STORE_FULL"),
+            AuthError::Missing => ApiError(StatusCode::UNAUTHORIZED, "AUTH_MISSING"),
+            AuthError::Malformed => ApiError(StatusCode::UNAUTHORIZED, "AUTH_MALFORMED"),
+            AuthError::Stale => ApiError(StatusCode::UNAUTHORIZED, "AUTH_STALE"),
+            AuthError::Replayed => ApiError(StatusCode::UNAUTHORIZED, "AUTH_REPLAYED"),
+            AuthError::BadSignature => ApiError(StatusCode::UNAUTHORIZED, "AUTH_BAD_SIGNATURE"),
         })
     }
 
@@ -641,8 +639,21 @@ impl<C: ChainClient + Clone + 'static> Front<C> {
         if task.submitter != caller {
             return Err(ApiError(StatusCode::FORBIDDEN, "NOT_TASK_SUBMITTER"));
         }
-        if core.registered.contains_key(&task_id) {
-            // Idempotent: the same task registered again changes nothing.
+        if let Some(reg) = core.registered.get(&task_id) {
+            // Idempotent for the same facts only: a re-registration naming
+            // another executor or another object is refused, not ignored.
+            if task.executor != executor {
+                return Err(ApiError(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "EXECUTOR_MISMATCH",
+                ));
+            }
+            if reg.object.0 != object_ref {
+                return Err(ApiError(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "OBJECT_REF_MISMATCH",
+                ));
+            }
             let view = self.refresh_snapshot(core, task_id);
             return Ok(Json(view).into_response());
         }
@@ -695,6 +706,7 @@ impl<C: ChainClient + Clone + 'static> Front<C> {
         core.registered.insert(
             task_id,
             Registration {
+                object,
                 uploaded_at,
                 registered_at: self.inner.clock.now(),
             },
@@ -825,6 +837,7 @@ fn finish(
     method: &Method,
     route: &str,
     task_id: Option<&str>,
+    signer: Option<Address>,
     started: Instant,
     r: Result<Response, ApiError>,
 ) -> Response {
@@ -833,8 +846,9 @@ fn finish(
         Err(e) => (e.0, e.1),
     };
     log::info!(
-        "mvp-front: {method} {route} task {} -> {} {code} {}ms",
+        "mvp-front: {method} {route} task {} signer {} -> {} {code} {}ms",
         task_id.map_or("-", |t| t.get(..16).unwrap_or("?")),
+        signer.map_or_else(|| "-".to_owned(), |a| hex::encode(&a.0[..8])),
         status.as_u16(),
         started.elapsed().as_millis()
     );
@@ -849,11 +863,13 @@ async fn upload_route<C: ChainClient + Clone + 'static>(
     body: Bytes,
 ) -> Response {
     let t = Instant::now();
-    let r = match front.authenticate(&method, &uri, &headers, &body) {
+    let auth = front.authenticate(&method, &uri, &headers, &body);
+    let signer = auth.as_ref().ok().copied();
+    let r = match auth {
         Ok(caller) => front.upload(caller, &body).await,
         Err(e) => Err(e),
     };
-    finish(&method, "/v1/inputs", None, t, r)
+    finish(&method, "/v1/inputs", None, signer, t, r)
 }
 
 async fn register_route<C: ChainClient + Clone + 'static>(
@@ -865,10 +881,9 @@ async fn register_route<C: ChainClient + Clone + 'static>(
     body: Bytes,
 ) -> Response {
     let t = Instant::now();
-    let r = match (
-        front.authenticate(&method, &uri, &headers, &body),
-        parse_hex32(&task_id, "INVALID_TASK_ID"),
-    ) {
+    let auth = front.authenticate(&method, &uri, &headers, &body);
+    let signer = auth.as_ref().ok().copied();
+    let r = match (auth, parse_hex32(&task_id, "INVALID_TASK_ID")) {
         (Ok(caller), Ok(id)) => front.register(caller, id, &body).await,
         (Err(e), _) | (_, Err(e)) => Err(e),
     };
@@ -876,6 +891,7 @@ async fn register_route<C: ChainClient + Clone + 'static>(
         &method,
         "/v1/tasks/{task_id}/register",
         Some(&task_id),
+        signer,
         t,
         r,
     )
@@ -890,14 +906,13 @@ async fn status_route<C: ChainClient + Clone + 'static>(
     body: Bytes,
 ) -> Response {
     let t = Instant::now();
-    let r = match (
-        front.authenticate(&method, &uri, &headers, &body),
-        parse_hex32(&task_id, "INVALID_TASK_ID"),
-    ) {
+    let auth = front.authenticate(&method, &uri, &headers, &body);
+    let signer = auth.as_ref().ok().copied();
+    let r = match (auth, parse_hex32(&task_id, "INVALID_TASK_ID")) {
         (Ok(caller), Ok(id)) => front.status(caller, id).await,
         (Err(e), _) | (_, Err(e)) => Err(e),
     };
-    finish(&method, "/v1/tasks/{task_id}", Some(&task_id), t, r)
+    finish(&method, "/v1/tasks/{task_id}", Some(&task_id), signer, t, r)
 }
 
 async fn result_route<C: ChainClient + Clone + 'static>(
@@ -909,12 +924,18 @@ async fn result_route<C: ChainClient + Clone + 'static>(
     body: Bytes,
 ) -> Response {
     let t = Instant::now();
-    let r = match (
-        front.authenticate(&method, &uri, &headers, &body),
-        parse_hex32(&task_id, "INVALID_TASK_ID"),
-    ) {
+    let auth = front.authenticate(&method, &uri, &headers, &body);
+    let signer = auth.as_ref().ok().copied();
+    let r = match (auth, parse_hex32(&task_id, "INVALID_TASK_ID")) {
         (Ok(caller), Ok(id)) => front.result(caller, id).await,
         (Err(e), _) | (_, Err(e)) => Err(e),
     };
-    finish(&method, "/v1/tasks/{task_id}/result", Some(&task_id), t, r)
+    finish(
+        &method,
+        "/v1/tasks/{task_id}/result",
+        Some(&task_id),
+        signer,
+        t,
+        r,
+    )
 }
