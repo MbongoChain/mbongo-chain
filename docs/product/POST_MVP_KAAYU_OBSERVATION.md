@@ -34,7 +34,7 @@ O1 runs the released code. If a run needs a product-code change to continue, the
 | # | Prerequisite | State at this document's commit |
 |---|---|---|
 | P1 | baseline builds and `verify` passes at `099b8c08` | met at release (gate #164) |
-| P2 | a reviewed, committed privacy-scan tool implementing §10 | **not met** — the #164 scanner ran from the operator's scratch area; it must be committed and reviewed (tooling, not product code) before O1 |
+| P2 | a reviewed, committed privacy-scan tool implementing §10 | `scripts/o1-privacy-scan.mjs` (tooling, not product code; tests `scripts/o1-privacy-scan.test.mjs`, synthetic fixtures only). Met once it is merged with green CI; until then **not met** |
 | P3 | the batch plan (§5) approved by the maintainer | not started |
 | P4 | for any real CV: the admission conditions of §4 | not started |
 
@@ -184,7 +184,7 @@ Stop the batch, keep every artifact, and report to the maintainer when: any `INT
 
 ## 10. Privacy checks
 
-Reusing the #164 lessons. For each observation, and over the whole batch at its end:
+Reusing the #164 lessons. For each observation, and over the whole batch at its end — with [`scripts/o1-privacy-scan.mjs`](../../scripts/o1-privacy-scan.mjs) (`--root` the batch or observation directory, `--launch-config` for the launch state logs, key files and node RPC; exit 0 `PASS`, 1 `FAIL`, 2 `INCOMPLETE`; one new report per run under `privacy/`, naming files and needle hashes, never content or keys):
 
 1. **Chain.** No candidate content (CV lines, result values) in any block on any of the three nodes.
 2. **Logs.** No candidate content in node, service, `llama-server` or CLI diagnostic output.
