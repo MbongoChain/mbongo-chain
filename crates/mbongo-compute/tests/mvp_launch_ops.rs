@@ -293,23 +293,9 @@ fn o03_restart_state_is_disclosed_item_by_item() {
     }
 }
 
-/// What o03 discloses, observed: a second front over the same chain (a
-/// service restart: fresh in-memory state, fresh owner key, fresh backend)
-/// rediscovers the completed task and its receipt from the chain, holds no
-/// registration or result for it, and never runs it again.
-#[tokio::test]
-async fn o07_restart_rediscovers_public_facts_only() {
-    let r = ok_rig().await;
-    let id = registered(&r, 0x07).await;
-    for _ in 0..3 {
-        step(&r).await;
-    }
-    let before = r.client.status(id).await.unwrap();
-    assert_eq!(before.state, "completed");
-    assert!(before.result_available);
-    let receipt_height = before.receipt_height.expect("receipt observed");
-
-    // Restart: everything in process memory is new; the chain is the same.
+/// A service restart over the same chain: fresh in-memory state, fresh
+/// owner key, fresh backend, a new HTTP front; the chain is the same.
+async fn restart(r: &Rig) -> (Front<FakeChain>, FrontClient, Arc<FakeBackend>) {
     let backend = Arc::new(FakeBackend::pinned());
     backend.push_content(&raw_output());
     let profile = InferenceProfile::new(Arc::clone(&backend) as Arc<dyn InferenceBackend>).unwrap();
@@ -336,6 +322,26 @@ async fn o07_restart_rediscovers_public_facts_only() {
         r.chain.produce_block();
         front.tick().await.unwrap();
     }
+    (front, client, backend)
+}
+
+/// What o03 discloses, observed: a second front over the same chain (a
+/// service restart: fresh in-memory state, fresh owner key, fresh backend)
+/// rediscovers the completed task and its receipt from the chain, holds no
+/// registration or result for it, and never runs it again.
+#[tokio::test]
+async fn o07_restart_rediscovers_public_facts_only() {
+    let r = ok_rig().await;
+    let id = registered(&r, 0x07).await;
+    for _ in 0..3 {
+        step(&r).await;
+    }
+    let before = r.client.status(id).await.unwrap();
+    assert_eq!(before.state, "completed");
+    assert!(before.result_available);
+    let receipt_height = before.receipt_height.expect("receipt observed");
+
+    let (_front, client, backend) = restart(&r).await;
 
     // Public facts: the task and its receipt, rediscovered.
     let after = client.status(id).await.unwrap();
@@ -350,6 +356,71 @@ async fn o07_restart_rediscovers_public_facts_only() {
     assert_eq!(backend.calls(), 0);
     // The receipt is on-chain regardless.
     assert!(find_anchored_receipt(&r.chain, id, 1).await.unwrap().is_some());
+}
+
+/// Runbook section 7, pinned: after a restart the CLI `verify` command cannot
+/// complete for an earlier task. It needs the private result bytes, which are
+/// gone, so it exits 5 (rejected) with TASK_NOT_REGISTERED and prints no
+/// report, in either output mode; the receipt stays anchored on-chain and its
+/// height stays visible in status. Receipt persistence is checked separately
+/// from result verification.
+#[tokio::test]
+async fn o08_verify_after_restart_needs_the_result() {
+    let r = ok_rig().await;
+    let id = registered(&r, 0x08).await;
+    for _ in 0..3 {
+        step(&r).await;
+    }
+    let receipt_height =
+        r.client.status(id).await.unwrap().receipt_height.expect("receipt observed");
+
+    let (_front, client, backend) = restart(&r).await;
+
+    let status = client.status(id).await.unwrap();
+    assert_eq!(status.state, "not_registered");
+    assert_eq!(status.receipt_height, Some(receipt_height));
+    assert_eq!(
+        client.result(id).await.unwrap_err().code(),
+        Some("TASK_NOT_REGISTERED")
+    );
+
+    let ctx = Context {
+        chain: &r.chain,
+        front: &client,
+        key: &r.key,
+        executor: Some(r.executor.address()),
+        reference_usd_per_hour: None,
+        poll: Duration::from_millis(10),
+    };
+    for json in [false, true] {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = cli::verify(
+            &ctx,
+            &hex::encode(id),
+            1,
+            None,
+            json,
+            false,
+            &mut out,
+            &mut err,
+        )
+        .await;
+        assert_eq!(code, exit::REJECTED, "json={json}");
+        let err = String::from_utf8(err).unwrap();
+        assert!(err.contains("TASK_NOT_REGISTERED"), "json={json}: {err}");
+        assert!(
+            out.is_empty(),
+            "json={json}: no verification report: {}",
+            String::from_utf8_lossy(&out)
+        );
+    }
+
+    // The receipt remains anchored, at the height status shows.
+    let (anchored_at, _) = find_anchored_receipt(&r.chain, id, 1).await.unwrap().expect("anchored");
+    assert_eq!(anchored_at, receipt_height);
+    // Not re-executed.
+    assert_eq!(backend.calls(), 0);
 }
 
 #[test]
