@@ -23,6 +23,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { exposure, launchNodeArgs } from "./mvp-launch-exposure.mjs";
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EXE = process.platform === "win32" ? ".exe" : "";
 const BIN = (n) => path.join(ROOT, "target", "release", n + EXE);
@@ -199,8 +201,9 @@ async function start() {
   for (const f of ["producer", "follower1", "follower2", "mvp_service"]) for (const s of ["out", "err"]) fs.rmSync(path.join(STATE, `${f}.${s}`), { force: true });
   const state = { started_at: new Date().toISOString(), head: v.head, nodes: {}, service: null };
   const dataRoot = path.join(STATE, "chain");
-  // Every node port on loopback: RPC and REST by the node's default, P2P by flag.
-  const args = (n) => ["--rpc-port", String(n.rpc), "--rest-port", String(n.rest), "--p2p-port", String(n.p2p), "--p2p-host", "127.0.0.1", "--data-dir", path.join(dataRoot, n.name)];
+  // Every node port on loopback: RPC and REST by the node's default, P2P by
+  // flag; mDNS off, so peers are reached through --bootnodes only (F-N1, F-N2).
+  const args = (n) => launchNodeArgs(n, path.join(dataRoot, n.name));
   state.nodes.producer = spawnDetached("producer", BIN("mbongo-node"), [...args(NODES[0]), "--producer", "--block-time", "1"]);
   const boot = `/ip4/127.0.0.1/tcp/${NODES[0].p2p}/p2p/${await peerIdOf("producer")}`;
   for (const n of NODES.slice(1)) state.nodes[n.name] = spawnDetached(n.name, BIN("mbongo-node"), [...args(n), "--bootnodes", boot]);
@@ -294,6 +297,11 @@ async function health() {
   report.listening = [].concat(listen || []).map((l) => `${l.LocalAddress}:${l.LocalPort}`);
   const exposed = report.listening.filter((a) => !/^(127.0.0.1|::1):/.test(a));
   if (exposed.length) report.alerts.push(`NON_LOOPBACK_LISTENER: ${exposed.join(" ")} — stop and fix before launch`);
+  // Every TCP and UDP socket owned by a process of the stack, whatever its
+  // port (F-N2: mDNS used UDP on every interface, which the listening-port
+  // check above cannot see). Fails closed when the inventory is unavailable.
+  report.exposure = stackExposure(st);
+  report.alerts.push(...report.exposure.alerts);
   report.service_process = st?.service ? alive(st.service) : false;
   if (!report.service_process) report.alerts.push("MVP_SERVICE_NOT_RUNNING (in-memory inputs and results are lost)");
   const procs = psJson("Get-Process mvp_service,llama-server -ErrorAction SilentlyContinue | Select-Object Name,Id,WorkingSet64 | ConvertTo-Json");
@@ -307,6 +315,25 @@ async function health() {
   if (report.metrics.auth_replays > 0) report.alerts.push(`AUTH_REPLAYS=${report.metrics.auth_replays}: investigate the source`);
   report.healthy = report.alerts.length === 0;
   return report;
+}
+
+function stackExposure(st) {
+  const nodePids = Object.values(st?.nodes || {});
+  const pids = { nodes: nodePids, service: st?.service, llama: [] };
+  const ids = [...nodePids, st?.service].filter((p) => Number.isInteger(p));
+  if (!ids.length) return { alerts: ["EXPOSURE_NOT_CHECKED: no launch state"] };
+  const inv = psJson(`$ids = @(${ids.join(",")});
+$llama = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=${Number.isInteger(st.service) ? st.service : 0} AND Name='llama-server.exe'" | ForEach-Object { [int]$_.ProcessId });
+$all = @($ids + $llama);
+$tcp = @(Get-NetTCPConnection -OwningProcess $all -ErrorAction SilentlyContinue | ForEach-Object { [pscustomobject]@{ proto = 'tcp'; address = $_.LocalAddress; port = [int]$_.LocalPort; pid = [int]$_.OwningProcess; state = [string]$_.State } });
+$udp = @(Get-NetUDPEndpoint -OwningProcess $all -ErrorAction SilentlyContinue | ForEach-Object { [pscustomobject]@{ proto = 'udp'; address = $_.LocalAddress; port = [int]$_.LocalPort; pid = [int]$_.OwningProcess } });
+$lines = @(${nodePids.length ? nodePids.join(",") : "-1"} | ForEach-Object { (Get-CimInstance Win32_Process -Filter "ProcessId=$_").CommandLine });
+[pscustomobject]@{ llama = $llama; sockets = @($tcp + $udp); lines = $lines } | ConvertTo-Json -Depth 4 -Compress`);
+  if (!inv) return { alerts: ["EXPOSURE_NOT_CHECKED: the socket inventory of the stack is unavailable"] };
+  pids.llama = [].concat(inv.llama || []);
+  const lines = [].concat(inv.lines || []).filter((l) => typeof l === "string");
+  const ports = { p2p: NODES.map((n) => n.p2p), rpc: NODES.map((n) => n.rpc), rest: NODES.map((n) => n.rest) };
+  return exposure({ sockets: [].concat(inv.sockets || []), pids, nodeCommandLines: lines, ports });
 }
 
 // ── request signing, independently of the Rust client ─────────────────────

@@ -22,7 +22,7 @@
 | Concurrency | one inference at a time |
 | Power | AC (latency figures assume it) |
 
-**Network.** Every listener is loopback: node RPC and REST by default, node P2P with `--p2p-host 127.0.0.1` (set by `mvp-launch.mjs`), the front (it refuses any other bind), `llama-server` (fixed in code). `mvp-launch.mjs health` lists every listening socket of the stack and alerts on any non-loopback address. The service terminates **no TLS**: plaintext HTTP is acceptable on loopback only. A client on another host requires an external trusted boundary — a VPN, or a reverse proxy that terminates TLS and restricts clients — in front of `127.0.0.1:8740` (`TLS_REQUIRED_AT_EXTERNAL_BOUNDARY`). Do not widen a bind to reach it.
+**Network.** Every listener is loopback: node RPC and REST by default, node P2P with `--p2p-host 127.0.0.1` and mDNS discovery off with `--no-mdns` (both set by `mvp-launch.mjs`; nodes reach each other through `--bootnodes` only), the front (it refuses any other bind), `llama-server` (fixed in code). `mvp-launch.mjs health` inventories every TCP and UDP socket owned by a process of the stack and alerts on any non-loopback address (security review §8.1, F-N2: a TCP-only check missed mDNS). The service terminates **no TLS**: plaintext HTTP is acceptable on loopback only. A client on another host requires an external trusted boundary — a VPN, or a reverse proxy that terminates TLS and restricts clients — in front of `127.0.0.1:8740` (`TLS_REQUIRED_AT_EXTERNAL_BOUNDARY`). Do not widen a bind to reach it.
 
 **Rate limiting.** None beyond the bounds below; the loopback boundary and a single trusted client are the control. Built-in bounds: request bodies ≤ 64 KiB (refused before authentication), ≤ 64 uploads awaiting registration, the replay store capped at 100,000 recent requests (then `503 AUTH_REPLAY_STORE_FULL`), only authenticated requests recorded. A flood of status requests is answered (300 in a few seconds in the test group) and does not block the worker; a flood of bad signatures leaves no state.
 
@@ -68,7 +68,9 @@ Print it; tick it; keep it with the run log.
     not a public test seed; MBONGO_MVP_EXECUTOR matches the executor key     (verify)
 [ ] laptop on AC power
 [ ] 3 nodes started, converged: same block at the common height, skew ≤ 3   (start / health)
-[ ] every listener loopback (no NON_LOOPBACK_LISTENER alert)            (health)
+[ ] every socket of the stack loopback, TCP and UDP: exposure reports
+    P2P_TCP/RPC/REST=LOOPBACK_ONLY, MDNS=DISABLED, UDP_NON_LOOPBACK=0
+    (no NON_LOOPBACK_LISTENER, NON_LOOPBACK_SOCKET or MDNS_ENABLED alert)  (health)
 [ ] mvp_service ready: FRONT_BIND=127.0.0.1:8740, runtime/model lines printed
 [ ] llama-server healthy                                               (health)
 [ ] no parked tasks, no auth replays, no alerts                        (health)
@@ -100,6 +102,7 @@ node scripts/mvp-launch.mjs smoke  --config <env>           # 9: launch smoke
 | worker / llama-server | `GET 127.0.0.1:9931/health` ok | `LLAMA_SERVER_UNAVAILABLE` (the worker restarts it before the next job; alert if it persists) |
 | service process | running | `MVP_SERVICE_NOT_RUNNING` (in-memory state lost, §7) |
 | exposure | every listener of the stack on loopback | `NON_LOOPBACK_LISTENER` → stop, fix before launch |
+| exposure (sockets) | every TCP and UDP socket owned by a node, `mvp_service` or its `llama-server` on loopback; every node started with `--no-mdns`. Reported as `exposure`: `P2P_TCP`, `MDNS`, `UDP_NON_LOOPBACK`, `TCP_NON_LOOPBACK`, `RPC`, `REST`. One documented exception: the Windows `Bound` twin of an outbound loopback connection (security review §8.1) | `NON_LOOPBACK_SOCKET`, `MDNS_ENABLED`, `P2P_TCP_…`/`RPC_…`/`REST_…` → stop, fix before launch; `EXPOSURE_NOT_CHECKED` → the inventory failed: treat as unhealthy |
 | memory | llama-server working set ≤ 7,168 MiB | `LLAMA_MEMORY_ABOVE_7168_MIB` |
 | disk | ≥ 5 GiB free on the state volume | `DISK_FREE_BELOW_5_GIB` |
 | parked tasks | 0 | `PARKED_TASKS` |
