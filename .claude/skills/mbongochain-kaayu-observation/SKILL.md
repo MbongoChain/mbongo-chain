@@ -44,7 +44,12 @@ states) to pass before the first workload of a batch.
    integrity, schema conformity, injection screen. Business accuracy is
    `NOT_ASSESSED`.
 7. **Business quality needs a named human reviewer.** Never record a review
-   on a person's behalf, and never infer per-field ratings for them.
+   on a person's behalf, and never infer per-field ratings for them. In a
+   `SYNTHETIC` batch whose plan sets `AUTO_THEN_SAMPLE` (runbook §8.1), write
+   your provisional ratings only to `review/auto-evaluation.json`, labelled
+   `AUTO_EVALUATION`; leave the record's human-review fields to the human,
+   with `review.status` `PENDING`. Never use automated evaluation for real
+   data, and never let it stand in for a consequential decision.
 8. **Classify every outcome** with the runbook §9 taxonomy. Documented
    released behaviour (post-restart `not_registered`, `TASK_NOT_REGISTERED`
    from `result` or `verify`, `RESULT_EXPIRED`) is not a failure.

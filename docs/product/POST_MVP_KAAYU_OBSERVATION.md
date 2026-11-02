@@ -63,6 +63,7 @@ A batch is fixed **before** it starts, approved by the maintainer, and not chang
 | data class | `SYNTHETIC`, `AUTHORIZED_REAL`, or a stated mix |
 | baseline | release commit and the binary hashes `verify` records |
 | reviewer(s) | named, per §4.2 |
+| review mode | `HUMAN_EACH` — the named reviewer reviews every observation before the next starts (default; **required for `AUTHORIZED_REAL`**); or `AUTO_THEN_SAMPLE` — `SYNTHETIC` batches only: automated evaluation of every observation, human review of a stated sample (§8.1) |
 | retention rule | per §4.3 |
 | stop rules | §9.2, unchanged |
 
@@ -75,7 +76,7 @@ Failed, stopped and flagged observations stay in the batch. Nothing is dropped, 
 3. **Submit.** `mbongo-mvp submit <input> --wait --json` (record the JSON line and stderr in `cli/`). Do not edit, retry or resubmit to obtain a better result; a retry is a new observation.
 4. **Retrieve.** `mbongo-mvp result <task> --out raw-result/result.json` **within the 3,600 s result lifetime and before any service restart** — afterwards the result cannot be recovered.
 5. **Verify.** `mbongo-mvp verify <task> --input <input> --json` (record in `verification/`). Record receipt integrity, result integrity, schema conformity and the injection screen as four separate values.
-6. **Review.** The named reviewer applies §8 against the input and records the review in `review/`.
+6. **Review.** The named reviewer applies §8 against the input and records the review in `review/`. In `AUTO_THEN_SAMPLE` mode (§8.1) the operator writes `review/auto-evaluation.json` instead, and the human review follows for the sample, without blocking the next observation.
 7. **Scan.** Run the privacy checks of §10 (record in `privacy/`).
 8. **Record.** Write `record.json` (§7, schema) and, optionally, a human-readable `summary.md` without candidate content.
 
@@ -96,7 +97,7 @@ $MBONGO_O1_ROOT/
       raw-result/              result.json as retrieved                     PRIVATE
       cli/                     submit JSON line, stderr                     (no content by design; still private)
       verification/            verify output, text and JSON
-      review/                  §8 rubric                                    PRIVATE (may quote the CV)
+      review/                  §8 rubric; auto-evaluation.json (§8.1)        PRIVATE (may quote the CV)
       metrics/                 timings, health snapshots
       privacy/                 §10 scan report
       record.json              the observation record (§7, schema)          no candidate content
@@ -156,6 +157,19 @@ Recorded separately: **omission count**, **hallucination count**, **materially m
 
 Review notes stay in `review/` (private). The record carries ratings and counts only.
 
+### 8.1 Automated evaluation of synthetic observations (`AUTO_EVALUATION`)
+
+For a `SYNTHETIC` batch whose plan sets review mode `AUTO_THEN_SAMPLE` (§5), the operator — typically the coding agent — may evaluate every observation automatically, because the source CV is known and invented. It never applies to `AUTHORIZED_REAL` data.
+
+- **Separate artifact.** The assessment goes to the private `review/auto-evaluation.json`, labelled `"assessment_type": "AUTO_EVALUATION"` and `"not_human_review": true`, naming the evaluator. It holds per-field ratings on the §8 scale with a rationale each, provisional omission and hallucination counts, mechanical checks (values at a schema bound, items kept versus present in the CV), and the likely cause of each issue (`SCHEMA` bound versus `MODEL` extraction). A maintainer decision quoted there is marked as such.
+- **The record stays human.** `record.json` review fields carry only decisions a human actually made. Without them, `review.status` is `PENDING`; an automated assessment never sets `human_accept`, `materially_misleading`, the counts, the field ratings or the reviewer. The operator may classify the observation provisionally (`classification.subclass = AUTO_EVALUATION_PROVISIONAL`, with an operator note).
+- **Human sample.** The batch plan states the sample the named reviewer completes (at least one observation per batch). The sample must include any observation whose automated assessment is used to support a decision.
+- **No interruptions for non-blocking findings.** In this mode the operator does not stop for ordinary business-quality findings (partial fields, truncation, omissions). The §9.2 stop rules apply unchanged.
+- **Human approval stays mandatory** for every consequential decision: accepting a batch's findings, the §11 recommendation and next gate, any profile, schema or product change, and any admission of real data. An automated assessment informs these decisions and never makes them.
+- **Reporting.** The batch report keeps human-review counts and automated counts in separate sections and states how many observations a human reviewed. Neither is an accuracy claim.
+
+O1-B01 first used this under a maintainer instruction given during the batch (recorded in its private `governance-addendum-001.json`); its records are not rewritten.
+
 **No aggregate accuracy claim.** Per-batch counts are reported (§11), but `BUSINESS_EXTRACTION_ACCURACY` stays `NOT_ASSESSED` until a later, explicitly approved evaluation gate defines a reviewed sample, a method and a threshold, and changes it.
 
 ## 9. Failure taxonomy
@@ -210,7 +224,7 @@ Reusing the #164 lessons. For each observation, and over the whole batch at its 
    | `NO_CHANGE` | the release meets the observed need; keep observing |
 
    No category is preselected; `GPU` in particular needs measured latency or capacity evidence, not expectation.
-3. **Propose, then decide.** The recommendation names the evidence and one next gate. The maintainer chooses. Only then is engineering work opened, as its own gate with its own scope.
+3. **Propose, then decide.** The recommendation names the evidence and one next gate, and how many of the batch's observations a human reviewed (§8.1). The maintainer chooses. Only then is engineering work opened, as its own gate with its own scope.
 
 ## 12. Standing positions during O1
 
