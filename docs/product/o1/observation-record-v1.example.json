@@ -1,0 +1,66 @@
+{
+  "record_version": "o1-observation-record:v1",
+  "observation_id": "O1-B00-001",
+  "batch_id": "O1-B00",
+  "recorded_at": "2026-11-02T16:46:00Z",
+  "workload_class": "SYNTHETIC",
+  "admission_ref": null,
+  "baseline": {
+    "release_version": "mvp-v0.1.0",
+    "release_sha": "099b8c0832f9c8e3f6bf45150fa0064358a21969",
+    "execution_profile": "mbongo-infer:v1",
+    "inference_profile": "kaayu-cv-extract:v3",
+    "runtime": { "name": "llama.cpp llama-server", "build": "b11669", "commit": "620d2225c" },
+    "model_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+    "binaries_sha256_prefix": { "mbongo-node": "d607212d5d9acc45", "mvp_service": "1792d586d4ea10dc", "mbongo-mvp": "de6673eb58fa4dbb" }
+  },
+  "task": {
+    "task_id": "562806f624a232dbc97303cc8ce244f5802c140a81e60f1aa2e32271c0f78067",
+    "task_height": 863,
+    "receipt_height": 930,
+    "input_bytes": 672,
+    "input_commitment": "8cb802078ececc37ed59964ecc9441b5438ebe8f16902324f40993dd89d1ca7b"
+  },
+  "timings": { "total_ms": 67800, "inference_ms": 65333 },
+  "outcomes": {
+    "submit_exit": 0,
+    "cli_outcome": "VERIFIED",
+    "verify_exit": 0,
+    "receipt_integrity": "VERIFIED",
+    "result_integrity": "VERIFIED",
+    "schema_conformity": "VERIFIED",
+    "injection_screen": "CLEAR",
+    "injection_findings": []
+  },
+  "business_extraction_accuracy": "NOT_ASSESSED",
+  "review": {
+    "status": "DONE",
+    "reviewer_ref": "example-reviewer",
+    "fields": {
+      "current_title": { "rating": "CORRECT" },
+      "previous_titles": { "rating": "CORRECT" },
+      "employers": { "rating": "CORRECT" },
+      "employment_dates": { "rating": "CORRECT" },
+      "education": { "rating": "PARTIAL", "flags": ["TRUNCATED"] },
+      "languages": { "rating": "CORRECT" },
+      "skills": { "rating": "CORRECT" },
+      "certifications": { "rating": "NOT_APPLICABLE" },
+      "location": { "rating": "CORRECT" },
+      "summary": { "rating": "CORRECT" },
+      "seniority": { "rating": "CORRECT" }
+    },
+    "omission_count": 0,
+    "hallucination_count": 0,
+    "materially_misleading": false,
+    "human_accept": true,
+    "flag_warranted": null
+  },
+  "classification": {
+    "primary": "BUSINESS_QUALITY_FAILURE",
+    "subclass": "FIELD_TRUNCATION",
+    "secondary": [],
+    "blocking": false,
+    "operator_notes": "education degree cut at the 40-character schema bound (#167)"
+  },
+  "privacy": { "scanner_version": "v2", "log_hits": 0, "chain_hits": 0, "secret_hits": 0 }
+}

@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mbongo:o1:observation-record:v1",
+  "title": "POST-MVP-O1 observation record v1",
+  "description": "One record per Kaayu workload observed under docs/product/POST_MVP_KAAYU_OBSERVATION.md. Carries identifiers, measurements, verification values, review ratings and classification. Never carries CV text, result text or reviewer remarks that quote the candidate.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["record_version", "observation_id", "batch_id", "recorded_at", "workload_class", "baseline", "task", "timings", "outcomes", "business_extraction_accuracy", "review", "classification", "privacy"],
+  "properties": {
+    "record_version": { "const": "o1-observation-record:v1" },
+    "observation_id": { "type": "string", "pattern": "^O1-B[0-9]{2}-[0-9]{3}$" },
+    "batch_id": { "type": "string", "pattern": "^O1-B[0-9]{2}$" },
+    "recorded_at": { "type": "string", "format": "date-time" },
+    "workload_class": { "enum": ["SYNTHETIC", "AUTHORIZED_REAL"] },
+    "admission_ref": {
+      "description": "AUTHORIZED_REAL only: opaque reference to the private admission record (section 4). Not a name, not content.",
+      "type": ["string", "null"]
+    },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["release_version", "release_sha", "execution_profile", "inference_profile", "runtime", "model_sha256"],
+      "properties": {
+        "release_version": { "type": "string" },
+        "release_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "execution_profile": { "type": "string" },
+        "inference_profile": { "type": "string" },
+        "runtime": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "build", "commit"],
+          "properties": {
+            "name": { "type": "string" },
+            "build": { "type": "string" },
+            "commit": { "type": "string" }
+          }
+        },
+        "model_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "binaries_sha256_prefix": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_id", "task_height", "receipt_height", "input_bytes", "input_commitment"],
+      "properties": {
+        "task_id": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "task_height": { "type": ["integer", "null"] },
+        "receipt_height": { "type": ["integer", "null"] },
+        "input_bytes": { "type": "integer", "minimum": 0 },
+        "input_commitment": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "timings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total_ms", "inference_ms"],
+      "properties": {
+        "total_ms": { "type": ["integer", "null"] },
+        "inference_ms": { "type": ["integer", "null"] }
+      }
+    },
+    "outcomes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["submit_exit", "cli_outcome", "verify_exit", "receipt_integrity", "result_integrity", "schema_conformity", "injection_screen"],
+      "properties": {
+        "submit_exit": { "type": "integer" },
+        "cli_outcome": { "type": ["string", "null"] },
+        "verify_exit": { "type": ["integer", "null"] },
+        "receipt_integrity": { "enum": ["VERIFIED", "FAILED", "NOT_FOUND", "NOT_RUN"] },
+        "result_integrity": { "enum": ["VERIFIED", "FAILED", "NOT_FOUND", "NOT_RUN"] },
+        "schema_conformity": { "enum": ["VERIFIED", "FAILED", "NOT_RUN"] },
+        "injection_screen": { "enum": ["CLEAR", "FLAGGED", "NOT_RUN"] },
+        "injection_findings": { "type": "array", "items": { "type": "string", "pattern": "^[A-Z_]+$" } }
+      }
+    },
+    "business_extraction_accuracy": { "const": "NOT_ASSESSED" },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["PENDING", "DONE", "NOT_POSSIBLE"] },
+        "reviewer_ref": { "type": ["string", "null"], "description": "Opaque reference to the named reviewer, kept in the private admission record." },
+        "fields": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "current_title": { "$ref": "#/$defs/rating" },
+            "previous_titles": { "$ref": "#/$defs/rating" },
+            "employers": { "$ref": "#/$defs/rating" },
+            "employment_dates": { "$ref": "#/$defs/rating" },
+            "education": { "$ref": "#/$defs/rating" },
+            "languages": { "$ref": "#/$defs/rating" },
+            "skills": { "$ref": "#/$defs/rating" },
+            "certifications": { "$ref": "#/$defs/rating" },
+            "location": { "$ref": "#/$defs/rating" },
+            "summary": { "$ref": "#/$defs/rating" },
+            "seniority": { "$ref": "#/$defs/rating" }
+          }
+        },
+        "omission_count": { "type": "integer", "minimum": 0 },
+        "hallucination_count": { "type": "integer", "minimum": 0 },
+        "materially_misleading": { "type": "boolean" },
+        "human_accept": { "type": "boolean" },
+        "flag_warranted": { "type": ["boolean", "null"], "description": "Only when the injection screen flagged the result." }
+      }
+    },
+    "classification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary", "blocking"],
+      "properties": {
+        "primary": { "enum": ["NONE", "RUNTIME_FAILURE", "INTEGRITY_FAILURE", "SECURITY_FAILURE", "SCHEMA_FAILURE", "BUSINESS_QUALITY_FAILURE", "OPERATOR_UX_ISSUE"] },
+        "subclass": { "type": ["string", "null"], "pattern": "^[A-Z0-9_]+$" },
+        "secondary": { "type": "array", "items": { "type": "string", "pattern": "^[A-Z0-9_]+$" } },
+        "blocking": { "type": "boolean" },
+        "operator_notes": { "type": ["string", "null"], "maxLength": 500, "description": "Must not contain candidate content." }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scanner_version", "log_hits", "chain_hits", "secret_hits"],
+      "properties": {
+        "scanner_version": { "type": "string" },
+        "log_hits": { "type": "integer", "minimum": 0 },
+        "chain_hits": { "type": "integer", "minimum": 0 },
+        "secret_hits": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "$defs": {
+    "rating": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rating"],
+      "properties": {
+        "rating": { "enum": ["CORRECT", "PARTIAL", "INCORRECT", "OMITTED", "HALLUCINATED", "NOT_APPLICABLE"] },
+        "flags": { "type": "array", "items": { "enum": ["TRUNCATED"] } }
+      }
+    }
+  }
+}

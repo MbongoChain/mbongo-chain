@@ -1,7 +1,7 @@
 # MVP Launch Runbook — controlled MVP operations
 
 **Status:** CONTROLLED MVP OPERATIONS — NON-CONSENSUS. Gate MVP-E of [`MVP_v0.1.md`](MVP_v0.1.md).
-**Operates:** the MVP measured in [`MVP_D_ACCEPTANCE.md`](MVP_D_ACCEPTANCE.md), with the hardening of [`MVP_LAUNCH_SECURITY_REVIEW.md`](../security/MVP_LAUNCH_SECURITY_REVIEW.md) (active profile `kaayu-cv-extract:v3`). **Tooling:** [`scripts/mvp-launch.mjs`](../../scripts/mvp-launch.mjs) (`verify`, `start`, `health`, `smoke`, `stop`), configuration template [`config/mvp-launch.env.example`](../../config/mvp-launch.env.example). **Client:** [`MVP_HTTP_CLI.md`](MVP_HTTP_CLI.md).
+**Operates:** the MVP measured in [`MVP_D_ACCEPTANCE.md`](MVP_D_ACCEPTANCE.md), with the hardening of [`MVP_LAUNCH_SECURITY_REVIEW.md`](../security/MVP_LAUNCH_SECURITY_REVIEW.md) (active profile `kaayu-cv-extract:v3`). **Tooling:** [`scripts/mvp-launch.mjs`](../../scripts/mvp-launch.mjs) (`verify`, `start`, `health`, `smoke`, `stop`), configuration template [`config/mvp-launch.env.example`](../../config/mvp-launch.env.example). **Client:** [`MVP_HTTP_CLI.md`](MVP_HTTP_CLI.md). **Released as** `mvp-v0.1.0` ([`MVP_v0.1.0_RELEASE.md`](MVP_v0.1.0_RELEASE.md)); real Kaayu workloads are run only under [`POST_MVP_KAAYU_OBSERVATION.md`](POST_MVP_KAAYU_OBSERVATION.md).
 
 > **What this launch is.** A **CONTROLLED MVP LAUNCH**: one operator, one Mbongo-operated worker, one host, a private three-node devnet, synthetic or consented CVs, the Kaayu internal client. It is not a public, permissionless or production deployment, and nothing here should be read as one.
 >
