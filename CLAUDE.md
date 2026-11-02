@@ -28,6 +28,8 @@ Do not restate protocol facts from this file or from memory. Look them up:
 | Changing any of the above | [`docs/RFC_PROCESS.md`](docs/RFC_PROCESS.md), [`docs/CONTRIBUTION_TIERS.md`](docs/CONTRIBUTION_TIERS.md) |
 | Contributing | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | **What counts as proof here** | [`docs/ENGINEERING_EVIDENCE.md`](docs/ENGINEERING_EVIDENCE.md) |
+| Released MVP (`mvp-v0.1.0`), its runtime contract and limitations | [`docs/product/MVP_v0.1.0_RELEASE.md`](docs/product/MVP_v0.1.0_RELEASE.md) |
+| Observing Kaayu workloads after release (O1) | [`docs/product/POST_MVP_KAAYU_OBSERVATION.md`](docs/product/POST_MVP_KAAYU_OBSERVATION.md) |
 
 ## Engineering rules
 
@@ -68,6 +70,8 @@ are not recorded yet — see #110.
 
 ## Skills
 
-None are committed yet. When reusable procedures are added they will live in
-`.claude/skills/`. Do not assume a skill exists because a workflow feels
-repetitive; check the directory.
+Reusable procedures live in `.claude/skills/`: `merge-gate`,
+`git-canonical-file-verification`, `npm-package-gate`,
+`windows-shell-safety`, and `mbongochain-kaayu-observation` (POST-MVP-O1;
+never commit candidate data). Do not assume a skill exists because a
+workflow feels repetitive; check the directory.

@@ -2,6 +2,7 @@
 
 **Status:** FROZEN PRODUCT SCOPE (product and architecture decision; non-consensus).
 **Decided:** 2026-10-17 at `89cadb670c3d0470fcda70fb2e7f53404157cb9e` (protocol v0.4, frozen).
+**Released:** 2026-11-02 as `mvp-v0.1.0` (release commit `099b8c08`, controlled launch) — [`MVP_v0.1.0_RELEASE.md`](MVP_v0.1.0_RELEASE.md). The scope below is unchanged; post-release work starts with observation ([`POST_MVP_KAAYU_OBSERVATION.md`](POST_MVP_KAAYU_OBSERVATION.md)).
 **Authority this document holds:** what Mbongo launches first, for whom, on which workload, runtime, model, worker, privacy level, provider model, payment model, client surface and exit criteria — and what is deferred until that launch has happened.
 **Authority this document does not hold:** nothing here changes a protocol surface. [RFC 0005](../rfcs/0005-compute-task-commitment-v1.md), [PROTOCOL_LOCK_v0.4](../specs/PROTOCOL_LOCK_v0.4.md), [rpc_v0.3](../specs/rpc_v0.3.md) and the architecture documents named in [`docs/INDEX.md`](../INDEX.md) win on every subject they decide. Where this document chooses something they leave open, it is a product choice and says so.
 
