@@ -122,6 +122,20 @@ jobs:
         run: cargo test -p mbongo-compute --test mvp_prompt_injection --locked
       - name: Mbongo MVP Launch Operations
         run: cargo test -p mbongo-compute --test mvp_launch_ops --locked
+      # F-N2 (docs/security/MVP_LAUNCH_SECURITY_REVIEW.md §8.1): mDNS can be
+      # turned off (mbongo-node --no-mdns; default unchanged), static peers
+      # still connect and sync without it, and the controlled-launch tooling
+      # starts nodes with --no-mdns and alerts on any TCP or UDP socket of the
+      # stack outside loopback. The mDNS positive control needs multicast and
+      # is #[ignore]d here.
+      - name: Mbongo Node mDNS Toggle
+        run: cargo test -p mbongo-network --test p2p_mdns_toggle --locked
+      - name: Install Node 24 (launch tooling tests)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Mbongo MVP Launch Exposure
+        run: node --test scripts/mvp-launch-exposure.test.mjs
 
   # ---------------------------------------------------------
   # Mbongo Compute v0.4 Vertical (run on PR + push)

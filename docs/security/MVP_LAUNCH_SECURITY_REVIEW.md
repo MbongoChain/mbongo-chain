@@ -5,6 +5,8 @@
 
 > **Outcome.** Every finding of this review is fixed or mitigated in this gate; none needed a protocol, RPC, SDK-wire or consensus change. The launch it supports is a **CONTROLLED MVP LAUNCH** (single operator, single host, private devnet, loopback only). Standing positions: `BUSINESS_EXTRACTION_ACCURACY = NOT_ASSESSED`, `PROMPT_INJECTION_IMMUNITY_CLAIMED = NO`, `PROVIDER_RESISTANT_CONFIDENTIALITY = NO`.
 
+> **Post-merge finding F-N2 (controlled-launch gate [#164](https://github.com/MbongoChain/mbongo-chain/issues/164), 2026-10-27).** The review's loopback-only proof covered TCP only. At the launch gate, mDNS discovery of the node was found running on the LAN and WSL interfaces (§8.1). The MVP-E merge commit `205013d1b644151e04209e8685c1d10f914b3817` is therefore `NOT_RELEASABLE_FOR_CONTROLLED_MVP_DUE_TO_F-N2`. The text below this note records the review as it was merged and is not rewritten; §8.1, §9, §11 and §13 carry the F-N2 additions.
+
 ## 1. Scope and assets
 
 **In scope:** request signing and authorization at the HTTP front; capabilities and private data in the data plane; prompt injection through CV text; keys and configuration; logs and errors; network exposure of the launch stack; dependencies on the launch path; operational state.
@@ -224,6 +226,27 @@ Re-checked after the hardening: request lines carry method, route template, task
 
 All other listeners were already loopback: node RPC and REST (defaults), the front (refuses any other bind — now `mvp::check_loopback_bind`, tested), `llama-server` (fixed in code). The front terminates no TLS: `TLS_REQUIRED_AT_EXTERNAL_BOUNDARY` for any remote client; `PUBLIC_BIND_DEFAULT = NO`.
 
+### 8.1 F-N2 — mDNS bypassed the loopback-only boundary (found at gate #164)
+
+| ID | Finding | Severity | Fix |
+|---|---|---|---|
+| F-N2 | The node always ran libp2p mDNS discovery (`p2p.rs`: constructed unconditionally with the default configuration, and every discovered peer auto-dialed). `--p2p-host 127.0.0.1` does not reach it: mDNS opens UDP sockets on every interface | HIGH (for the launch host) | `mbongo-node --no-mdns` (non-consensus; default unchanged: without the flag mDNS behaves exactly as before); the launcher starts every node with `--p2p-host 127.0.0.1 --no-mdns`; `health` inventories every TCP **and UDP** socket owned by a process of the stack and alerts on any non-loopback address and on any node without `--no-mdns` |
+
+What is recorded, exactly:
+
+- **F-N1 fixed the explicit P2P TCP bind** (`--p2p-host`); it did not cover mDNS.
+- **F-N2 found that mDNS still used non-loopback interfaces.** Observed on the reference host at the #164 gate, release candidate `205013d1`, launcher `start` then `health` (green): `0.0.0.0:5353` (follower1) and one UDP socket per node on `192.168.2.37` (LAN) and on `172.24.48.1` (WSL / Hyper-V virtual interface).
+- **mDNS advertised peer IDs and ports, and discovered peers, on the LAN and WSL interfaces**: each node logged the other two as `mDNS discovered: <peer> at /ip4/192.168.2.37/tcp/<port>` and `/ip4/172.24.48.1/tcp/<port>` — 12 discoveries, all at non-loopback addresses.
+- **Discovered peers could trigger outbound dial attempts**: the event handler dials every discovered address. Those dials failed only because the P2P listeners were loopback. Any host on the LAN that answers or announces over mDNS would have been dialed, and on that outbound connection could have spoken the node's sync and block-notify protocols — which makes the HIGH advisories of §9, assessed as unreachable with P2P on loopback, reachable again. No third-party host was observed; this is the code path, not an observed intrusion.
+- **The previous loopback-only proof covered TCP and was incomplete**: `health` listed TCP listening sockets on the stack's known ports only; it could not see UDP and reported green.
+- **No task had been submitted and no private workload data existed** when F-N2 was discovered: the gate stopped after `health`, before the smoke; the stack was stopped at once (0 processes, 0 sockets left).
+
+**Release status:** `205013d1b644151e04209e8685c1d10f914b3817` = `NOT_RELEASABLE_FOR_CONTROLLED_MVP_DUE_TO_F-N2`. The controlled launch requires a release that contains the F-N2 fix, and gate #164 re-run on it.
+
+**Expected state on the controlled launch** (reported by `health` as `exposure`): `P2P_TCP = LOOPBACK_ONLY`, `MDNS = DISABLED`, `UDP_NON_LOOPBACK = 0`, `RPC = LOOPBACK_ONLY`, `REST = LOOPBACK_ONLY`. One documented exception, `BOUND_TWIN_OF_LOOPBACK_CONNECTION`: for an outbound connection Windows also lists a TCP row in state `Bound` on `0.0.0.0` with the connection's local port; it neither listens nor carries traffic and is ignored only when the same process holds a connected loopback row on that port. Sockets of other processes (a browser's own mDNS, system services) are not the stack's and are not flagged.
+
+**Verification** (fix branch, reference host): a node with `--p2p-host 127.0.0.1 --no-mdns` owns its three loopback TCP listeners and **no UDP socket**; the same binary without the flag owns UDP sockets on `192.168.2.37` and `172.24.48.1`; two `--no-mdns` nodes connect through `--bootnodes` and converge; the launcher's real `health` reports the expected state for `--no-mdns` nodes and `NON_LOOPBACK_SOCKET` + `MDNS_ENABLED` (exit 1) for a default node. Tests: `mbongo-network` `p2p_mdns_toggle`, `mbongo-node` CLI tests, `scripts/mvp-launch-exposure.test.mjs`.
+
 ## 9. Dependencies
 
 **Licenses** (narrow sanity check over the 409 crates of the `mbongo-compute` and `mbongo-node` dependency graphs): MIT, Apache-2.0, BSD, ISC, Zlib, Unicode-3.0, Unlicense, CC0 and one MPL-2.0 (file-level copyleft, used unmodified); two crates (`ittapi`, under `wasmtime` in the node) are `GPL-2.0-only OR BSD-3-Clause`, used under BSD-3-Clause. No non-commercial or source-available license. MVP-C/E additions: `axum` (MIT), `clap` (MIT OR Apache-2.0), `getrandom` (MIT OR Apache-2.0). Runtime: llama.cpp (MIT). Model: Qwen3-4B-Instruct-2507 (Apache-2.0). `DEPENDENCY_LICENSE_RESULT = PASS`.
@@ -244,6 +267,8 @@ All other listeners were already loopback: node RPC and REST (defaults), the fro
 | `crypto-bigint`, `rsa` | timing side channels | both | SEV-SNP certificate verification (K-HW), not on the MVP path |
 | `bincode`, `core2`, `fxhash`, `instant`, `paste`, `proc-macro-error` | unmaintained | node | no known exploit |
 
+**F-N2 note:** the "unreachable with P2P on loopback" assessments above held for inbound connections only. Until F-N2 was fixed, mDNS let a LAN host be discovered and dialed by the node (§8.1); with `--no-mdns` on the controlled launch the node dials only its configured bootnodes, and the assessments hold again.
+
 No CRITICAL advisory; no exploitable HIGH on the controlled launch path once F-N1 is fixed; one LOW advisory (`h2`) reachable on the loopback front. `DEPENDENCY_SECURITY_RESULT = PASS_WITH_ACCEPTED_RISKS`. Upgrading libp2p, yamux and wasmtime is node work for before any public network.
 
 ## 10. Privacy boundaries
@@ -257,6 +282,7 @@ No CRITICAL advisory; no exploitable HIGH on the controlled launch path once F-N
 | F-P1 | prompt injection overrides extraction (D18; v2: 5/10) | HIGH | **mitigated under CC-3**: v3 (model 1/10 corpus, 2/12 with unseen) + screen and rejection (0 undetected, 0 client-accepted) + human review |
 | F-N1 | node P2P on all interfaces | HIGH | **fixed** (`--p2p-host`, launcher, health check) |
 | F-K1 | public test keys used as client/executor | HIGH | **fixed** (fresh keys, `verify` refuses public seeds) |
+| F-N2 | node mDNS on every interface, auto-dialing discovered peers (found at gate #164, after the MVP-E merge) | HIGH | **fixed** in the F-N2 change (`--no-mdns`, launcher, TCP + UDP health check); `205013d1` = `NOT_RELEASABLE_FOR_CONTROLLED_MVP_DUE_TO_F-N2` |
 | F-A1 | nonce reuse accepted | MEDIUM | **fixed** |
 | F-O1 | status stalled during inference | — | fixed in MVP-C (`0c57539`), re-tested |
 | F-A2 / F-A3 / F-A4 | replay store unbounded; signer not logged; lenient re-registration | LOW | **fixed** |
@@ -323,3 +349,5 @@ Run strictly through the runbook on the reference host (i7-8850H, 6 threads, CPU
 `CRITICAL = 0`, `HIGH = 0`, `BLOCKING_MEDIUM = 0`, `ACCEPTED_RISK_COUNT = 12`.
 
 **`LAUNCH_READY = YES`, `LAUNCH_TYPE = CONTROLLED_MVP`** — under change controls CC-2 (profile v3, revalidated end to end) and CC-3 (prompt-injection safety property), on the boundary of the runbook (§1 there): single operator, single host, loopback only, fresh private keys, human review of every profile. Standing: `BUSINESS_EXTRACTION_ACCURACY = NOT_ASSESSED`, `PROMPT_INJECTION_IMMUNITY_CLAIMED = NO`, `PROVIDER_RESISTANT_CONFIDENTIALITY = NO`.
+
+**F-N2 addendum (gate #164).** The decision above was taken on an incomplete loopback-only proof (§8.1). It does not apply to `205013d1b644151e04209e8685c1d10f914b3817`, which is `NOT_RELEASABLE_FOR_CONTROLLED_MVP_DUE_TO_F-N2`. It applies again to a release containing the F-N2 fix once gate #164 has re-run on that release and its `health` reports `P2P_TCP = LOOPBACK_ONLY`, `MDNS = DISABLED`, `UDP_NON_LOOPBACK = 0`, `RPC = LOOPBACK_ONLY`, `REST = LOOPBACK_ONLY`.

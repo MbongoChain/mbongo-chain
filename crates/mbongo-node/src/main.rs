@@ -87,6 +87,13 @@ struct Args {
     #[arg(long, default_value = "0.0.0.0")]
     p2p_host: std::net::Ipv4Addr,
 
+    /// Disable mDNS local peer discovery. By default the node advertises
+    /// itself and auto-dials peers found by mDNS on every interface, whatever
+    /// --p2p-host says; a loopback-only deployment passes this flag and
+    /// reaches its peers through --bootnodes only.
+    #[arg(long)]
+    no_mdns: bool,
+
     /// Bootnodes (multiaddr format)
     #[arg(long)]
     bootnodes: Vec<String>,
@@ -165,8 +172,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Genesis:  OK");
 
     // ── P2P ────────────────────────────────────────────────────────────
-    let mut p2p = P2PNode::new()?;
+    let mut p2p = P2PNode::with_mdns(!args.no_mdns)?;
     println!("  PeerId:   {}", p2p.peer_id);
+    // Printed only with --no-mdns: the default node's output is unchanged.
+    if !p2p.mdns_enabled() {
+        println!("  mDNS:     disabled (--no-mdns)");
+    }
 
     p2p.listen_on_host(args.p2p_host, args.p2p_port)?;
 
@@ -537,5 +548,22 @@ mod tests {
         // P2P has no host flag: it keeps its own listen semantics.
         let args = Args::parse_from(["mbongo-node"]);
         assert_eq!(args.p2p_port, 30333);
+    }
+
+    #[test]
+    fn mdns_stays_enabled_by_default() {
+        // F-N2: the default node keeps mDNS discovery exactly as before.
+        let args = Args::parse_from(["mbongo-node"]);
+        assert!(!args.no_mdns);
+        assert_eq!(args.p2p_host, std::net::Ipv4Addr::UNSPECIFIED);
+    }
+
+    #[test]
+    fn no_mdns_flag_disables_mdns() {
+        let args = Args::parse_from(["mbongo-node", "--p2p-host", "127.0.0.1", "--no-mdns"]);
+        assert!(args.no_mdns);
+        assert_eq!(args.p2p_host, std::net::Ipv4Addr::LOCALHOST);
+        // The flag takes no value.
+        assert!(Args::try_parse_from(["mbongo-node", "--no-mdns", "true"]).is_err());
     }
 }
