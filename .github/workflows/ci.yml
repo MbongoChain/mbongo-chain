@@ -136,6 +136,13 @@ jobs:
           node-version: 24
       - name: Mbongo MVP Launch Exposure
         run: node --test scripts/mvp-launch-exposure.test.mjs
+      # POST-MVP-O1 privacy scanner (docs/product/POST_MVP_KAAYU_OBSERVATION.md
+      # §10): leak detection in logs, chain blocks and publishable evidence,
+      # seed detection everywhere, exact-file classification, fail-closed
+      # status, reports that never contain content. Synthetic fixtures only;
+      # no real candidate data ever enters CI.
+      - name: Mbongo O1 Privacy Scanner
+        run: node --test scripts/o1-privacy-scan.test.mjs
 
   # ---------------------------------------------------------
   # Mbongo Compute v0.4 Vertical (run on PR + push)

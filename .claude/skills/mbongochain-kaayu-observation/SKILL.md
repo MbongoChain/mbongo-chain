@@ -52,10 +52,11 @@ states) to pass before the first workload of a batch.
    silently.
 10. **Stop on a security or integrity blocker** — and on the other runbook
     §9.2 stop rules — keep every artifact, report, and wait.
-11. **Run the privacy checks** of runbook §10 per observation and per batch.
-    Intentional private content is excluded from content matching only by
-    exact role or exact file name, never by a broad pattern, and is still
-    scanned for secrets.
+11. **Run the privacy checks** of runbook §10 per observation and per batch,
+    with `scripts/o1-privacy-scan.mjs`; only `PASS` passes (`INCOMPLETE`
+    is not a pass). Intentional private content is excluded from content
+    matching only by exact role or exact file name (`--exempt`), never by a
+    broad pattern, and is still scanned for secrets.
 12. **Propose changes only after the batch is reviewed**, as one dominant
     constraint from the runbook §11 list, with its counts. Do not preselect
     a category; GPU in particular needs measured evidence.
