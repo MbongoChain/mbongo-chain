@@ -1,0 +1,148 @@
+# Deterministic 3-node Mbongo devnet (issue #53).
+#
+# Service graph:
+#
+#     producer  (healthy)
+#         |
+#         +---> follower-a  (healthy)
+#         +---> follower-b  (healthy)
+#                   |
+#                   +---> convergence-check  -> exit 0 / non-zero
+#
+# The producer is the bootstrap peer. Followers receive its address as an
+# explicit --bootnodes multiaddr built from a fixed IP, so no runtime peer
+# discovery is required for the devnet to form.
+#
+# convergence-check starts no node: it probes the three running nodes with
+# the convergence_probe binary. Height and tip-hash comparison exists only
+# inside that binary -- never in this file, the healthchecks, or the
+# Makefile.
+
+name: mbongo-devnet
+
+# Settings shared by the three nodes. Only the role, the data directory and
+# the network attachment differ between them.
+x-node: &node
+  image: ${MBONGO_IMAGE}
+  build:
+    context: .
+    dockerfile: Dockerfile
+    args:
+      RUST_VERSION: ${RUST_VERSION}
+  environment:
+    RUST_LOG: ${RUST_LOG}
+    # Read by the healthcheck script inside the container.
+    MBONGO_RPC_PORT: ${MBONGO_RPC_PORT}
+  healthcheck:
+    # Real readiness: the node answers the JSON-RPC ping method.
+    test: ["CMD", "devnet-healthcheck"]
+    interval: 2s
+    timeout: 5s
+    retries: 45
+    start_period: 5s
+  # A devnet node that dies should surface as a failure, not silently come
+  # back and hide the problem.
+  restart: "no"
+  # No volumes on purpose: node state lives in the container writable layer
+  # and disappears with `down`, so every bootstrap starts from genesis.
+
+services:
+  producer:
+    <<: *node
+    container_name: mbongo-devnet-producer
+    command:
+      - --chain=${MBONGO_CHAIN}
+      - --producer
+      - --block-time=${MBONGO_BLOCK_TIME}
+      - --rpc-host=${MBONGO_RPC_HOST}
+      - --rpc-port=${MBONGO_RPC_PORT}
+      - --rest-host=${MBONGO_REST_HOST}
+      - --rest-port=${MBONGO_REST_PORT}
+      - --p2p-port=${MBONGO_P2P_PORT}
+      - --data-dir=/data/producer
+    networks:
+      devnet:
+        # Fixed address: this is what makes the follower bootnode multiaddr
+        # deterministic without discovering a PeerId at runtime.
+        ipv4_address: ${MBONGO_PRODUCER_IP}
+    ports:
+      # Loopback-only, for local debugging. Set MBONGO_HOST_RPC_PORT=0 to
+      # let Docker pick a free port (used by the CI layer).
+      - "127.0.0.1:${MBONGO_HOST_RPC_PORT}:${MBONGO_RPC_PORT}"
+
+  follower-a:
+    <<: *node
+    container_name: mbongo-devnet-follower-a
+    depends_on:
+      producer:
+        condition: service_healthy
+    command:
+      - --chain=${MBONGO_CHAIN}
+      - --rpc-host=${MBONGO_RPC_HOST}
+      - --rpc-port=${MBONGO_RPC_PORT}
+      - --rest-host=${MBONGO_REST_HOST}
+      - --rest-port=${MBONGO_REST_PORT}
+      - --p2p-port=${MBONGO_P2P_PORT}
+      - --bootnodes=/ip4/${MBONGO_PRODUCER_IP}/tcp/${MBONGO_P2P_PORT}
+      - --data-dir=/data/follower-a
+    networks:
+      - devnet
+
+  follower-b:
+    <<: *node
+    container_name: mbongo-devnet-follower-b
+    depends_on:
+      producer:
+        condition: service_healthy
+    command:
+      - --chain=${MBONGO_CHAIN}
+      - --rpc-host=${MBONGO_RPC_HOST}
+      - --rpc-port=${MBONGO_RPC_PORT}
+      - --rest-host=${MBONGO_REST_HOST}
+      - --rest-port=${MBONGO_REST_PORT}
+      - --p2p-port=${MBONGO_P2P_PORT}
+      - --bootnodes=/ip4/${MBONGO_PRODUCER_IP}/tcp/${MBONGO_P2P_PORT}
+      - --data-dir=/data/follower-b
+    networks:
+      - devnet
+
+  convergence-check:
+    image: ${MBONGO_IMAGE}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        RUST_VERSION: ${RUST_VERSION}
+    container_name: mbongo-devnet-convergence-check
+    # Behind a profile so `up` never starts it implicitly: it is a one-shot
+    # verdict, not a long-running service.
+    profiles: ["check"]
+    depends_on:
+      producer:
+        condition: service_healthy
+      follower-a:
+        condition: service_healthy
+      follower-b:
+        condition: service_healthy
+    environment:
+      RUST_LOG: ${RUST_LOG}
+    entrypoint: ["convergence_probe"]
+    command:
+      - --endpoint=producer=http://producer:${MBONGO_RPC_PORT}
+      - --endpoint=follower-a=http://follower-a:${MBONGO_RPC_PORT}
+      - --endpoint=follower-b=http://follower-b:${MBONGO_RPC_PORT}
+      - --min-height=${MBONGO_MIN_HEIGHT}
+      - --ready-timeout-secs=${MBONGO_READY_TIMEOUT_SECS}
+      - --convergence-timeout-secs=${MBONGO_CONVERGENCE_TIMEOUT_SECS}
+      - --poll-interval-ms=${MBONGO_POLL_INTERVAL_MS}
+    networks:
+      - devnet
+    restart: "no"
+
+networks:
+  devnet:
+    name: mbongo-devnet
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${MBONGO_SUBNET}

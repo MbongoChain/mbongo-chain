@@ -1,0 +1,467 @@
+{
+  "git_head": "ce9e3cd44f58579ab97078c4e259a5a8caec072c",
+  "git_branch": "feat/mvp-e-launch-hardening",
+  "git_dirty_files": 0,
+  "started_at": "2026-10-27T01:41:11.369Z",
+  "cpu": {
+    "Name": "Intel(R) Core(TM) i7-8850H CPU @ 2.60GHz",
+    "NumberOfCores": 6,
+    "NumberOfLogicalProcessors": 12,
+    "MaxClockSpeed": 2592,
+    "CurrentClockSpeed": 2592,
+    "LoadPercentage": 15
+  },
+  "ram_gib": 31.3,
+  "os": {
+    "Caption": "Microsoft Windows 11 Professionnel",
+    "Version": "10.0.26200",
+    "BuildNumber": "26200"
+  },
+  "battery": {
+    "BatteryStatus": 2,
+    "EstimatedChargeRemaining": 100
+  },
+  "power_plan": "GUID du mode de gestion de l'alimentation�: 381b4222-f694-41f0-9685-ff5bb260df2e  (Utilisation normale)",
+  "power_state": "AC",
+  "cpu_threads": 6,
+  "gpu_offload": 0,
+  "binaries": {
+    "mvp_service": {
+      "sha256": "8029c4f1795aeef4f35b22132ea4642d45323c238ca7559e5a9c399e8584a6c3",
+      "mtime": "2026-10-27T01:38:06.893Z"
+    },
+    "mbongo-mvp": {
+      "sha256": "71c2ac06f06f0edaceff29792d52a35a56d2585ed3f33db6ee4adacd8becc7a9",
+      "mtime": "2026-10-27T01:37:36.854Z"
+    },
+    "mbongo-node": {
+      "sha256": "23246941995ebbd9636df6824650f58efe6763a2b163bb531fbe066a58eac026",
+      "mtime": "2026-10-27T01:40:26.996Z"
+    }
+  },
+  "profile": "kaayu-cv-extract:v3",
+  "profile_vector": "test-vectors/inference/kaayu-cv-extract-v3.json",
+  "devnet": {
+    "nodes": 3,
+    "converged_at_height": 3,
+    "profile": "native harness profile (DEVNET_V0.4_OPERATIONS.md)"
+  },
+  "service": {
+    "WORKER_RUNTIME": "0.7.0-dev build=11669 commit=620d2225c",
+    "WORKER_MODEL_SHA256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+    "WORKER_COLD_START_MS": "4034",
+    "FRONT_BIND": "127.0.0.1:8740",
+    "EXECUTOR": "0x25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78",
+    "RUNTIME_PROFILE": "mbongo-infer:v1 / kaayu-cv-extract:v3",
+    "STATE": "IN_MEMORY (lost when this process stops):",
+    "ready_after_ms": 16848
+  },
+  "service_pid": 32472,
+  "llama_pids_at_start": [
+    48188
+  ],
+  "finished_at": "2026-10-27T02:02:10.278Z",
+  "battery_after": {
+    "BatteryStatus": 2,
+    "EstimatedChargeRemaining": 100
+  },
+  "power_state_after": "AC",
+  "cpu_after": {
+    "CurrentClockSpeed": 2592,
+    "LoadPercentage": 17
+  },
+  "verification": {
+    "profile": "kaayu-cv-extract:v3",
+    "prompt_template_sha256": "87be4340f639002422ee4fb52d6aba13efe9201c180a7ba7cf5998da96a80b3e",
+    "output_schema_sha256": "0a81727a7cebdc73e97869f82211c07c7a67912e44b0ee24274003a67d9750ab",
+    "profile_v2_verified": true,
+    "runtime_sha256": "6a4635aeb35656153d4bfeeddf761d24ed84aada9c9108d580737cbed465141b",
+    "runtime_verified": true,
+    "runtime_revision": "llama.cpp v0.7.0 (b11669 @ 620d2225)",
+    "model_size_bytes": 2497281120,
+    "model_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+    "model_verified": true
+  },
+  "continuity": [
+    {
+      "before_job": "D01",
+      "at": "2026-10-27T01:41:48.535Z",
+      "service_alive": true,
+      "llama_server_pids": [
+        48188
+      ],
+      "llama_server_alive": true,
+      "llama_server_pid_changed": false
+    },
+    {
+      "before_job": "D02",
+      "at": "2026-10-27T01:42:40.753Z",
+      "service_alive": true,
+      "front_responsive": true,
+      "front_ms": 33,
+      "llama_server_pids": [
+        48188
+      ],
+      "llama_server_alive": true,
+      "llama_server_pid_changed": false
+    },
+    {
+      "before_job": "D03",
+      "at": "2026-10-27T01:43:19.042Z",
+      "service_alive": true,
+      "front_responsive": true,
+      "front_ms": 31,
+      "llama_server_pids": [
+        48188
+      ],
+      "llama_server_alive": true,
+      "llama_server_pid_changed": false
+    },
+    {
+      "before_job": "D04",
+      "at": "2026-10-27T01:44:17.189Z",
+      "service_alive": true,
+      "front_responsive": true,
+      "front_ms": 31,
+      "llama_server_pids": [
+        48188
+      ],
+      "llama_server_alive": true,
+      "llama_server_pid_changed": false
+    },
+    {
+      "before_job": "D05",
+      "at": "2026-10-27T01:45:10.360Z",
+      "service_alive": true,
+      "front_responsive": true,
+      "front_ms": 34,
+      "llama_server_pids": [
+        48188
+      ],
+      "llama_server_alive": true,
+      "llama_server_pid_changed": false
+    },
+    {
+      "before_job": "D06",
+      "at": "2026-10-27T01:45:53.374Z",
+      "service_alive": true,
+      "front_responsive": true,
+      "front_ms": 33,
+      "llama_server_pids": [
+        48188
+      ],
+      "llama_server_alive": true,
+      "llama_server_pid_changed": false
+    },
+    {
+      "before_job": "D07",
+      "at": "2026-10-27T01:46:45.482Z",
+      "service_alive": true,
+      "front_responsive": true,
+      "front_ms": 32,
+      "llama_server_pids": [
+        48188
+      ],
+      "llama_server_alive": true,
+      "llama_server_pid_changed": false
+    },
+    {
+      "before_job": "D08",
+      "at": "2026-10-27T01:47:51.832Z",
+      "service_alive": true,
+      "front_responsive": true,
+      "front_ms": 35,
+      "llama_server_pids": [
+        50844
+      ],
+      "llama_server_alive": true,
+      "llama_server_pid_changed": true
+    },
+    {
+      "before_job": "D09",
+      "at": "2026-10-27T01:49:55.766Z",
+      "service_alive": true,
+      "front_responsive": true,
+      "front_ms": 34,
+      "llama_server_pids": [
+        50844
+      ],
+      "llama_server_alive": true,
+      "llama_server_pid_changed": false
+    },
+    {
+      "before_job": "D10",
+      "at": "2026-10-27T01:50:33.705Z",
+      "service_alive": true,
+      "front_responsive": true,
+      "front_ms": 33,
+      "llama_server_pids": [
+        50844
+      ],
+      "llama_server_alive": true,
+      "llama_server_pid_changed": false
+    },
+    {
+      "before_job": "D11",
+      "at": "2026-10-27T01:51:31.843Z",
+      "service_alive": true,
+      "front_responsive": true,
+      "front_ms": 36,
+      "llama_server_pids": [
+        50844
+      ],
+      "llama_server_alive": true,
+      "llama_server_pid_changed": false
+    },
+    {
+      "before_job": "D12",
+      "at": "2026-10-27T01:52:39.158Z",
+      "service_alive": true,
+      "front_responsive": true,
+      "front_ms": 32,
+      "llama_server_pids": [
+        50844
+      ],
+      "llama_server_alive": true,
+      "llama_server_pid_changed": false
+    },
+    {
+      "before_job": "D13",
+      "at": "2026-10-27T01:53:33.341Z",
+      "service_alive": true,
+      "front_responsive": true,
+      "front_ms": 32,
+      "llama_server_pids": [
+        50844
+      ],
+      "llama_server_alive": true,
+      "llama_server_pid_changed": false
+    },
+    {
+      "before_job": "D14",
+      "at": "2026-10-27T01:54:39.663Z",
+      "service_alive": true,
+      "front_responsive": true,
+      "front_ms": 31,
+      "llama_server_pids": [
+        50844
+      ],
+      "llama_server_alive": true,
+      "llama_server_pid_changed": false
+    },
+    {
+      "before_job": "D15",
+      "at": "2026-10-27T01:55:36.900Z",
+      "service_alive": true,
+      "front_responsive": true,
+      "front_ms": 30,
+      "llama_server_pids": [
+        50844
+      ],
+      "llama_server_alive": true,
+      "llama_server_pid_changed": false
+    },
+    {
+      "before_job": "D16",
+      "at": "2026-10-27T01:56:47.288Z",
+      "service_alive": true,
+      "front_responsive": true,
+      "front_ms": 45,
+      "llama_server_pids": [
+        50844
+      ],
+      "llama_server_alive": true,
+      "llama_server_pid_changed": false
+    },
+    {
+      "before_job": "D17",
+      "at": "2026-10-27T01:57:50.551Z",
+      "service_alive": true,
+      "front_responsive": true,
+      "front_ms": 31,
+      "llama_server_pids": [
+        50844
+      ],
+      "llama_server_alive": true,
+      "llama_server_pid_changed": false
+    },
+    {
+      "before_job": "D18",
+      "at": "2026-10-27T01:58:51.812Z",
+      "service_alive": true,
+      "front_responsive": true,
+      "front_ms": 31,
+      "llama_server_pids": [
+        50844
+      ],
+      "llama_server_alive": true,
+      "llama_server_pid_changed": false
+    },
+    {
+      "before_job": "D19",
+      "at": "2026-10-27T01:59:40.978Z",
+      "service_alive": true,
+      "front_responsive": true,
+      "front_ms": 32,
+      "llama_server_pids": [
+        50844
+      ],
+      "llama_server_alive": true,
+      "llama_server_pid_changed": false
+    },
+    {
+      "before_job": "D20",
+      "at": "2026-10-27T02:00:26.994Z",
+      "service_alive": true,
+      "front_responsive": true,
+      "front_ms": 32,
+      "llama_server_pids": [
+        50844
+      ],
+      "llama_server_alive": true,
+      "llama_server_pid_changed": false
+    }
+  ],
+  "corpus": [
+    {
+      "id": "D01",
+      "kind": "simple",
+      "source": "test-vectors/inference/synthetic-cv-corpus-v1.json#R01",
+      "cv_text_bytes": 620,
+      "cv_text_sha256": "be7cd1c7b4e8719cd8750289d394795b665709324d572493cd2f8bc26c4da3e5"
+    },
+    {
+      "id": "D02",
+      "kind": "sparse",
+      "source": "test-vectors/inference/synthetic-cv-corpus-v1.json#R02",
+      "cv_text_bytes": 50,
+      "cv_text_sha256": "43bddd6a032266bbd4ebbf8f5fcd6dff86201eec1914be8a41ebfb84b36d742b"
+    },
+    {
+      "id": "D03",
+      "kind": "french",
+      "source": "test-vectors/inference/synthetic-cv-corpus-v1.json#R03",
+      "cv_text_bytes": 579,
+      "cv_text_sha256": "c3a9f8cb379275300740067cf0e5365accba5770596c864915e50e6bfc4cfad5"
+    },
+    {
+      "id": "D04",
+      "kind": "unicode",
+      "source": "test-vectors/inference/synthetic-cv-corpus-v1.json#R04",
+      "cv_text_bytes": 464,
+      "cv_text_sha256": "506e15e18ecb2f6103322a83d6f5d46769ff48249fb8cc1da148fd6c360d11ff"
+    },
+    {
+      "id": "D05",
+      "kind": "prompt_injection",
+      "source": "test-vectors/inference/synthetic-cv-corpus-v1.json#R05",
+      "cv_text_bytes": 453,
+      "cv_text_sha256": "cbbcb4d8412b10742afd2dae121c281bea4eeeab7fa7039a35f21e5978f1107d"
+    },
+    {
+      "id": "D06",
+      "kind": "repeat_warm",
+      "source": "test-vectors/inference/synthetic-cv-corpus-v1.json#R06",
+      "cv_text_bytes": 620,
+      "cv_text_sha256": "be7cd1c7b4e8719cd8750289d394795b665709324d572493cd2f8bc26c4da3e5"
+    },
+    {
+      "id": "D07",
+      "kind": "multilingual_skills",
+      "source": "test-vectors/inference/synthetic-cv-corpus-v1.json#R07",
+      "cv_text_bytes": 425,
+      "cv_text_sha256": "af7a31e503a6ec593526564a2f8d314fd6f55fd96ce19d54171f0c7536a55507"
+    },
+    {
+      "id": "D08",
+      "kind": "long",
+      "source": "test-vectors/inference/synthetic-cv-corpus-v1.json#R08",
+      "cv_text_bytes": 3364,
+      "cv_text_sha256": "f5ec3267f2540957e66ceac440922dd65f10201727940e8874fa63dcbf9e4f77"
+    },
+    {
+      "id": "D09",
+      "kind": "student_no_experience",
+      "source": "test-vectors/inference/synthetic-cv-corpus-v1.json#R09",
+      "cv_text_bytes": 335,
+      "cv_text_sha256": "07a03d62ddfc040db5bdc1735627a59a67d6a71e855724bfecb46cf596f2aa52"
+    },
+    {
+      "id": "D10",
+      "kind": "executive",
+      "source": "test-vectors/inference/synthetic-cv-corpus-v1.json#R10",
+      "cv_text_bytes": 494,
+      "cv_text_sha256": "4a3937a6f2ead1adc5ac9169f9d9f3f1c975ab0d364983879152d334c755b41b"
+    },
+    {
+      "id": "D11",
+      "kind": "mvp_c_fixture",
+      "source": "crates/mbongo-compute/fixtures/synthetic-cv.txt",
+      "cv_text_bytes": 1197,
+      "cv_text_sha256": "54083c66159007fa6e4756344c8f7adfbaa8aea5a6c8ee1e042674f93414edf1"
+    },
+    {
+      "id": "D12",
+      "kind": "healthcare_mid",
+      "source": "new (MVP-D)",
+      "cv_text_bytes": 573,
+      "cv_text_sha256": "8caad3eb1edf1b1390e98ede9f7fb76664abdde8ec8fdd1b55e5a6814d670c7e"
+    },
+    {
+      "id": "D13",
+      "kind": "french_bilingual",
+      "source": "new (MVP-D)",
+      "cv_text_bytes": 672,
+      "cv_text_sha256": "f29efabe19ebb4dc6ede0c61528ef4401b0fcd7534017df2c35f1c039bbedbac"
+    },
+    {
+      "id": "D14",
+      "kind": "career_changer",
+      "source": "new (MVP-D)",
+      "cv_text_bytes": 580,
+      "cv_text_sha256": "44224d6dc62f6c36052ac402adbd5e3efa545bb5365724ae4802d1447cfb1585"
+    },
+    {
+      "id": "D15",
+      "kind": "many_short_roles",
+      "source": "new (MVP-D)",
+      "cv_text_bytes": 1047,
+      "cv_text_sha256": "4405b5ee5e656f3e15301188ed4cc25e82eb81ac50c495ded899e616ee65ef73"
+    },
+    {
+      "id": "D16",
+      "kind": "spanish",
+      "source": "new (MVP-D)",
+      "cv_text_bytes": 647,
+      "cv_text_sha256": "46de48df9b87f21fe27a2983405e1da4d40cb255476c19b8533d262ee4180610"
+    },
+    {
+      "id": "D17",
+      "kind": "unicode_scripts",
+      "source": "new (MVP-D)",
+      "cv_text_bytes": 726,
+      "cv_text_sha256": "0187902d5ef51f5618bc2cac3cabde8c9ef6fe4059eae3624de34144e1b1418f"
+    },
+    {
+      "id": "D18",
+      "kind": "prompt_injection_json",
+      "source": "new (MVP-D)",
+      "cv_text_bytes": 488,
+      "cv_text_sha256": "a285ababbf57d2b461a29b1dfe3ba4e4e0f1924075b0782ce39542ccfb4e9e1c"
+    },
+    {
+      "id": "D19",
+      "kind": "bootcamp_junior",
+      "source": "new (MVP-D)",
+      "cv_text_bytes": 281,
+      "cv_text_sha256": "2c3f954250e5f86688d7d1e28066de39447b7780592e38e3b885a3ae2a0c0375"
+    },
+    {
+      "id": "D20",
+      "kind": "long_consultant",
+      "source": "new (MVP-D)",
+      "cv_text_bytes": 1780,
+      "cv_text_sha256": "9e4c630e8d6c5081b6dec1b15fb50bcdfa5a0524a7b03bef4c5bbab315230ba0"
+    }
+  ]
+}

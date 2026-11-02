@@ -1,12 +1,47 @@
 {
   "name": "@mbongo/sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
+  "description": "TypeScript client for the Mbongo Chain JSON-RPC surface (rpc_v0.3): transactions, receipts, ComputeTask commitment and task-bound anchoring",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MbongoChain/mbongo-chain.git",
+    "directory": "sdk/typescript"
+  },
+  "homepage": "https://github.com/MbongoChain/mbongo-chain#readme",
+  "bugs": {
+    "url": "https://github.com/MbongoChain/mbongo-chain/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test",
+    "test:consumer": "npm run build && node scripts/consumer-smoke.mjs"
+  },
+  "dependencies": {
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0"
   },
   "devDependencies": {
     "typescript": "^5.0.0"

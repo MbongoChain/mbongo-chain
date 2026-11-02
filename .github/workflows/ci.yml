@@ -15,15 +15,20 @@ jobs:
   # ---------------------------------------------------------
   checks:
     name: Rust Checks (fmt, clippy, test, replay)
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: on ubuntu-26.04 the newer GCC cannot build
+    # librocksdb-sys 0.16 (RocksDB 8.10 omits <cstdint>). Every green run used
+    # ubuntu-24.04. Revisit when the rocksdb crate is upgraded.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.94.0
+        uses: dtolnay/rust-toolchain@1.94.0
+        with:
+          components: rustfmt, clippy
 
       - name: Cache cargo registry + build
         uses: Swatinem/rust-cache@v2
@@ -40,12 +45,184 @@ jobs:
       - name: Run replay harness
         run: cargo run -p mbongo-node --bin replay_harness
 
+      # The reference compute lifecycle against a real node: private input
+      # off-chain, scoped capability, commitment check, deterministic
+      # execution, result persisted before the bound receipt is anchored.
+      # Spawns the node binary the previous steps built.
+      - name: Run reference compute harness
+        run: cargo run -p mbongo-compute --bin compute_harness
+
+      # Mbongo Compute Conformance (compute-conformance-v1): the named,
+      # reusable privacy / authorization / lifecycle contract every compute
+      # implementation must satisfy, run against the reference implementation.
+      # A required case that fails or cannot be driven fails this step.
+      - name: Mbongo Compute Conformance
+        run: cargo run -p mbongo-compute --bin compute_conformance
+
+      # Mbongo Compute Provider Policy (provider-policy-v1): the reference
+      # evaluator of docs/architecture/compute-provider-capability-policy.md,
+      # driven through its decision matrix: executor gate first, claims are
+      # not proofs, unknown fails closed, composition never weakens. Pure and
+      # deterministic; no clock, no network. Also part of the workspace test
+      # run above; named here so the gate is visible on its own.
+      - name: Mbongo Compute Provider Policy
+        run: cargo test -p mbongo-compute --test provider_policy --locked
+
+      # Mbongo Compute Confidential Authorization (confidential-auth-v1): the
+      # named suite of docs/architecture/compute-confidential-attestation-key-release.md
+      # against the REFERENCE / TEST ONLY attestation verifier: a claim-only
+      # confidential worker gets nothing; a valid, fresh, session-, executor-
+      # and task-bound attestation under a trusted root and an approved
+      # measurement, with J eligible, gets one single-use release; every
+      # replay, binding, freshness, trust and outage failure fails closed.
+      # Manual clock, no network. Exits non-zero unless it prints
+      # "CONFIDENTIAL AUTHORIZATION: PASS".
+      - name: Mbongo Compute Confidential Authorization
+        run: cargo run -p mbongo-compute --bin confidential_authorization --locked
+
+      # Mbongo Compute Hardware Attestation (hardware-attestation-v1,
+      # snp-adapter-v1): the unit portion, on captured real AMD Milan
+      # evidence (test-vectors/attestation/snp): real chain to the pinned
+      # AMD root, signature tamper rejection, REPORT_DATA binding, platform
+      # and TCB policy, normalization, negative controls. The live-guest
+      # test is #[ignore]d here and reported as ignored, never as passed:
+      # GitHub-hosted runners have no SEV-SNP guest. See the gated job below.
+      - name: Mbongo Compute Hardware Attestation
+        run: cargo test -p mbongo-compute --test hardware_attestation --locked
+      # MVP-A: the mbongo-infer:v1 execution contract and the kaayu-cv-extract:v1
+      # profile (docs/product/MVP_INFERENCE_CONTRACT_v1.md). Pins the golden
+      # vector in test-vectors/inference/ and the worker validation order. No
+      # model runs here; MVP-B adds execution.
+      - name: Mbongo MVP Inference Contract
+        run: cargo test -p mbongo-compute --test inference_contract --locked
+      # MVP-B.1 (change control CC-1): the kaayu-cv-extract:v2 profile — v2
+      # golden vector, bounds, budget and maximal-output analysis; v1 and the
+      # generic contract still reproduce. No model runs here.
+      - name: Mbongo Kaayu CV Profile v2
+        run: cargo test -p mbongo-compute --test kaayu_profile_v2 --locked
+      # MVP-B: the CPU inference worker (docs/product/MVP_CPU_INFERENCE_WORKER.md)
+      # with a scripted backend and a fake HTTP server — MOCK_WORKER_TESTS only.
+      # The real llama.cpp + model run is mvp_inference_harness, never CI.
+      - name: Mbongo MVP CPU Inference Worker
+        run: cargo test -p mbongo-compute --test cpu_inference_worker --locked
+      # MVP-C: the loopback HTTP front and the mbongo-mvp CLI
+      # (docs/product/MVP_HTTP_CLI.md) — route semantics, privacy redaction,
+      # golden vectors, CLI orchestration, and receipt / result / schema
+      # verification kept separate. Fake chain and scripted backend; no model.
+      - name: Mbongo MVP HTTP + CLI
+        run: cargo test -p mbongo-compute --test mvp_http_cli --locked
+      # MVP-E: launch hardening (docs/security/MVP_LAUNCH_SECURITY_REVIEW.md,
+      # docs/product/MVP_LAUNCH_RUNBOOK.md). Request-signing adversarial cases,
+      # profile kaayu-cv-extract:v3 identity and the injection screen,
+      # operational limits. Fake chain and scripted backend; the real-model
+      # injection runs are mvp_injection_harness, never CI.
+      - name: Mbongo MVP Launch Auth Hardening
+        run: cargo test -p mbongo-compute --test mvp_launch_auth --locked
+      - name: Mbongo MVP Prompt Injection Hardening
+        run: cargo test -p mbongo-compute --test mvp_prompt_injection --locked
+      - name: Mbongo MVP Launch Operations
+        run: cargo test -p mbongo-compute --test mvp_launch_ops --locked
+      # F-N2 (docs/security/MVP_LAUNCH_SECURITY_REVIEW.md §8.1): mDNS can be
+      # turned off (mbongo-node --no-mdns; default unchanged), static peers
+      # still connect and sync without it, and the controlled-launch tooling
+      # starts nodes with --no-mdns and alerts on any TCP or UDP socket of the
+      # stack outside loopback. The mDNS positive control needs multicast and
+      # is #[ignore]d here.
+      - name: Mbongo Node mDNS Toggle
+        run: cargo test -p mbongo-network --test p2p_mdns_toggle --locked
+      - name: Install Node 24 (launch tooling tests)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Mbongo MVP Launch Exposure
+        run: node --test scripts/mvp-launch-exposure.test.mjs
+
   # ---------------------------------------------------------
-  # Devnet Convergence (run only on push to dev)
+  # Mbongo Compute v0.4 Vertical (run on PR + push)
   # ---------------------------------------------------------
+  # The operational end-to-end gate of the first Compute vertical on the
+  # frozen v0.4 base (docs/runbooks/DEVNET_V0.4_OPERATIONS.md): a fresh
+  # three-node devnet brought to convergence, the ComputeTask submitted and
+  # read back through the public TypeScript SDK, the reference control
+  # plane, data plane and worker driven through the full flow with the
+  # negative cases, restarts and privacy/log scans. Needs the node binary
+  # and the built workspace SDK; exits non-zero unless it prints
+  # "MBONGO COMPUTE V0.4 VERTICAL: PASS".
+  compute-vertical:
+    name: Mbongo Compute v0.4 Vertical
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: checks
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.94.0
+        uses: dtolnay/rust-toolchain@1.94.0
+
+      - name: Cache cargo registry + build
+        uses: Swatinem/rust-cache@v2
+
+      # The SDK part of the vertical runs on the workspace source, never the
+      # published package (0.1.0 predates ComputeTask support).
+      - name: Install Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+
+      - name: Build the workspace SDK
+        working-directory: sdk/typescript
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build the node
+        run: cargo build -p mbongo-node --locked
+
+      - name: Run the Mbongo Compute v0.4 Vertical Harness
+        run: cargo run -p mbongo-node --bin compute_vertical --locked
+
+  # ---------------------------------------------------------
+  # Mbongo Compute Hardware Attestation (live, AMD SEV-SNP)
+  # ---------------------------------------------------------
+  # Runs only when the maintainer has registered a self-hosted runner
+  # inside an SEV-SNP guest (labels: self-hosted, sev-snp) and set the
+  # repository variable MBONGO_SNP_LIVE_RUNNER to 'true'. Otherwise the job
+  # is SKIPPED, which is visible as such and is never a pass: a skipped
+  # hardware job is SKIPPED_NO_HARDWARE, not PASS_HARDWARE. The run prints
+  # RESULT=PASS_HARDWARE only after a real report, bound to a fresh
+  # challenge, verified against the pinned AMD root, satisfies the strict
+  # policy the runner's environment supplies through MBONGO_SNP_MEASUREMENT
+  # and MBONGO_SNP_MIN_TCB, and the content key unwraps inside the guest.
+  hardware-attestation-live:
+    name: Mbongo Compute Hardware Attestation (live, SEV-SNP)
+    if: ${{ vars.MBONGO_SNP_LIVE_RUNNER == 'true' }}
+    runs-on: [self-hosted, sev-snp]
+    timeout-minutes: 30
+    needs: checks
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.94.0
+        uses: dtolnay/rust-toolchain@1.94.0
+
+      - name: Live SEV-SNP end-to-end
+        run: |
+          cargo run -p mbongo-compute --bin snp_live_test --locked -- \n            --product "${MBONGO_SNP_PRODUCT:-milan}" \n            --measurement "$MBONGO_SNP_MEASUREMENT" \n            --min-tcb "$MBONGO_SNP_MIN_TCB" \n            --out "$RUNNER_TEMP/snp-live-result.txt"
+          MBONGO_SNP_LIVE_RESULT="$RUNNER_TEMP/snp-live-result.txt" \n            cargo test -p mbongo-compute --test hardware_attestation --locked -- --ignored
+        env:
+          MBONGO_SNP_PRODUCT: ${{ vars.MBONGO_SNP_PRODUCT }}
+          MBONGO_SNP_MEASUREMENT: ${{ vars.MBONGO_SNP_MEASUREMENT }}
+          MBONGO_SNP_MIN_TCB: ${{ vars.MBONGO_SNP_MIN_TCB }}
+
   devnet:
     name: Devnet Convergence Harness
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     needs: checks
     if: github.event_name == 'push'
@@ -54,8 +231,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.94.0
+        uses: dtolnay/rust-toolchain@1.94.0
 
       - name: Cache cargo registry + build
         uses: Swatinem/rust-cache@v2
@@ -65,3 +242,226 @@ jobs:
 
       - name: Run devnet harness
         run: cargo run -p mbongo-node --bin devnet_harness
+
+  # ---------------------------------------------------------
+  # Docker Devnet Bootstrap (run on PR + push)
+  # ---------------------------------------------------------
+  # Exercises the SAME bootstrap developers run locally: make delegates to
+  # scripts/devnet/docker-devnet.sh, which drives Compose and lets the
+  # convergence_probe binary decide whether the devnet converged. No
+  # readiness polling, height or tip-hash comparison is reimplemented here.
+  #
+  # Deliberately independent of the native devnet job above: that one covers
+  # the process-mode harness, this one covers the Docker/Compose path.
+  docker-devnet:
+    name: Docker Devnet Bootstrap
+    runs-on: ubuntu-24.04
+    # The bootstrap already bounds itself: docker-devnet.sh waits at most
+    # DEVNET_WAIT_TIMEOUT (420s) for the three nodes to become healthy, and
+    # .env.ci caps readiness and convergence at 240s each, so about 15
+    # minutes of bounded waiting. The remaining budget covers a cold,
+    # uncached Docker build of the Rust workspace (RocksDB included), which
+    # dominates the runtime on a fresh runner.
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # No Rust toolchain is installed on purpose: the workspace is compiled
+      # inside the devnet image, so this job only orchestrates Docker.
+      - name: Report available tooling
+        run: |
+          docker --version
+          docker compose version
+          make --version
+
+      - name: Boot the devnet and verify convergence
+        run: DEVNET_ENV=ci make devnet-up
+
+      - name: Tear down the devnet
+        if: always()
+        run: DEVNET_ENV=ci make devnet-down
+
+  # ---------------------------------------------------------
+  # Monetary Policy Model (run on PR + push)
+  # ---------------------------------------------------------
+  # Covers the off-runtime research model under research/monetary-policy.
+  # Until now nothing in CI executed it, so its accounting identities,
+  # scenario guards and determinism could regress while every Rust and
+  # devnet check stayed green.
+  #
+  # This job runs the model rather than re-implementing any of it: no
+  # monetary arithmetic, no expected supply or reward figures, and no
+  # invariant is duplicated in YAML. Locking today's illustrative numbers
+  # into CI would freeze assumptions the RFC deliberately leaves open.
+  monetary-model:
+    name: Monetary Policy Model
+    runs-on: ubuntu-24.04
+    # A stdlib-only model over 100 simulated years runs in well under a
+    # second; five minutes is generous and still bounds a hang.
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Pinned to an exact minor version so a new CPython release cannot
+      # change CI behaviour without a repository change. The model is
+      # standard-library only: no pip install, no requirements file, no
+      # virtualenv.
+      - name: Install Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Report Python version
+        run: python --version
+
+      # The package directory name contains a hyphen and carries no
+      # __init__.py, so `unittest discover` cannot import it. Running the
+      # test file directly is the working stdlib form.
+      - name: Run model unit tests
+        run: python research/monetary-policy/test_model.py
+
+      # The sensitivity study imports model.py directly, so a change to the
+      # model's API can break it while the model's own tests stay green.
+      # These tests guard the experimental design, not an economic outcome.
+      - name: Run primary sensitivity tests
+        run: python research/monetary-policy/test_primary_sensitivity.py
+
+      # Registers extra policy families and subclasses clamp_to_cap, so it is
+      # the most exposed of the three suites to a change in the model.
+      - name: Run cap semantics tests
+        run: python research/monetary-policy/test_cap_semantics.py
+
+      # The CLI exits non-zero when any accounting identity is violated, so
+      # its exit status is the assertion.
+      - name: Run deterministic 100-year simulation
+        run: |
+          python research/monetary-policy/model.py \
+            --scenario base --years 100 \
+            --output "$RUNNER_TEMP/base-run1.csv"
+
+      # Same scenario, same horizon, same config: the two CSVs must be
+      # byte-identical. Compared directly rather than by hash, and never
+      # uploaded as an artifact -- this is test evidence, not a release.
+      - name: Verify byte-for-byte reproducibility
+        run: |
+          python research/monetary-policy/model.py \
+            --scenario base --years 100 \
+            --output "$RUNNER_TEMP/base-run2.csv"
+          cmp "$RUNNER_TEMP/base-run1.csv" "$RUNNER_TEMP/base-run2.csv"
+
+  # The SDK had no CI at all: its tests could pass locally and rot on dev
+  # unnoticed. They matter more than usual here because they pin the numeric
+  # safety guard, which exists to stop a silently rounded transaction amount
+  # from ever reaching the wire.
+  sdk-typescript:
+    name: TypeScript SDK (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-24.04
+    # Install, typecheck and a stdlib test runner over one small package.
+    timeout-minutes: 10
+
+    strategy:
+      # Never cancel one runtime because the other failed: when a failure is
+      # specific to a Node version, which version it was is the whole answer.
+      fail-fast: false
+      matrix:
+        node-version:
+          # The exact floor `sdk/typescript/package.json` declares, which is
+          # in turn the floor `@noble/hashes` and `@noble/curves` declare.
+          # Pinned to the exact patch deliberately: '20', '20.x' and '20.19'
+          # all drift to a newer release, which would leave the published
+          # minimum itself untested — the gap this matrix exists to close.
+          - '20.19.0'
+          # The current line, as a bare major so CI keeps following Node
+          # forward without a repository change.
+          - '24'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Node 20+ is required for the built-in test runner the suite uses; no
+      # test framework is installed.
+      #
+      # The release workflow deliberately does not share this matrix. npm
+      # trusted publishing requires Node >= 22.14.0, so the runtime that
+      # publishes is a separate contract from the compatibility floor tested
+      # here, and lowering it would break publication.
+      - name: Install Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      # Proving the floor is the point of this matrix, so the runtime is
+      # asserted rather than assumed. Printing the version alone would leave
+      # a silent resolution change green while testing a version nobody
+      # declared.
+      - name: Report Node version
+        run: |
+          node --version
+          node -e '
+            const want = process.argv[1];
+            const got = process.versions.node;
+            const ok = want.includes(".")
+              ? got === want
+              : got.split(".")[0] === want;
+            if (!ok) {
+              console.error("requested Node " + want + " but running " + got);
+              process.exit(1);
+            }
+            console.log("runtime confirmed: " + got + " (requested " + want + ")");
+          ' '${{ matrix.node-version }}'
+        working-directory: sdk/typescript
+
+      # `npm ci` rather than `npm install`: it honours the lockfile exactly
+      # and fails if the lockfile and manifest disagree.
+      - name: Install dependencies
+        run: npm ci
+        working-directory: sdk/typescript
+
+      - name: Typecheck
+        run: npm run typecheck
+        working-directory: sdk/typescript
+
+      # `npm test` builds first and runs against dist/ — the artifact a
+      # consumer installs, not the sources.
+      - name: Run SDK tests
+        run: npm test
+        working-directory: sdk/typescript
+
+      # Packs the SDK and installs the resulting tarball into a throwaway
+      # project outside the repository, then imports it by package name from
+      # both JavaScript and TypeScript. This is the gate that would catch a
+      # `files` or `exports` change making the package uninstallable — the
+      # suite above only ever sees dist/ in place.
+      - name: Packed consumer smoke
+        run: npm run test:consumer
+        working-directory: sdk/typescript
+
+      # The release workflow does NOT go through `npm run`: it invokes the
+      # smoke directly with `node`, so `npm_execpath` is unset and the npm CLI
+      # has to be found on disk. That difference is invisible to the step
+      # above, and it is what failed the first real tagged release
+      # (run 33349968293) after every ordinary CI run had passed.
+      #
+      # This reproduces the release shape on the runner: pack once, then
+      # consume that exact tarball through a direct `node` invocation.
+      - name: Consumer smoke, release-equivalent invocation
+        shell: bash
+        working-directory: sdk/typescript
+        run: |
+          set -euo pipefail
+          pack_dir="$RUNNER_TEMP/release-shape-pack"
+          mkdir -p "$pack_dir"
+          npm pack --pack-destination "$pack_dir" > /dev/null
+
+          count=$(find "$pack_dir" -maxdepth 1 -name '*.tgz' | wc -l)
+          [ "$count" -eq 1 ] \
+            || { echo "::error::expected exactly 1 tarball, found $count"; exit 1; }
+          tarball=$(find "$pack_dir" -maxdepth 1 -name '*.tgz')
+
+          # Direct node, exactly as the release workflow does it.
+          env -u npm_execpath node scripts/consumer-smoke.mjs --tarball "$tarball"

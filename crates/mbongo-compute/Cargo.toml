@@ -8,11 +8,12 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
-description = "GPU compute execution runtime for Mbongo Chain"
+description = "Reference compute worker, control plane and private data plane for Mbongo Chain"
 
 [dependencies]
 # Internal dependencies
 mbongo-core = { path = "../mbongo-core" }
+mbongo-verification = { path = "../mbongo-verification" }
 
 # Async runtime
 tokio = { workspace = true }
@@ -20,6 +21,22 @@ tokio = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+parity-scale-codec = { workspace = true }
+
+# Cryptography
+ed25519-dalek = { workspace = true }
+blake3 = { workspace = true }
+# Confidential authorization (Workstream K): content-key sealing and key
+# wrapping to an attested environment key. Both crates are already in the
+# lock through the libp2p noise stack; no new crate enters the workspace.
+chacha20poly1305 = "0.10"
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+# Hardware attestation adapter (K-HW): the official VirTEE/AMD SEV-SNP
+# library, pure-Rust crypto (no OpenSSL), report parsing and the pinned AMD
+# ARK/ASK roots. The guest ioctl path compiles only on Linux.
+sev = { version = "8.0.0", default-features = false, features = ["snp", "crypto_nossl"] }
+x509-cert = "0.2.5"
+sha2 = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
@@ -27,7 +44,49 @@ anyhow = { workspace = true }
 
 # Logging
 log = { workspace = true }
+env_logger = { workspace = true }
+
+# HTTP client (live chain client for the harness)
+reqwest = { workspace = true }
+
+# MVP HTTP front and CLI (MVP-C). Already in the lock through
+# mbongo-api, mbongo-node and the transitive RNG stack; no new crate enters
+# the workspace.
+axum = { workspace = true }
+clap = { workspace = true, features = ["env"] }
+getrandom = "0.2"
+
+# Utilities
+hex = { workspace = true }
+
+[[bin]]
+name = "compute_harness"
+path = "src/bin/compute_harness.rs"
+
+[[bin]]
+name = "compute_conformance"
+path = "src/bin/compute_conformance.rs"
+
+[[bin]]
+name = "confidential_authorization"
+path = "src/bin/confidential_authorization.rs"
+
+[[bin]]
+name = "mvp_inference_harness"
+path = "src/bin/mvp_inference_harness.rs"
+
+[[bin]]
+name = "mvp_injection_harness"
+path = "src/bin/mvp_injection_harness.rs"
+
+[[bin]]
+name = "mvp_service"
+path = "src/bin/mvp_service.rs"
+
+[[bin]]
+name = "mbongo-mvp"
+path = "src/bin/mbongo_mvp.rs"
 
 [dev-dependencies]
 criterion = { workspace = true }
-env_logger = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }

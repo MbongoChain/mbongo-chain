@@ -1,0 +1,465 @@
+{
+  "fixture_version": 1,
+  "purpose": "Neutral cross-language golden vectors for RFC 0005 ComputeTask envelopes and the transactions that carry them. Pins the canonical SCALE task bytes, the task_id preimage and derivation, the transaction signing bytes, the transaction signature, the full encoding, the transaction hash, and the serialised Transaction JSON object.",
+  "authority": {
+    "envelope_and_identity": "docs/rfcs/0005-compute-task-commitment-v1.md §2.1, §2.2, §2.7, §2.10 (Accepted)",
+    "transaction_structure": "crates/mbongo-core/src/primitives.rs — Transaction, TransactionType, TransactionPayload, Transaction::signing_payload",
+    "envelope_type": "crates/mbongo-core/src/compute_task.rs — ComputeTask, DOMAIN_TASK, ComputeTask::task_id",
+    "transaction_hash": "crates/mbongo-node/src/backend.rs — compute_tx_hash",
+    "consensus_rules": "RFC 0005 §3 rules (k)–(p); precedence to be pinned in PROTOCOL_LOCK_v0.4",
+    "receipt_key": "test-vectors/receipt/receipt-v1.json — the submitter test key is resolved there and never restated"
+  },
+  "conventions": {
+    "hex": "lowercase, no 0x prefix, except inside serialized_transaction which reproduces the JSON wire form",
+    "byte_order": "fixed-width integers are little-endian and never compact",
+    "execution_spec_encoding": "SCALE compact length prefix, then the raw bytes",
+    "execution_spec_pattern": "{pattern:repeat, byte:<hex>, length:<n>} expands to that byte repeated length times; {pattern:literal, hex:<hex>} is the exact bytes",
+    "task_reference": "task_vector names a vector in this file's `tasks` array; resolve it there",
+    "sender": "<task.submitter> means: resolve the referenced task vector and use its submitter, which consensus requires (rule o)"
+  },
+  "derivation": {
+    "method": "Every expected value was constructed from the protocol rules, not by encoding with production Rust or the TypeScript SDK. SCALE laid out by hand as concatenated fields; the compact prefix and the fixed-width little-endian integers by explicit construction; the domain tag as literal bytes; signatures by an independent Ed25519; hashes by an independent BLAKE3. Rust and TypeScript are consumers that must agree with values neither produced.",
+    "upstream_truth": "test-vectors/receipt/receipt-v1.json supplies the submitter test key; nothing else is a machine input."
+  },
+  "envelope": {
+    "canonical_field_order": [
+      "version",
+      "submitter",
+      "executor",
+      "salt",
+      "input_commitment",
+      "execution_spec"
+    ],
+    "encoding": "version[1] || submitter[32] || executor[32] || salt[32] || input_commitment[32] || compact(len(execution_spec)) || execution_spec",
+    "task_id": "BLAKE3(DOMAIN_TASK || canonical task bytes)",
+    "task_id_is_not_a_field": true,
+    "version": 1
+  },
+  "domain_task": {
+    "ascii": "mbongo:compute-task:v1",
+    "hex": "6d626f6e676f3a636f6d707574652d7461736b3a7631",
+    "length": 22,
+    "note": "Prepended raw. No NUL terminator, no SCALE length prefix, no hex rendering. The wrong_tag_diagnostics block pins what each of those mistakes would produce."
+  },
+  "execution_spec_max_bytes": 1024,
+  "maximal_sizes": {
+    "canonical_task": 1155,
+    "task_id_preimage": 1177
+  },
+  "signing_formula": {
+    "transaction_signing_payload": "0x01 || sender[32] || receiver[32] || amount_u128_le[16] || nonce_u64_le[8] || 0x02 || <canonical task bytes>",
+    "fixed_bytes_before_task": 90,
+    "full_transaction": "signing payload || transaction_signature[64]",
+    "transaction_hash": "BLAKE3(full transaction), so it covers the signature",
+    "prehash": "none — the transaction signature is over the raw signing payload bytes",
+    "envelope_signature": "none — RFC 0005 §2.5: the transaction signature is the only authentication; the envelope carries no second signature"
+  },
+  "discriminants": {
+    "TransactionType::ComputeTask": "01",
+    "TransactionPayload::ComputeTask": "02",
+    "note": "Both come from explicit #[codec(index = ...)] attributes. TransactionType::ComputeTask keeps the index frozen at v0.3; TransactionPayload::ComputeTask is the new index 2, appended after None (0) and AnchorReceipt (1), which are unchanged."
+  },
+  "commitment_invariants": {
+    "sender": "must equal task.submitter (rule o)",
+    "receiver": "must be the zero address, 32 zero bytes, with no Option marker and no length prefix (rule l)",
+    "amount": "must be 0 (rule l)",
+    "version": "task.version must be 1 (rule m)",
+    "execution_spec": "at most 1024 bytes (rule n)"
+  },
+  "test_keys": {
+    "warning": "TEST ONLY. NOT PRODUCTION KEYS. Both seeds are public.",
+    "submitter": {
+      "source": "resolved from test-vectors/receipt/receipt-v1.json test_key; not restated here",
+      "public_key": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61"
+    },
+    "executor": {
+      "ed25519_seed": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+      "public_key": "4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff",
+      "note": "Only the public key participates in these vectors; the seed is recorded so the anchoring-binding vectors that follow rules (q)–(s) can sign receipts with the same identity."
+    }
+  },
+  "tasks": [
+    {
+      "name": "canonical",
+      "note": "The reference envelope: three-byte specification, one-byte compact prefix 0x0c.",
+      "task": {
+        "version": 1,
+        "submitter": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "executor": "4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff",
+        "salt": "3333333333333333333333333333333333333333333333333333333333333333",
+        "input_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+        "execution_spec": {
+          "pattern": "literal",
+          "hex": "aabbcc"
+        }
+      },
+      "expected": {
+        "execution_spec_compact_prefix": "0c",
+        "canonical_task_length": 133,
+        "canonical_task": "01197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d614508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff333333333333333333333333333333333333333333333333333333333333333322222222222222222222222222222222222222222222222222222222222222220caabbcc",
+        "task_id_preimage_length": 155,
+        "task_id": "78aa35b0a94673dc67258bc5475a326f8a5f6d9994c9cc8f907b962530ddce1b"
+      }
+    },
+    {
+      "name": "empty-spec",
+      "note": "Shortest envelope: empty execution_spec, prefix 0x00, 130 canonical bytes.",
+      "task": {
+        "version": 1,
+        "submitter": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "executor": "4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff",
+        "salt": "3333333333333333333333333333333333333333333333333333333333333333",
+        "input_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+        "execution_spec": {
+          "pattern": "repeat",
+          "byte": "5a",
+          "length": 0
+        }
+      },
+      "expected": {
+        "execution_spec_compact_prefix": "00",
+        "canonical_task_length": 130,
+        "canonical_task": "01197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d614508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff3333333333333333333333333333333333333333333333333333333333333333222222222222222222222222222222222222222222222222222222222222222200",
+        "task_id_preimage_length": 152,
+        "task_id": "99398005e3e836d670b7a8c8462ba8555f2ad5f7f2e459a8165339f8910f4993"
+      }
+    },
+    {
+      "name": "spec-64",
+      "note": "First length whose compact prefix is two bytes (0x01 0x01).",
+      "task": {
+        "version": 1,
+        "submitter": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "executor": "4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff",
+        "salt": "3333333333333333333333333333333333333333333333333333333333333333",
+        "input_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+        "execution_spec": {
+          "pattern": "repeat",
+          "byte": "5a",
+          "length": 64
+        }
+      },
+      "expected": {
+        "execution_spec_compact_prefix": "0101",
+        "canonical_task_length": 195,
+        "canonical_task": "01197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d614508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff3333333333333333333333333333333333333333333333333333333333333333222222222222222222222222222222222222222222222222222222222222222201015a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "task_id_preimage_length": 217,
+        "task_id": "11b227d734ac23a13863f080e92f3ca62cb24539de325559560574f226e9c1eb"
+      }
+    },
+    {
+      "name": "spec-max-1024",
+      "note": "The consensus maximum: two-byte prefix 0x01 0x10, 1155 canonical bytes, 1177-byte preimage.",
+      "task": {
+        "version": 1,
+        "submitter": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "executor": "4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff",
+        "salt": "3333333333333333333333333333333333333333333333333333333333333333",
+        "input_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+        "execution_spec": {
+          "pattern": "repeat",
+          "byte": "5a",
+          "length": 1024
+        }
+      },
+      "expected": {
+        "execution_spec_compact_prefix": "0110",
+        "canonical_task_length": 1155,
+        "canonical_task": "01197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d614508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff3333333333333333333333333333333333333333333333333333333333333333222222222222222222222222222222222222222222222222222222222222222201105a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "task_id_preimage_length": 1177,
+        "task_id": "897dde88bb8f5d2d2aca7270dad6386c28ceefc14c5e4852ef9477cc31113fc0"
+      }
+    }
+  ],
+  "rejected": [
+    {
+      "name": "spec-1025",
+      "note": "One byte past the maximum. It encodes and hashes like any other envelope — the bound is a consensus rule (n), not an encoding limit — and a node must reject the transaction carrying it.",
+      "task": {
+        "version": 1,
+        "submitter": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "executor": "4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff",
+        "salt": "3333333333333333333333333333333333333333333333333333333333333333",
+        "input_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+        "execution_spec": {
+          "pattern": "repeat",
+          "byte": "5a",
+          "length": 1025
+        }
+      },
+      "expected": {
+        "execution_spec_compact_prefix": "0510",
+        "canonical_task_length": 1156,
+        "canonical_task": "01197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d614508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff3333333333333333333333333333333333333333333333333333333333333333222222222222222222222222222222222222222222222222222222222222222205105a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "task_id_preimage_length": 1178,
+        "task_id": "22770f6662503278b0d3dae8ba190e26a754fe96a646b04da84128ad1ddb8f55"
+      },
+      "consensus": {
+        "valid": false,
+        "rule": "n",
+        "reason": "execution_spec.len() == 1025 > 1024"
+      }
+    }
+  ],
+  "identity": {
+    "base_vector": "canonical",
+    "note": "Each variant changes exactly one field of the base envelope and must derive a different task_id; the transaction nonce is not in the envelope and changes nothing (see the two transaction vectors, which carry the same task under different nonces).",
+    "variants": [
+      {
+        "changed_field": "salt",
+        "task": {
+          "version": 1,
+          "submitter": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+          "executor": "4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff",
+          "salt": "3434343434343434343434343434343434343434343434343434343434343434",
+          "input_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+          "execution_spec": {
+            "pattern": "literal",
+            "hex": "aabbcc"
+          }
+        },
+        "expected": {
+          "task_id": "7898501f45a388e42a86645ce4573e51deebe68b94f617e386e50195da6763ff"
+        }
+      },
+      {
+        "changed_field": "submitter",
+        "task": {
+          "version": 1,
+          "submitter": "4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff",
+          "executor": "4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff",
+          "salt": "3333333333333333333333333333333333333333333333333333333333333333",
+          "input_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+          "execution_spec": {
+            "pattern": "literal",
+            "hex": "aabbcc"
+          }
+        },
+        "expected": {
+          "task_id": "1eb55ccc5000cf0cf79aa93620e4f674f960e3435a2e93c9abc919dc4baabf83"
+        }
+      },
+      {
+        "changed_field": "executor",
+        "task": {
+          "version": 1,
+          "submitter": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+          "executor": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+          "salt": "3333333333333333333333333333333333333333333333333333333333333333",
+          "input_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+          "execution_spec": {
+            "pattern": "literal",
+            "hex": "aabbcc"
+          }
+        },
+        "expected": {
+          "task_id": "8ee54a53c12ae703c60e30b17592b550f1feace4257d0402dfdbd6857d1b777b"
+        }
+      },
+      {
+        "changed_field": "input_commitment",
+        "task": {
+          "version": 1,
+          "submitter": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+          "executor": "4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff",
+          "salt": "3333333333333333333333333333333333333333333333333333333333333333",
+          "input_commitment": "2323232323232323232323232323232323232323232323232323232323232323",
+          "execution_spec": {
+            "pattern": "literal",
+            "hex": "aabbcc"
+          }
+        },
+        "expected": {
+          "task_id": "8da03f9de034b959754b68a60a756f4ec7cbc6485f7cde2815192698b5bcd117"
+        }
+      },
+      {
+        "changed_field": "execution_spec",
+        "task": {
+          "version": 1,
+          "submitter": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+          "executor": "4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff",
+          "salt": "3333333333333333333333333333333333333333333333333333333333333333",
+          "input_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+          "execution_spec": {
+            "pattern": "literal",
+            "hex": "aabbcd"
+          }
+        },
+        "expected": {
+          "task_id": "b8f34f4581b82ccfa5c3149032a4459d1df61ef9e34f16876de916720230a393"
+        }
+      }
+    ],
+    "same_envelope_same_id": true,
+    "nonce_changes_task_id": false
+  },
+  "wrong_tag_diagnostics": {
+    "base_vector": "canonical",
+    "note": "task_id values a consumer would produce by tagging wrongly. None of them may equal the pinned task_id.",
+    "tag_scale_encoded": "b99967d8957004a23c6bfc23f176f9826a9472d9573d8be94b32ac5bc8096d1f",
+    "tag_nul_terminated": "59e1cbc6e96aa2dc18d8c09c7cee694464ccf8c23d4512a36ec6a42729892a77",
+    "no_tag": "659a18e526de3a0d56aee210e1864ed52be9af8d79010f8a9375f689c2d78931",
+    "hex_rendering_hashed": "d6d99bce94db7395527af421983039f3afee59761d891cb31ce6e76b61c68fde"
+  },
+  "valid": [
+    {
+      "name": "canonical",
+      "note": "The reference transaction. The nonce is deliberately non-palindromic so a big-endian or compact encoding cannot produce the same signature.",
+      "task_vector": "canonical",
+      "transaction": {
+        "sender": "<task.submitter>",
+        "receiver": "0000000000000000000000000000000000000000000000000000000000000000",
+        "amount": 0,
+        "nonce": 1108152157446
+      },
+      "expected": {
+        "task_offset": 90,
+        "nonce_u64_le": "0605040302010000",
+        "amount_u128_le": "00000000000000000000000000000000",
+        "signing_payload_length": 223,
+        "signing_payload": "01197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d6100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006050403020100000201197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d614508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff333333333333333333333333333333333333333333333333333333333333333322222222222222222222222222222222222222222222222222222222222222220caabbcc",
+        "transaction_signature": "17a522244de1ac3303129fd4f4f6ea97bddc6e8a539a0e39d9a1b29493e421d03403d68afbbd5d8796b7643016abf8fd4f4dc6c292f2ed41fddba410628a790a",
+        "full_transaction_length": 287,
+        "full_transaction": "01197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d6100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006050403020100000201197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d614508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff333333333333333333333333333333333333333333333333333333333333333322222222222222222222222222222222222222222222222222222222222222220caabbcc17a522244de1ac3303129fd4f4f6ea97bddc6e8a539a0e39d9a1b29493e421d03403d68afbbd5d8796b7643016abf8fd4f4dc6c292f2ed41fddba410628a790a",
+        "transaction_hash": "6735a330ddb274c530f661e5b48f63e19b764dda8ea3e8a808489dc9efdbba96"
+      }
+    },
+    {
+      "name": "canonical-nonce-zero",
+      "note": "Same envelope, nonce 0: same task_id, different signing bytes, signature and transaction hash. Guards against a consumer hard-coding the diagnostic nonce, and pins that the nonce is outside task identity.",
+      "task_vector": "canonical",
+      "transaction": {
+        "sender": "<task.submitter>",
+        "receiver": "0000000000000000000000000000000000000000000000000000000000000000",
+        "amount": 0,
+        "nonce": 0
+      },
+      "expected": {
+        "task_offset": 90,
+        "nonce_u64_le": "0000000000000000",
+        "amount_u128_le": "00000000000000000000000000000000",
+        "signing_payload_length": 223,
+        "signing_payload": "01197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d6100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000201197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d614508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff333333333333333333333333333333333333333333333333333333333333333322222222222222222222222222222222222222222222222222222222222222220caabbcc",
+        "transaction_signature": "4df873c4ee2cf9f5def27a3f2ce7bfaa30e40b53356e64f58a4dc1182976382dfd393be75c9dc7b8eab35ebabf10e8ab71aa625f45116afd720cefdc24edbf04",
+        "full_transaction_length": 287,
+        "full_transaction": "01197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d6100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000201197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d614508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff333333333333333333333333333333333333333333333333333333333333333322222222222222222222222222222222222222222222222222222222222222220caabbcc4df873c4ee2cf9f5def27a3f2ce7bfaa30e40b53356e64f58a4dc1182976382dfd393be75c9dc7b8eab35ebabf10e8ab71aa625f45116afd720cefdc24edbf04",
+        "transaction_hash": "63ffb518fcee0016cfbd7c9cced2cc5e09077569f2651261c4114e173c0327f2"
+      }
+    },
+    {
+      "name": "spec-max-1024",
+      "note": "The maximal envelope carried in a transaction: 1245-byte signing payload.",
+      "task_vector": "spec-max-1024",
+      "transaction": {
+        "sender": "<task.submitter>",
+        "receiver": "0000000000000000000000000000000000000000000000000000000000000000",
+        "amount": 0,
+        "nonce": 7
+      },
+      "expected": {
+        "task_offset": 90,
+        "nonce_u64_le": "0700000000000000",
+        "amount_u128_le": "00000000000000000000000000000000",
+        "signing_payload_length": 1245,
+        "signing_payload": "01197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d6100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000007000000000000000201197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d614508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff3333333333333333333333333333333333333333333333333333333333333333222222222222222222222222222222222222222222222222222222222222222201105a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "transaction_signature": "09f8ee71a15ffc8d5d63b4adad99bd45e9df6d92f825353c05b4b37ef98d9f8ae75c146eeda1a4e84a379158aff2ff5773cb9a8533bbbb3e6124459ab6f64809",
+        "full_transaction_length": 1309,
+        "full_transaction": "01197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d6100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000007000000000000000201197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d614508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff3333333333333333333333333333333333333333333333333333333333333333222222222222222222222222222222222222222222222222222222222222222201105a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a09f8ee71a15ffc8d5d63b4adad99bd45e9df6d92f825353c05b4b37ef98d9f8ae75c146eeda1a4e84a379158aff2ff5773cb9a8533bbbb3e6124459ab6f64809",
+        "transaction_hash": "a4e65b2fb99374f72dcb0e5e83d6ab843540c81ba9b34ed41ce5fefc18ea04ae"
+      }
+    }
+  ],
+  "serialized_transaction": {
+    "note": "The exact serde JSON object for the canonical vector, as get_block_by_height returns it and submit_transaction accepts it today. Interoperability evidence recorded for Workstream C, not a new protocol rule: rpc_v0.2 pins payload as None | AnchorReceipt(Receipt), and this shape is what the next RPC version has to describe.",
+    "vector": "canonical",
+    "object": {
+      "tx_type": "ComputeTask",
+      "sender": "0x197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+      "receiver": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "amount": 0,
+      "nonce": 1108152157446,
+      "payload": {
+        "ComputeTask": {
+          "version": 1,
+          "submitter": "0x197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+          "executor": "0x4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff",
+          "salt": [
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51
+          ],
+          "input_commitment": [
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34
+          ],
+          "execution_spec": [
+            170,
+            187,
+            204
+          ]
+        }
+      },
+      "signature": "0x17a522244de1ac3303129fd4f4f6ea97bddc6e8a539a0e39d9a1b29493e421d03403d68afbbd5d8796b7643016abf8fd4f4dc6c292f2ed41fddba410628a790a"
+    }
+  }
+}

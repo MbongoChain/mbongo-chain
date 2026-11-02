@@ -1,32 +1,21 @@
-//! Multi-layer compute verification for Mbongo Chain.
+//! Compute verification primitives for Mbongo Chain.
 //!
-//! This crate implements the progressive verification strategy:
-//! - Phase 1: Redundant execution (3 validators)
-//! - Phase 2: TEE attestation (Intel SGX, AMD SEV)
-//! - Phase 3: ZK-ML proofs (zero-knowledge verification)
+//! Currently implemented:
+//! - Receipt validation ([`receipt`]) per `docs/specs/RECEIPT_SPEC_v0.1.md`:
+//!   Ed25519 receipt-signature verification, version and duplicate rules,
+//!   and the read-only [`ReceiptIndex`] port. The canonical `Receipt` data
+//!   type lives in `mbongo-core` (RFC 0002 §6.1) and is re-exported here.
 //!
-//! Plus optimistic fraud proofs with 100-block challenge period.
-//!
-//! # Examples
-//!
-//! ```
-//! // TODO: Add examples once verification system is implemented
-//! ```
+//! Future phases (not implemented):
+//! - Redundant execution, TEE attestation, ZK-ML proofs, fraud proofs.
 
 #![warn(missing_docs)]
 #![warn(clippy::all)]
 #![warn(clippy::pedantic)]
 
-// Module structure (to be implemented)
-// pub mod redundant;
-// pub mod fraud_proofs;
-// pub mod tee;
-// pub mod zk;
+pub mod receipt;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
+pub use receipt::{
+    decode_and_validate, validate_receipt, verify_receipt_signature, Receipt, ReceiptError,
+    ReceiptIndex, RECEIPT_VERSION,
+};

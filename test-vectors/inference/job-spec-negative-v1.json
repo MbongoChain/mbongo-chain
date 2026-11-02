@@ -1,0 +1,575 @@
+{
+  "$comment": "Job-spec documents and what InferenceJobSpecV1::from_json returns for each (contract sections 6, 8-10, 19-20). Floating-point parameters cannot be expressed in this file at all: the constrained model has no floats (section 7).",
+  "cases": [
+    {
+      "name": "model_digest_mismatch",
+      "expected": "OK",
+      "note": "a valid job spec naming the same human model with a different artifact digest: a different execution identity, refused by check_model on a worker holding the pinned artifact",
+      "job_spec": {
+        "contract": "mbongo-infer:v1",
+        "generation": {
+          "max_tokens": 400,
+          "seed": 42,
+          "temperature_milli": 0,
+          "top_p_milli": 1000
+        },
+        "limits": {
+          "max_input_bytes": 10000,
+          "max_output_bytes": 8000
+        },
+        "model": {
+          "artifact_name": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+          "artifact_sha256": "0605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+          "artifact_size_bytes": 2497281120,
+          "family": "Qwen3",
+          "format": "gguf",
+          "license": "Apache-2.0",
+          "name": "Qwen3-4B-Instruct-2507",
+          "quantization": "Q4_K_M",
+          "source": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF",
+          "source_revision": "a06e946bb6b655725eafa393f4a9745d460374c9"
+        },
+        "profile": {
+          "id": "kaayu-cv-extract",
+          "input_contract": "kaayu-cv-extract-input:v1",
+          "output_contract": "kaayu-cv-profile:v1",
+          "output_schema_sha256": "81521447e7b7b45c670ff1717d608fc2304765ab530587aba2370ba0a9191af5",
+          "prompt_template_sha256": "6c950b4863bc339af94d904dbb609b3dd9098259740f01a6539406e641276d63",
+          "version": 1
+        },
+        "runtime": {
+          "commit": "620d2225cc436ab0b001e3200e590e3b286ef9ab",
+          "family": "llama.cpp",
+          "license": "MIT",
+          "mode": "llama-server",
+          "revision": "v0.7.0"
+        }
+      }
+    },
+    {
+      "name": "runtime_latest",
+      "expected": "JOB_SPEC_INVALID",
+      "job_spec": {
+        "contract": "mbongo-infer:v1",
+        "generation": {
+          "max_tokens": 400,
+          "seed": 42,
+          "temperature_milli": 0,
+          "top_p_milli": 1000
+        },
+        "limits": {
+          "max_input_bytes": 10000,
+          "max_output_bytes": 8000
+        },
+        "model": {
+          "artifact_name": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+          "artifact_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+          "artifact_size_bytes": 2497281120,
+          "family": "Qwen3",
+          "format": "gguf",
+          "license": "Apache-2.0",
+          "name": "Qwen3-4B-Instruct-2507",
+          "quantization": "Q4_K_M",
+          "source": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF",
+          "source_revision": "a06e946bb6b655725eafa393f4a9745d460374c9"
+        },
+        "profile": {
+          "id": "kaayu-cv-extract",
+          "input_contract": "kaayu-cv-extract-input:v1",
+          "output_contract": "kaayu-cv-profile:v1",
+          "output_schema_sha256": "81521447e7b7b45c670ff1717d608fc2304765ab530587aba2370ba0a9191af5",
+          "prompt_template_sha256": "6c950b4863bc339af94d904dbb609b3dd9098259740f01a6539406e641276d63",
+          "version": 1
+        },
+        "runtime": {
+          "commit": "620d2225cc436ab0b001e3200e590e3b286ef9ab",
+          "family": "llama.cpp",
+          "license": "MIT",
+          "mode": "llama-server",
+          "revision": "latest"
+        }
+      }
+    },
+    {
+      "name": "runtime_build_number_not_release_tag",
+      "expected": "JOB_SPEC_INVALID",
+      "job_spec": {
+        "contract": "mbongo-infer:v1",
+        "generation": {
+          "max_tokens": 400,
+          "seed": 42,
+          "temperature_milli": 0,
+          "top_p_milli": 1000
+        },
+        "limits": {
+          "max_input_bytes": 10000,
+          "max_output_bytes": 8000
+        },
+        "model": {
+          "artifact_name": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+          "artifact_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+          "artifact_size_bytes": 2497281120,
+          "family": "Qwen3",
+          "format": "gguf",
+          "license": "Apache-2.0",
+          "name": "Qwen3-4B-Instruct-2507",
+          "quantization": "Q4_K_M",
+          "source": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF",
+          "source_revision": "a06e946bb6b655725eafa393f4a9745d460374c9"
+        },
+        "profile": {
+          "id": "kaayu-cv-extract",
+          "input_contract": "kaayu-cv-extract-input:v1",
+          "output_contract": "kaayu-cv-profile:v1",
+          "output_schema_sha256": "81521447e7b7b45c670ff1717d608fc2304765ab530587aba2370ba0a9191af5",
+          "prompt_template_sha256": "6c950b4863bc339af94d904dbb609b3dd9098259740f01a6539406e641276d63",
+          "version": 1
+        },
+        "runtime": {
+          "commit": "620d2225cc436ab0b001e3200e590e3b286ef9ab",
+          "family": "llama.cpp",
+          "license": "MIT",
+          "mode": "llama-server",
+          "revision": "b11713"
+        }
+      }
+    },
+    {
+      "name": "vllm_runtime",
+      "expected": "UNSUPPORTED_RUNTIME",
+      "job_spec": {
+        "contract": "mbongo-infer:v1",
+        "generation": {
+          "max_tokens": 400,
+          "seed": 42,
+          "temperature_milli": 0,
+          "top_p_milli": 1000
+        },
+        "limits": {
+          "max_input_bytes": 10000,
+          "max_output_bytes": 8000
+        },
+        "model": {
+          "artifact_name": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+          "artifact_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+          "artifact_size_bytes": 2497281120,
+          "family": "Qwen3",
+          "format": "gguf",
+          "license": "Apache-2.0",
+          "name": "Qwen3-4B-Instruct-2507",
+          "quantization": "Q4_K_M",
+          "source": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF",
+          "source_revision": "a06e946bb6b655725eafa393f4a9745d460374c9"
+        },
+        "profile": {
+          "id": "kaayu-cv-extract",
+          "input_contract": "kaayu-cv-extract-input:v1",
+          "output_contract": "kaayu-cv-profile:v1",
+          "output_schema_sha256": "81521447e7b7b45c670ff1717d608fc2304765ab530587aba2370ba0a9191af5",
+          "prompt_template_sha256": "6c950b4863bc339af94d904dbb609b3dd9098259740f01a6539406e641276d63",
+          "version": 1
+        },
+        "runtime": {
+          "commit": "620d2225cc436ab0b001e3200e590e3b286ef9ab",
+          "family": "vllm",
+          "license": "MIT",
+          "mode": "llama-server",
+          "revision": "v0.7.0"
+        }
+      }
+    },
+    {
+      "name": "contract_v2",
+      "expected": "UNSUPPORTED_INFERENCE_SPEC_VERSION",
+      "job_spec": {
+        "contract": "mbongo-infer:v2",
+        "generation": {
+          "max_tokens": 400,
+          "seed": 42,
+          "temperature_milli": 0,
+          "top_p_milli": 1000
+        },
+        "limits": {
+          "max_input_bytes": 10000,
+          "max_output_bytes": 8000
+        },
+        "model": {
+          "artifact_name": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+          "artifact_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+          "artifact_size_bytes": 2497281120,
+          "family": "Qwen3",
+          "format": "gguf",
+          "license": "Apache-2.0",
+          "name": "Qwen3-4B-Instruct-2507",
+          "quantization": "Q4_K_M",
+          "source": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF",
+          "source_revision": "a06e946bb6b655725eafa393f4a9745d460374c9"
+        },
+        "profile": {
+          "id": "kaayu-cv-extract",
+          "input_contract": "kaayu-cv-extract-input:v1",
+          "output_contract": "kaayu-cv-profile:v1",
+          "output_schema_sha256": "81521447e7b7b45c670ff1717d608fc2304765ab530587aba2370ba0a9191af5",
+          "prompt_template_sha256": "6c950b4863bc339af94d904dbb609b3dd9098259740f01a6539406e641276d63",
+          "version": 1
+        },
+        "runtime": {
+          "commit": "620d2225cc436ab0b001e3200e590e3b286ef9ab",
+          "family": "llama.cpp",
+          "license": "MIT",
+          "mode": "llama-server",
+          "revision": "v0.7.0"
+        }
+      }
+    },
+    {
+      "name": "unknown_top_level_field",
+      "expected": "JOB_SPEC_INVALID",
+      "job_spec": {
+        "contract": "mbongo-infer:v1",
+        "generation": {
+          "max_tokens": 400,
+          "seed": 42,
+          "temperature_milli": 0,
+          "top_p_milli": 1000
+        },
+        "limits": {
+          "max_input_bytes": 10000,
+          "max_output_bytes": 8000
+        },
+        "model": {
+          "artifact_name": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+          "artifact_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+          "artifact_size_bytes": 2497281120,
+          "family": "Qwen3",
+          "format": "gguf",
+          "license": "Apache-2.0",
+          "name": "Qwen3-4B-Instruct-2507",
+          "quantization": "Q4_K_M",
+          "source": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF",
+          "source_revision": "a06e946bb6b655725eafa393f4a9745d460374c9"
+        },
+        "profile": {
+          "id": "kaayu-cv-extract",
+          "input_contract": "kaayu-cv-extract-input:v1",
+          "output_contract": "kaayu-cv-profile:v1",
+          "output_schema_sha256": "81521447e7b7b45c670ff1717d608fc2304765ab530587aba2370ba0a9191af5",
+          "prompt_template_sha256": "6c950b4863bc339af94d904dbb609b3dd9098259740f01a6539406e641276d63",
+          "version": 1
+        },
+        "runtime": {
+          "commit": "620d2225cc436ab0b001e3200e590e3b286ef9ab",
+          "family": "llama.cpp",
+          "license": "MIT",
+          "mode": "llama-server",
+          "revision": "v0.7.0"
+        },
+        "price_micro_mbo": 1
+      }
+    },
+    {
+      "name": "missing_section",
+      "expected": "JOB_SPEC_INVALID",
+      "job_spec": {
+        "contract": "mbongo-infer:v1",
+        "generation": {
+          "max_tokens": 400,
+          "seed": 42,
+          "temperature_milli": 0,
+          "top_p_milli": 1000
+        },
+        "model": {
+          "artifact_name": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+          "artifact_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+          "artifact_size_bytes": 2497281120,
+          "family": "Qwen3",
+          "format": "gguf",
+          "license": "Apache-2.0",
+          "name": "Qwen3-4B-Instruct-2507",
+          "quantization": "Q4_K_M",
+          "source": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF",
+          "source_revision": "a06e946bb6b655725eafa393f4a9745d460374c9"
+        },
+        "profile": {
+          "id": "kaayu-cv-extract",
+          "input_contract": "kaayu-cv-extract-input:v1",
+          "output_contract": "kaayu-cv-profile:v1",
+          "output_schema_sha256": "81521447e7b7b45c670ff1717d608fc2304765ab530587aba2370ba0a9191af5",
+          "prompt_template_sha256": "6c950b4863bc339af94d904dbb609b3dd9098259740f01a6539406e641276d63",
+          "version": 1
+        },
+        "runtime": {
+          "commit": "620d2225cc436ab0b001e3200e590e3b286ef9ab",
+          "family": "llama.cpp",
+          "license": "MIT",
+          "mode": "llama-server",
+          "revision": "v0.7.0"
+        }
+      }
+    },
+    {
+      "name": "temperature_too_high",
+      "expected": "INVALID_GENERATION_PARAMETERS",
+      "job_spec": {
+        "contract": "mbongo-infer:v1",
+        "generation": {
+          "max_tokens": 400,
+          "seed": 42,
+          "temperature_milli": 201,
+          "top_p_milli": 1000
+        },
+        "limits": {
+          "max_input_bytes": 10000,
+          "max_output_bytes": 8000
+        },
+        "model": {
+          "artifact_name": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+          "artifact_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+          "artifact_size_bytes": 2497281120,
+          "family": "Qwen3",
+          "format": "gguf",
+          "license": "Apache-2.0",
+          "name": "Qwen3-4B-Instruct-2507",
+          "quantization": "Q4_K_M",
+          "source": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF",
+          "source_revision": "a06e946bb6b655725eafa393f4a9745d460374c9"
+        },
+        "profile": {
+          "id": "kaayu-cv-extract",
+          "input_contract": "kaayu-cv-extract-input:v1",
+          "output_contract": "kaayu-cv-profile:v1",
+          "output_schema_sha256": "81521447e7b7b45c670ff1717d608fc2304765ab530587aba2370ba0a9191af5",
+          "prompt_template_sha256": "6c950b4863bc339af94d904dbb609b3dd9098259740f01a6539406e641276d63",
+          "version": 1
+        },
+        "runtime": {
+          "commit": "620d2225cc436ab0b001e3200e590e3b286ef9ab",
+          "family": "llama.cpp",
+          "license": "MIT",
+          "mode": "llama-server",
+          "revision": "v0.7.0"
+        }
+      }
+    },
+    {
+      "name": "max_tokens_too_high",
+      "expected": "INVALID_GENERATION_PARAMETERS",
+      "job_spec": {
+        "contract": "mbongo-infer:v1",
+        "generation": {
+          "max_tokens": 401,
+          "seed": 42,
+          "temperature_milli": 0,
+          "top_p_milli": 1000
+        },
+        "limits": {
+          "max_input_bytes": 10000,
+          "max_output_bytes": 8000
+        },
+        "model": {
+          "artifact_name": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+          "artifact_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+          "artifact_size_bytes": 2497281120,
+          "family": "Qwen3",
+          "format": "gguf",
+          "license": "Apache-2.0",
+          "name": "Qwen3-4B-Instruct-2507",
+          "quantization": "Q4_K_M",
+          "source": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF",
+          "source_revision": "a06e946bb6b655725eafa393f4a9745d460374c9"
+        },
+        "profile": {
+          "id": "kaayu-cv-extract",
+          "input_contract": "kaayu-cv-extract-input:v1",
+          "output_contract": "kaayu-cv-profile:v1",
+          "output_schema_sha256": "81521447e7b7b45c670ff1717d608fc2304765ab530587aba2370ba0a9191af5",
+          "prompt_template_sha256": "6c950b4863bc339af94d904dbb609b3dd9098259740f01a6539406e641276d63",
+          "version": 1
+        },
+        "runtime": {
+          "commit": "620d2225cc436ab0b001e3200e590e3b286ef9ab",
+          "family": "llama.cpp",
+          "license": "MIT",
+          "mode": "llama-server",
+          "revision": "v0.7.0"
+        }
+      }
+    },
+    {
+      "name": "uppercase_sha256",
+      "expected": "JOB_SPEC_INVALID",
+      "job_spec": {
+        "contract": "mbongo-infer:v1",
+        "generation": {
+          "max_tokens": 400,
+          "seed": 42,
+          "temperature_milli": 0,
+          "top_p_milli": 1000
+        },
+        "limits": {
+          "max_input_bytes": 10000,
+          "max_output_bytes": 8000
+        },
+        "model": {
+          "artifact_name": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+          "artifact_sha256": "3605803B982CB64AEAD44F6C1B2AE36E3ACDB41D8E46C8A94C6533BC4C67E597",
+          "artifact_size_bytes": 2497281120,
+          "family": "Qwen3",
+          "format": "gguf",
+          "license": "Apache-2.0",
+          "name": "Qwen3-4B-Instruct-2507",
+          "quantization": "Q4_K_M",
+          "source": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF",
+          "source_revision": "a06e946bb6b655725eafa393f4a9745d460374c9"
+        },
+        "profile": {
+          "id": "kaayu-cv-extract",
+          "input_contract": "kaayu-cv-extract-input:v1",
+          "output_contract": "kaayu-cv-profile:v1",
+          "output_schema_sha256": "81521447e7b7b45c670ff1717d608fc2304765ab530587aba2370ba0a9191af5",
+          "prompt_template_sha256": "6c950b4863bc339af94d904dbb609b3dd9098259740f01a6539406e641276d63",
+          "version": 1
+        },
+        "runtime": {
+          "commit": "620d2225cc436ab0b001e3200e590e3b286ef9ab",
+          "family": "llama.cpp",
+          "license": "MIT",
+          "mode": "llama-server",
+          "revision": "v0.7.0"
+        }
+      }
+    },
+    {
+      "name": "format_not_gguf",
+      "expected": "JOB_SPEC_INVALID",
+      "job_spec": {
+        "contract": "mbongo-infer:v1",
+        "generation": {
+          "max_tokens": 400,
+          "seed": 42,
+          "temperature_milli": 0,
+          "top_p_milli": 1000
+        },
+        "limits": {
+          "max_input_bytes": 10000,
+          "max_output_bytes": 8000
+        },
+        "model": {
+          "artifact_name": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+          "artifact_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+          "artifact_size_bytes": 2497281120,
+          "family": "Qwen3",
+          "format": "safetensors",
+          "license": "Apache-2.0",
+          "name": "Qwen3-4B-Instruct-2507",
+          "quantization": "Q4_K_M",
+          "source": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF",
+          "source_revision": "a06e946bb6b655725eafa393f4a9745d460374c9"
+        },
+        "profile": {
+          "id": "kaayu-cv-extract",
+          "input_contract": "kaayu-cv-extract-input:v1",
+          "output_contract": "kaayu-cv-profile:v1",
+          "output_schema_sha256": "81521447e7b7b45c670ff1717d608fc2304765ab530587aba2370ba0a9191af5",
+          "prompt_template_sha256": "6c950b4863bc339af94d904dbb609b3dd9098259740f01a6539406e641276d63",
+          "version": 1
+        },
+        "runtime": {
+          "commit": "620d2225cc436ab0b001e3200e590e3b286ef9ab",
+          "family": "llama.cpp",
+          "license": "MIT",
+          "mode": "llama-server",
+          "revision": "v0.7.0"
+        }
+      }
+    },
+    {
+      "name": "non_ascii_string",
+      "expected": "JOB_SPEC_INVALID",
+      "job_spec": {
+        "contract": "mbongo-infer:v1",
+        "generation": {
+          "max_tokens": 400,
+          "seed": 42,
+          "temperature_milli": 0,
+          "top_p_milli": 1000
+        },
+        "limits": {
+          "max_input_bytes": 10000,
+          "max_output_bytes": 8000
+        },
+        "model": {
+          "artifact_name": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+          "artifact_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+          "artifact_size_bytes": 2497281120,
+          "family": "Qwen3",
+          "format": "gguf",
+          "license": "Apache-2.0",
+          "name": "Qwen3-4B-Instruct-2507 é",
+          "quantization": "Q4_K_M",
+          "source": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF",
+          "source_revision": "a06e946bb6b655725eafa393f4a9745d460374c9"
+        },
+        "profile": {
+          "id": "kaayu-cv-extract",
+          "input_contract": "kaayu-cv-extract-input:v1",
+          "output_contract": "kaayu-cv-profile:v1",
+          "output_schema_sha256": "81521447e7b7b45c670ff1717d608fc2304765ab530587aba2370ba0a9191af5",
+          "prompt_template_sha256": "6c950b4863bc339af94d904dbb609b3dd9098259740f01a6539406e641276d63",
+          "version": 1
+        },
+        "runtime": {
+          "commit": "620d2225cc436ab0b001e3200e590e3b286ef9ab",
+          "family": "llama.cpp",
+          "license": "MIT",
+          "mode": "llama-server",
+          "revision": "v0.7.0"
+        }
+      }
+    },
+    {
+      "name": "profile_version_zero",
+      "expected": "JOB_SPEC_INVALID",
+      "job_spec": {
+        "contract": "mbongo-infer:v1",
+        "generation": {
+          "max_tokens": 400,
+          "seed": 42,
+          "temperature_milli": 0,
+          "top_p_milli": 1000
+        },
+        "limits": {
+          "max_input_bytes": 10000,
+          "max_output_bytes": 8000
+        },
+        "model": {
+          "artifact_name": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+          "artifact_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+          "artifact_size_bytes": 2497281120,
+          "family": "Qwen3",
+          "format": "gguf",
+          "license": "Apache-2.0",
+          "name": "Qwen3-4B-Instruct-2507",
+          "quantization": "Q4_K_M",
+          "source": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF",
+          "source_revision": "a06e946bb6b655725eafa393f4a9745d460374c9"
+        },
+        "profile": {
+          "id": "kaayu-cv-extract",
+          "input_contract": "kaayu-cv-extract-input:v1",
+          "output_contract": "kaayu-cv-profile:v1",
+          "output_schema_sha256": "81521447e7b7b45c670ff1717d608fc2304765ab530587aba2370ba0a9191af5",
+          "prompt_template_sha256": "6c950b4863bc339af94d904dbb609b3dd9098259740f01a6539406e641276d63",
+          "version": 0
+        },
+        "runtime": {
+          "commit": "620d2225cc436ab0b001e3200e590e3b286ef9ab",
+          "family": "llama.cpp",
+          "license": "MIT",
+          "mode": "llama-server",
+          "revision": "v0.7.0"
+        }
+      }
+    }
+  ]
+}

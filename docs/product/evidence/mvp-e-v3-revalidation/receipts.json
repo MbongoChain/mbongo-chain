@@ -1,0 +1,612 @@
+{
+  "scanned_to_height": 1252,
+  "nodes": [
+    "producer",
+    "follower1",
+    "follower2"
+  ],
+  "tasks": [
+    {
+      "fixture_id": "D01",
+      "task_id": "8bcb12699c9433f03a0b95c1f132c88f5c5bfc1d340fec0ea540dbb84ffd9c4e",
+      "receipt_found": true,
+      "receipt_count": 1,
+      "receipt_count_by_node": {
+        "producer": 1,
+        "follower1": 1,
+        "follower2": 1
+      },
+      "receipt_height": 73,
+      "executor": "0x25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78",
+      "executor_is_configured": true,
+      "output_commitment": "c237cf8f522b8991d5f7493d18b7488f255fd483e9f26f4eebf84725283a507a",
+      "retrieved_result_commitment": "c237cf8f522b8991d5f7493d18b7488f255fd483e9f26f4eebf84725283a507a",
+      "output_commitment_match": true,
+      "receipt_valid": true
+    },
+    {
+      "fixture_id": "D02",
+      "task_id": "7c5467a90e7d973338060d075cccc06f1b3600ecbf4fb402d35a09f390141b4a",
+      "receipt_found": true,
+      "receipt_count": 1,
+      "receipt_count_by_node": {
+        "producer": 1,
+        "follower1": 1,
+        "follower2": 1
+      },
+      "receipt_height": 111,
+      "executor": "0x25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78",
+      "executor_is_configured": true,
+      "output_commitment": "ea30f8fbd597f17bea4dce04a9135c8a455787df5a784919973024896b4c7e7d",
+      "retrieved_result_commitment": "ea30f8fbd597f17bea4dce04a9135c8a455787df5a784919973024896b4c7e7d",
+      "output_commitment_match": true,
+      "receipt_valid": true
+    },
+    {
+      "fixture_id": "D03",
+      "task_id": "b93dea10ac1645cedf6031232d79051169d3b086a085b45e829856a898b0a350",
+      "receipt_found": true,
+      "receipt_count": 1,
+      "receipt_count_by_node": {
+        "producer": 1,
+        "follower1": 1,
+        "follower2": 1
+      },
+      "receipt_height": 170,
+      "executor": "0x25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78",
+      "executor_is_configured": true,
+      "output_commitment": "0328fa3a678ffb589c7396b1008fdbe91fd883847b85078c5d798a9c1d8ace7b",
+      "retrieved_result_commitment": "0328fa3a678ffb589c7396b1008fdbe91fd883847b85078c5d798a9c1d8ace7b",
+      "output_commitment_match": true,
+      "receipt_valid": true
+    },
+    {
+      "fixture_id": "D04",
+      "task_id": "e1e017942a92b16c03624be63dea67711951051f630cf50e06bd51d3b72ee5be",
+      "receipt_found": true,
+      "receipt_count": 1,
+      "receipt_count_by_node": {
+        "producer": 1,
+        "follower1": 1,
+        "follower2": 1
+      },
+      "receipt_height": 223,
+      "executor": "0x25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78",
+      "executor_is_configured": true,
+      "output_commitment": "4cfa0c84ba8942d2e101f8600e527c2c6abb78d29fd8f092593238e0fe59842f",
+      "retrieved_result_commitment": "4cfa0c84ba8942d2e101f8600e527c2c6abb78d29fd8f092593238e0fe59842f",
+      "output_commitment_match": true,
+      "receipt_valid": true
+    },
+    {
+      "fixture_id": "D05",
+      "task_id": "ff849e2fe06bf5bedc3d4b75a4c9ca9bb964804c2aef710cdbe6f97688b97d26",
+      "receipt_found": true,
+      "receipt_count": 1,
+      "receipt_count_by_node": {
+        "producer": 1,
+        "follower1": 1,
+        "follower2": 1
+      },
+      "receipt_height": 266,
+      "executor": "0x25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78",
+      "executor_is_configured": true,
+      "output_commitment": "50dacff7a724c821b85f03eff55da95fc3ab116eceeea6bb553e39573ab249bd",
+      "retrieved_result_commitment": "50dacff7a724c821b85f03eff55da95fc3ab116eceeea6bb553e39573ab249bd",
+      "output_commitment_match": true,
+      "receipt_valid": true
+    },
+    {
+      "fixture_id": "D06",
+      "task_id": "df6a9b94aaae1c0552713519e94dee6d0e7a7e08e30ac412b33417b7f4ea717b",
+      "receipt_found": true,
+      "receipt_count": 1,
+      "receipt_count_by_node": {
+        "producer": 1,
+        "follower1": 1,
+        "follower2": 1
+      },
+      "receipt_height": 318,
+      "executor": "0x25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78",
+      "executor_is_configured": true,
+      "output_commitment": "c237cf8f522b8991d5f7493d18b7488f255fd483e9f26f4eebf84725283a507a",
+      "retrieved_result_commitment": "c237cf8f522b8991d5f7493d18b7488f255fd483e9f26f4eebf84725283a507a",
+      "output_commitment_match": true,
+      "receipt_valid": true
+    },
+    {
+      "fixture_id": "D07",
+      "task_id": "f334ce42e585630ca48b73d1c75cd7dc4483ef9379033e38ef5201c5af088a09",
+      "receipt_found": true,
+      "receipt_count": 1,
+      "receipt_count_by_node": {
+        "producer": 1,
+        "follower1": 1,
+        "follower2": 1
+      },
+      "receipt_height": 385,
+      "executor": "0x25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78",
+      "executor_is_configured": true,
+      "output_commitment": "24f00179a898e1c752daf9778f8f22e69736833bbf62764d937c1b48d85af152",
+      "retrieved_result_commitment": "24f00179a898e1c752daf9778f8f22e69736833bbf62764d937c1b48d85af152",
+      "output_commitment_match": true,
+      "receipt_valid": true
+    },
+    {
+      "fixture_id": "D08",
+      "task_id": "8303ff1479a4ec1cc5be80cae575c5e3e0134d4c992e7a7c3e2b52df0b014c07",
+      "receipt_found": true,
+      "receipt_count": 1,
+      "receipt_count_by_node": {
+        "producer": 1,
+        "follower1": 1,
+        "follower2": 1
+      },
+      "receipt_height": 508,
+      "executor": "0x25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78",
+      "executor_is_configured": true,
+      "output_commitment": "cfa44b1cdf25750c5697a53b1f18970faf075675e7d5d376fdb160bd4096317b",
+      "retrieved_result_commitment": "cfa44b1cdf25750c5697a53b1f18970faf075675e7d5d376fdb160bd4096317b",
+      "output_commitment_match": true,
+      "receipt_valid": true
+    },
+    {
+      "fixture_id": "D09",
+      "task_id": "337ec5e8163a239a68866e4928d8917da7bb3bac0bb50f0471aff647134718cb",
+      "receipt_found": true,
+      "receipt_count": 1,
+      "receipt_count_by_node": {
+        "producer": 1,
+        "follower1": 1,
+        "follower2": 1
+      },
+      "receipt_height": 546,
+      "executor": "0x25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78",
+      "executor_is_configured": true,
+      "output_commitment": "f286cc39c27726718ee1d32111fb57b1289e90dd9097657882973de8248ca264",
+      "retrieved_result_commitment": "f286cc39c27726718ee1d32111fb57b1289e90dd9097657882973de8248ca264",
+      "output_commitment_match": true,
+      "receipt_valid": true
+    },
+    {
+      "fixture_id": "D10",
+      "task_id": "74a22b7193bb0124c3a99840550f0e1e1d89940e572ed2b3165e8b65b6629bc7",
+      "receipt_found": true,
+      "receipt_count": 1,
+      "receipt_count_by_node": {
+        "producer": 1,
+        "follower1": 1,
+        "follower2": 1
+      },
+      "receipt_height": 604,
+      "executor": "0x25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78",
+      "executor_is_configured": true,
+      "output_commitment": "569d0d27549a502a3de7182e5a8599469cb0c32d1f9ab046ab169f6775e3f97c",
+      "retrieved_result_commitment": "569d0d27549a502a3de7182e5a8599469cb0c32d1f9ab046ab169f6775e3f97c",
+      "output_commitment_match": true,
+      "receipt_valid": true
+    },
+    {
+      "fixture_id": "D11",
+      "task_id": "a04106f0b0029399f9fb0437a5481c32d7edd5effef3e11de9012c271a9a5a19",
+      "receipt_found": true,
+      "receipt_count": 1,
+      "receipt_count_by_node": {
+        "producer": 1,
+        "follower1": 1,
+        "follower2": 1
+      },
+      "receipt_height": 672,
+      "executor": "0x25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78",
+      "executor_is_configured": true,
+      "output_commitment": "3824f72552a6cce2eefdce58ebb78f8fd0721e30fc0bf4635a6ccfd0794a01b4",
+      "retrieved_result_commitment": "3824f72552a6cce2eefdce58ebb78f8fd0721e30fc0bf4635a6ccfd0794a01b4",
+      "output_commitment_match": true,
+      "receipt_valid": true
+    },
+    {
+      "fixture_id": "D12",
+      "task_id": "ba6ac47d816daec9b9db76daeec185a907c8a9454ada4b4024a92df4daa8eb07",
+      "receipt_found": true,
+      "receipt_count": 1,
+      "receipt_count_by_node": {
+        "producer": 1,
+        "follower1": 1,
+        "follower2": 1
+      },
+      "receipt_height": 726,
+      "executor": "0x25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78",
+      "executor_is_configured": true,
+      "output_commitment": "30787f3b145842d8f9dc05005cedc7f949b9f9a1af6bb1e2fb6b1aefa2f8a34e",
+      "retrieved_result_commitment": "30787f3b145842d8f9dc05005cedc7f949b9f9a1af6bb1e2fb6b1aefa2f8a34e",
+      "output_commitment_match": true,
+      "receipt_valid": true
+    },
+    {
+      "fixture_id": "D13",
+      "task_id": "c702b849ebab181aa7c5ac6bc20c05d1d8964345167390c8d0d3000e21ac7fc0",
+      "receipt_found": true,
+      "receipt_count": 1,
+      "receipt_count_by_node": {
+        "producer": 1,
+        "follower1": 1,
+        "follower2": 1
+      },
+      "receipt_height": 792,
+      "executor": "0x25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78",
+      "executor_is_configured": true,
+      "output_commitment": "02d939e0972c560ff789d157d1b8bc01a4af43518395902b1381718292545971",
+      "retrieved_result_commitment": "02d939e0972c560ff789d157d1b8bc01a4af43518395902b1381718292545971",
+      "output_commitment_match": true,
+      "receipt_valid": true
+    },
+    {
+      "fixture_id": "D14",
+      "task_id": "72403da7050b7cf394ec49bc07fbd4b1db992dc492b139af9496d40cd28b4baf",
+      "receipt_found": true,
+      "receipt_count": 1,
+      "receipt_count_by_node": {
+        "producer": 1,
+        "follower1": 1,
+        "follower2": 1
+      },
+      "receipt_height": 849,
+      "executor": "0x25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78",
+      "executor_is_configured": true,
+      "output_commitment": "72af922b20df08952750d453b6546ba61edff50f5c6e1f8c40a31f9023fc660e",
+      "retrieved_result_commitment": "72af922b20df08952750d453b6546ba61edff50f5c6e1f8c40a31f9023fc660e",
+      "output_commitment_match": true,
+      "receipt_valid": true
+    },
+    {
+      "fixture_id": "D15",
+      "task_id": "9bdd9221a07c158ea3ff0a76119bbe6a42d8b2532994d8739bafe9709a88843b",
+      "receipt_found": true,
+      "receipt_count": 1,
+      "receipt_count_by_node": {
+        "producer": 1,
+        "follower1": 1,
+        "follower2": 1
+      },
+      "receipt_height": 920,
+      "executor": "0x25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78",
+      "executor_is_configured": true,
+      "output_commitment": "52e2bd78498ecc2ae2ed906bfbf3557dab40f609beaaef472e3c12c810f1b133",
+      "retrieved_result_commitment": "52e2bd78498ecc2ae2ed906bfbf3557dab40f609beaaef472e3c12c810f1b133",
+      "output_commitment_match": true,
+      "receipt_valid": true
+    },
+    {
+      "fixture_id": "D16",
+      "task_id": "4d078ca7b98c2f319a2b89ac71f7aa0beb75c4d3a80b310529e9c88be02a8c56",
+      "receipt_found": true,
+      "receipt_count": 1,
+      "receipt_count_by_node": {
+        "producer": 1,
+        "follower1": 1,
+        "follower2": 1
+      },
+      "receipt_height": 983,
+      "executor": "0x25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78",
+      "executor_is_configured": true,
+      "output_commitment": "6a659fb8673b3b8f0eb9c2643534c368d77b62a2f16208d9b51e1deeb3ba7380",
+      "retrieved_result_commitment": "6a659fb8673b3b8f0eb9c2643534c368d77b62a2f16208d9b51e1deeb3ba7380",
+      "output_commitment_match": true,
+      "receipt_valid": true
+    },
+    {
+      "fixture_id": "D17",
+      "task_id": "a16794dc57a65505c52649dbc39640792e72f0d7247c1b0872d0ab1ae59bd901",
+      "receipt_found": true,
+      "receipt_count": 1,
+      "receipt_count_by_node": {
+        "producer": 1,
+        "follower1": 1,
+        "follower2": 1
+      },
+      "receipt_height": 1044,
+      "executor": "0x25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78",
+      "executor_is_configured": true,
+      "output_commitment": "7ecfd2b63b38ae38cf09c445071d71ffaf241c3c26e2c5a5909775fd943d5d59",
+      "retrieved_result_commitment": "7ecfd2b63b38ae38cf09c445071d71ffaf241c3c26e2c5a5909775fd943d5d59",
+      "output_commitment_match": true,
+      "receipt_valid": true
+    },
+    {
+      "fixture_id": "D18",
+      "task_id": "71933cdbf5f7154a24c4fea564f2f770b1e26a21ffcaf732e111190a0277caaf",
+      "receipt_found": true,
+      "receipt_count": 1,
+      "receipt_count_by_node": {
+        "producer": 1,
+        "follower1": 1,
+        "follower2": 1
+      },
+      "receipt_height": 1094,
+      "executor": "0x25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78",
+      "executor_is_configured": true,
+      "output_commitment": "986921253b1ffbac3c4e26b10e42b0a922e1a67ef5d1105fc176d3ff206a5b43",
+      "retrieved_result_commitment": "986921253b1ffbac3c4e26b10e42b0a922e1a67ef5d1105fc176d3ff206a5b43",
+      "output_commitment_match": true,
+      "receipt_valid": true
+    },
+    {
+      "fixture_id": "D19",
+      "task_id": "b2e3c24ddf9ea1e2083bd4c672d6613b9410794d394baca34c2bc4186c8e2194",
+      "receipt_found": true,
+      "receipt_count": 1,
+      "receipt_count_by_node": {
+        "producer": 1,
+        "follower1": 1,
+        "follower2": 1
+      },
+      "receipt_height": 1140,
+      "executor": "0x25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78",
+      "executor_is_configured": true,
+      "output_commitment": "aab8e50cb8985147c6a9f883a035b1076858a525a4fc4f0f841947979b49425f",
+      "retrieved_result_commitment": "aab8e50cb8985147c6a9f883a035b1076858a525a4fc4f0f841947979b49425f",
+      "output_commitment_match": true,
+      "receipt_valid": true
+    },
+    {
+      "fixture_id": "D20",
+      "task_id": "c53a5b39cc45bc13aba8c652097d7fb522aaca4fcbe2e84e2b70d3461094a522",
+      "receipt_found": true,
+      "receipt_count": 1,
+      "receipt_count_by_node": {
+        "producer": 1,
+        "follower1": 1,
+        "follower2": 1
+      },
+      "receipt_height": 1242,
+      "executor": "0x25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78",
+      "executor_is_configured": true,
+      "output_commitment": "229cfbb13034214ae1e87d389c4cb400af942903e0859500acbb2b6d40eb8d6b",
+      "retrieved_result_commitment": "229cfbb13034214ae1e87d389c4cb400af942903e0859500acbb2b6d40eb8d6b",
+      "output_commitment_match": true,
+      "receipt_valid": true
+    }
+  ],
+  "reverify": [
+    {
+      "fixture_id": "D01",
+      "task_id": "8bcb12699c9433f03a0b95c1f132c88f5c5bfc1d340fec0ea540dbb84ffd9c4e",
+      "reverify_exit": 0,
+      "reverify_outcome": "VERIFIED",
+      "reverify_receipt": "VERIFIED",
+      "reverify_result": "VERIFIED",
+      "reverify_schema": "VERIFIED",
+      "reverify_business": "NOT_ASSESSED",
+      "result_exit": 0,
+      "result_bytes": 877
+    },
+    {
+      "fixture_id": "D02",
+      "task_id": "7c5467a90e7d973338060d075cccc06f1b3600ecbf4fb402d35a09f390141b4a",
+      "reverify_exit": 0,
+      "reverify_outcome": "VERIFIED",
+      "reverify_receipt": "VERIFIED",
+      "reverify_result": "VERIFIED",
+      "reverify_schema": "VERIFIED",
+      "reverify_business": "NOT_ASSESSED",
+      "result_exit": 0,
+      "result_bytes": 617
+    },
+    {
+      "fixture_id": "D03",
+      "task_id": "b93dea10ac1645cedf6031232d79051169d3b086a085b45e829856a898b0a350",
+      "reverify_exit": 0,
+      "reverify_outcome": "VERIFIED",
+      "reverify_receipt": "VERIFIED",
+      "reverify_result": "VERIFIED",
+      "reverify_schema": "VERIFIED",
+      "reverify_business": "NOT_ASSESSED",
+      "result_exit": 0,
+      "result_bytes": 899
+    },
+    {
+      "fixture_id": "D04",
+      "task_id": "e1e017942a92b16c03624be63dea67711951051f630cf50e06bd51d3b72ee5be",
+      "reverify_exit": 0,
+      "reverify_outcome": "VERIFIED",
+      "reverify_receipt": "VERIFIED",
+      "reverify_result": "VERIFIED",
+      "reverify_schema": "VERIFIED",
+      "reverify_business": "NOT_ASSESSED",
+      "result_exit": 0,
+      "result_bytes": 767
+    },
+    {
+      "fixture_id": "D05",
+      "task_id": "ff849e2fe06bf5bedc3d4b75a4c9ca9bb964804c2aef710cdbe6f97688b97d26",
+      "reverify_exit": 0,
+      "reverify_outcome": "VERIFIED",
+      "reverify_receipt": "VERIFIED",
+      "reverify_result": "VERIFIED",
+      "reverify_schema": "VERIFIED",
+      "reverify_business": "NOT_ASSESSED",
+      "result_exit": 0,
+      "result_bytes": 471
+    },
+    {
+      "fixture_id": "D06",
+      "task_id": "df6a9b94aaae1c0552713519e94dee6d0e7a7e08e30ac412b33417b7f4ea717b",
+      "reverify_exit": 0,
+      "reverify_outcome": "VERIFIED",
+      "reverify_receipt": "VERIFIED",
+      "reverify_result": "VERIFIED",
+      "reverify_schema": "VERIFIED",
+      "reverify_business": "NOT_ASSESSED",
+      "result_exit": 0,
+      "result_bytes": 877
+    },
+    {
+      "fixture_id": "D07",
+      "task_id": "f334ce42e585630ca48b73d1c75cd7dc4483ef9379033e38ef5201c5af088a09",
+      "reverify_exit": 0,
+      "reverify_outcome": "VERIFIED",
+      "reverify_receipt": "VERIFIED",
+      "reverify_result": "VERIFIED",
+      "reverify_schema": "VERIFIED",
+      "reverify_business": "NOT_ASSESSED",
+      "result_exit": 0,
+      "result_bytes": 807
+    },
+    {
+      "fixture_id": "D08",
+      "task_id": "8303ff1479a4ec1cc5be80cae575c5e3e0134d4c992e7a7c3e2b52df0b014c07",
+      "reverify_exit": 0,
+      "reverify_outcome": "VERIFIED",
+      "reverify_receipt": "VERIFIED",
+      "reverify_result": "VERIFIED",
+      "reverify_schema": "VERIFIED",
+      "reverify_business": "NOT_ASSESSED",
+      "result_exit": 0,
+      "result_bytes": 2110
+    },
+    {
+      "fixture_id": "D09",
+      "task_id": "337ec5e8163a239a68866e4928d8917da7bb3bac0bb50f0471aff647134718cb",
+      "reverify_exit": 0,
+      "reverify_outcome": "VERIFIED",
+      "reverify_receipt": "VERIFIED",
+      "reverify_result": "VERIFIED",
+      "reverify_schema": "VERIFIED",
+      "reverify_business": "NOT_ASSESSED",
+      "result_exit": 0,
+      "result_bytes": 484
+    },
+    {
+      "fixture_id": "D10",
+      "task_id": "74a22b7193bb0124c3a99840550f0e1e1d89940e572ed2b3165e8b65b6629bc7",
+      "reverify_exit": 0,
+      "reverify_outcome": "VERIFIED",
+      "reverify_receipt": "VERIFIED",
+      "reverify_result": "VERIFIED",
+      "reverify_schema": "VERIFIED",
+      "reverify_business": "NOT_ASSESSED",
+      "result_exit": 0,
+      "result_bytes": 1133
+    },
+    {
+      "fixture_id": "D11",
+      "task_id": "a04106f0b0029399f9fb0437a5481c32d7edd5effef3e11de9012c271a9a5a19",
+      "reverify_exit": 0,
+      "reverify_outcome": "VERIFIED",
+      "reverify_receipt": "VERIFIED",
+      "reverify_result": "VERIFIED",
+      "reverify_schema": "VERIFIED",
+      "reverify_business": "NOT_ASSESSED",
+      "result_exit": 0,
+      "result_bytes": 1176
+    },
+    {
+      "fixture_id": "D12",
+      "task_id": "ba6ac47d816daec9b9db76daeec185a907c8a9454ada4b4024a92df4daa8eb07",
+      "reverify_exit": 0,
+      "reverify_outcome": "VERIFIED",
+      "reverify_receipt": "VERIFIED",
+      "reverify_result": "VERIFIED",
+      "reverify_schema": "VERIFIED",
+      "reverify_business": "NOT_ASSESSED",
+      "result_exit": 0,
+      "result_bytes": 937
+    },
+    {
+      "fixture_id": "D13",
+      "task_id": "c702b849ebab181aa7c5ac6bc20c05d1d8964345167390c8d0d3000e21ac7fc0",
+      "reverify_exit": 0,
+      "reverify_outcome": "VERIFIED",
+      "reverify_receipt": "VERIFIED",
+      "reverify_result": "VERIFIED",
+      "reverify_schema": "VERIFIED",
+      "reverify_business": "NOT_ASSESSED",
+      "result_exit": 0,
+      "result_bytes": 989
+    },
+    {
+      "fixture_id": "D14",
+      "task_id": "72403da7050b7cf394ec49bc07fbd4b1db992dc492b139af9496d40cd28b4baf",
+      "reverify_exit": 0,
+      "reverify_outcome": "VERIFIED",
+      "reverify_receipt": "VERIFIED",
+      "reverify_result": "VERIFIED",
+      "reverify_schema": "VERIFIED",
+      "reverify_business": "NOT_ASSESSED",
+      "result_exit": 0,
+      "result_bytes": 918
+    },
+    {
+      "fixture_id": "D15",
+      "task_id": "9bdd9221a07c158ea3ff0a76119bbe6a42d8b2532994d8739bafe9709a88843b",
+      "reverify_exit": 0,
+      "reverify_outcome": "VERIFIED",
+      "reverify_receipt": "VERIFIED",
+      "reverify_result": "VERIFIED",
+      "reverify_schema": "VERIFIED",
+      "reverify_business": "NOT_ASSESSED",
+      "result_exit": 0,
+      "result_bytes": 1074
+    },
+    {
+      "fixture_id": "D16",
+      "task_id": "4d078ca7b98c2f319a2b89ac71f7aa0beb75c4d3a80b310529e9c88be02a8c56",
+      "reverify_exit": 0,
+      "reverify_outcome": "VERIFIED",
+      "reverify_receipt": "VERIFIED",
+      "reverify_result": "VERIFIED",
+      "reverify_schema": "VERIFIED",
+      "reverify_business": "NOT_ASSESSED",
+      "result_exit": 0,
+      "result_bytes": 975
+    },
+    {
+      "fixture_id": "D17",
+      "task_id": "a16794dc57a65505c52649dbc39640792e72f0d7247c1b0872d0ab1ae59bd901",
+      "reverify_exit": 0,
+      "reverify_outcome": "VERIFIED",
+      "reverify_receipt": "VERIFIED",
+      "reverify_result": "VERIFIED",
+      "reverify_schema": "VERIFIED",
+      "reverify_business": "NOT_ASSESSED",
+      "result_exit": 0,
+      "result_bytes": 990
+    },
+    {
+      "fixture_id": "D18",
+      "task_id": "71933cdbf5f7154a24c4fea564f2f770b1e26a21ffcaf732e111190a0277caaf",
+      "reverify_exit": 0,
+      "reverify_outcome": "VERIFIED",
+      "reverify_receipt": "VERIFIED",
+      "reverify_result": "VERIFIED",
+      "reverify_schema": "VERIFIED",
+      "reverify_business": "NOT_ASSESSED",
+      "result_exit": 0,
+      "result_bytes": 747
+    },
+    {
+      "fixture_id": "D19",
+      "task_id": "b2e3c24ddf9ea1e2083bd4c672d6613b9410794d394baca34c2bc4186c8e2194",
+      "reverify_exit": 0,
+      "reverify_outcome": "VERIFIED",
+      "reverify_receipt": "VERIFIED",
+      "reverify_result": "VERIFIED",
+      "reverify_schema": "VERIFIED",
+      "reverify_business": "NOT_ASSESSED",
+      "result_exit": 0,
+      "result_bytes": 791
+    },
+    {
+      "fixture_id": "D20",
+      "task_id": "c53a5b39cc45bc13aba8c652097d7fb522aaca4fcbe2e84e2b70d3461094a522",
+      "reverify_exit": 0,
+      "reverify_outcome": "VERIFIED",
+      "reverify_receipt": "VERIFIED",
+      "reverify_result": "VERIFIED",
+      "reverify_schema": "VERIFIED",
+      "reverify_business": "NOT_ASSESSED",
+      "result_exit": 0,
+      "result_bytes": 2083
+    }
+  ]
+}

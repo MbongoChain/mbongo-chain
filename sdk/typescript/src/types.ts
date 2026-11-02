@@ -1,61 +1,217 @@
 /**
- * TypeScript interfaces for Mbongo Chain JSON-RPC v0.1.
- * Matches docs/specs/jsonrpc_v0.1.md exactly.
+ * Wire types for the Mbongo Chain JSON-RPC surface.
+ *
+ * Derived from `docs/specs/rpc_v0.2.md` (FROZEN), cross-checked against the
+ * Rust serde representations in `mbongo-core`.
+ *
+ * Field names are the wire names. They are deliberately left in snake_case
+ * rather than converted to camelCase: these interfaces describe the actual
+ * JSON objects sent and received, and a renaming layer would make them
+ * describe something else.
  */
 
-/** Spec section 4: ValidatorData */
-export interface ValidatorData {
-  stake: string;
-  is_active: boolean;
-  compute_score: number;
+/** A `0x`-prefixed lowercase hex string. */
+export type HexString = string;
+
+/** Ed25519 public key, 32 bytes: `0x` + 64 hex characters. */
+export type Address = HexString;
+
+/** BLAKE3 digest, 32 bytes: `0x` + 64 hex characters. */
+export type Hash = HexString;
+
+/** Ed25519 signature, 64 bytes: `0x` + 128 hex characters. */
+export type Signature = HexString;
+
+/**
+ * Transaction type discriminant, serialised as the variant name.
+ *
+ * `ComputeTask` commits a task under RFC 0005 and carries a
+ * `{ ComputeTask: … }` payload. `Stake` exists in the enum but carries no
+ * validated semantics.
+ */
+export type TransactionType =
+  | "Transfer"
+  | "ComputeTask"
+  | "Stake"
+  | "AnchorReceipt";
+
+/**
+ * Transaction payload.
+ *
+ * The unit variant serialises as the bare string `"None"`; the receipt
+ * variant serialises as `{ "AnchorReceipt": <receipt> }`; the task variant
+ * as `{ "ComputeTask": <task> }` (`rpc_v0.3` §4.1). The union is closed: any
+ * other object is not a payload this package will decode.
+ *
+ * The receipt body is {@link WireReceipt}: the exact JSON shape the node's
+ * serde produces, pinned by
+ * `test-vectors/transaction/anchor-receipt-v1.json`. The task body is
+ * {@link WireComputeTask}, pinned by
+ * `test-vectors/rpc/compute-task-rpc-v1.json`.
+ */
+
+/**
+ * A receipt as it crosses the wire, inside an `AnchorReceipt` payload.
+ *
+ * Three byte representations coexist here, and that is the runtime's actual
+ * serde output rather than a choice this package makes. Hex appears exactly
+ * where the Rust type has a custom serializer: `Address` has its own
+ * `impl Serialize`, and the 64-byte signature uses `serde_arr64`. The three
+ * commitment fields and `metadata` are plain `[u8; 32]` and `Vec<u8>` with no
+ * annotation, so they serialise as arrays of numbers.
+ *
+ * The general byte-encoding sentence in `rpc_v0.2.md` does not describe these
+ * four fields; reconciling that wording is tracked separately.
+ */
+export interface WireReceipt {
+  version: number;
+  /** Array of 32 byte values, not hex. */
+  task_id: number[];
+  /** Array of 32 byte values, not hex. */
+  input_commitment: number[];
+  /** Array of 32 byte values, not hex. */
+  output_commitment: number[];
+  executor: Address;
+  /** Array of byte values, not hex. */
+  metadata: number[];
+  signature: Signature;
 }
 
-/** Spec section 4: Account */
-export interface Account {
-  address: string;
-  balance: string;
-  nonce: number;
-  validator_data: ValidatorData | null;
+/**
+ * A compute task as it crosses the wire, inside a `ComputeTask` payload
+ * (`rpc_v0.3` §4.4). Exactly the six fields of RFC 0005 §2.1; `task_id` is
+ * not among them because it is derived, never transported.
+ *
+ * The same mixed byte representation as {@link WireReceipt}, for the same
+ * reason: `submitter` and `executor` are `Address` on the Rust side and
+ * serialise as hex; `salt`, `input_commitment` and `execution_spec` are plain
+ * byte arrays and serialise as arrays of numbers. `execution_spec` is opaque:
+ * the node never interprets it, and neither does this package.
+ */
+export interface WireComputeTask {
+  version: number;
+  submitter: Address;
+  executor: Address;
+  /** Array of 32 byte values, not hex. */
+  salt: number[];
+  /** Array of 32 byte values, not hex. Opaque; its derivation is not the chain's business. */
+  input_commitment: number[];
+  /** Array of 0..=1024 byte values, not hex. Exact bytes; never text. */
+  execution_spec: number[];
 }
 
-/** Spec section 4: Block */
+export type TransactionPayload =
+  | "None"
+  | { AnchorReceipt: WireReceipt }
+  | { ComputeTask: WireComputeTask };
+
+/**
+ * A transaction as this package returns it.
+ *
+ * `amount` is a `u128` and `nonce` a `u64` on the Rust side, and
+ * `rpc_v0.2.md` §1 specifies both as JSON numbers. A JSON number token is
+ * lexically unbounded, so the wire carries them exactly; JavaScript's
+ * `number` does not, being integer-exact only to 2^53 − 1. Both are
+ * therefore `bigint` here, and the client parses the response without
+ * `JSON.parse` so the digits survive.
+ *
+ * Returned values are always `bigint`, never a union: a type that is
+ * sometimes one and sometimes the other cannot be used without a check at
+ * every site. For *input*, see {@link TransactionInput}.
+ */
+export interface Transaction {
+  tx_type: TransactionType;
+  sender: Address;
+  receiver: Address;
+  /** `u128` on the wire; see the note on this interface. */
+  amount: bigint;
+  /** `u64` on the wire. */
+  nonce: bigint;
+  payload: TransactionPayload;
+  signature: Signature;
+}
+
+/**
+ * A transaction as this package accepts it.
+ *
+ * `amount` and `nonce` may be a `bigint` or a safe non-negative `number`. A
+ * safe number converts to `bigint` exactly, so accepting one rejects nothing
+ * that was valid and keeps existing callers — `amount: 100, nonce: 0` —
+ * working unchanged. A number that is *not* a safe integer is refused rather
+ * than converted: JavaScript rounded it before this package saw it, and
+ * widening it afterwards would only disguise that.
+ *
+ * {@link Transaction} is assignable to this type, so a value read back from
+ * the chain can be resubmitted without conversion.
+ */
+export interface TransactionInput {
+  tx_type: TransactionType;
+  sender: Address;
+  receiver: Address;
+  /** `u128` on the wire, currently capped at `u64::MAX` by this SDK. */
+  amount: number | bigint;
+  /** `u64` on the wire. */
+  nonce: number | bigint;
+  payload: TransactionPayload;
+  signature: Signature;
+}
+
+/**
+ * Block header.
+ *
+ * `timestamp` and `height` are `u64` on the wire and `bigint` here.
+ * `timestamp` carries the full type domain rather than a plausible range
+ * because it is set by the block producer and no consensus rule bounds it,
+ * so a reader must be able to represent any header a node will accept.
+ */
+export interface BlockHeader {
+  parent_hash: Hash;
+  state_root: Hash;
+  transactions_root: Hash;
+  timestamp: bigint;
+  height: bigint;
+}
+
+/** Block body: the transactions included in the block, in order. */
+export interface BlockBody {
+  transactions: Transaction[];
+}
+
+/**
+ * A block as returned by `get_block_by_height`: nested `{header, body}`,
+ * not a flattened object.
+ */
 export interface Block {
-  number: number;
-  hash: string;
-  parentHash: string;
-  timestamp: number;
+  header: BlockHeader;
+  body: BlockBody;
 }
 
-/** Spec section 3.5: TransactionStatus response */
-export interface TransactionStatus {
-  status: "pending" | "confirmed" | "failed";
-  blockNumber: number | null;
-  executionResult: { success: boolean; error?: string } | null;
+/**
+ * Parameters for `get_block_by_height`, as sent.
+ *
+ * `height` is serialised as an exact JSON integer token, so the full `u64`
+ * domain reaches the node unrounded.
+ */
+export interface GetBlockByHeightParams {
+  height: bigint;
 }
 
-/** JSON-RPC 2.0 request envelope */
-export interface JSONRPCRequest<T> {
+/** JSON-RPC 2.0 request envelope. `params` is omitted for methods that take none. */
+export interface JSONRPCRequest {
   jsonrpc: "2.0";
   id: number;
   method: string;
-  params: T;
+  params?: unknown;
 }
 
-/** JSON-RPC 2.0 success response */
-export interface JSONRPCSuccess<T> {
-  jsonrpc: "2.0";
-  id: number;
-  result: T;
-}
-
-/** JSON-RPC 2.0 error object */
-export interface JSONRPCError {
+/** JSON-RPC 2.0 error object. */
+export interface JSONRPCErrorObject {
   code: number;
   message: string;
-  data?: string;
+  data?: unknown;
 }
 
-/** JSON-RPC 2.0 response (success or error) */
+/** JSON-RPC 2.0 response, success or error. */
 export type JSONRPCResponse<T> =
-  | JSONRPCSuccess<T>
-  | { jsonrpc: "2.0"; id: number; error: JSONRPCError };
+  | { jsonrpc: "2.0"; id: number | string | null; result: T }
+  | { jsonrpc: "2.0"; id: number | string | null; error: JSONRPCErrorObject };

@@ -23,6 +23,10 @@ serde_json = { workspace = true }
 
 # Cryptography
 blake3 = { workspace = true }
+ed25519-dalek = { workspace = true }
+
+# Serialization (SCALE)
+parity-scale-codec = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }

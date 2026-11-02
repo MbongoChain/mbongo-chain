@@ -1,8 +1,8 @@
 # PROTOCOL LOCK v0.2 — Devnet Stable
 
-**Status:** FROZEN
+**Status:** SUPERSEDED by [PROTOCOL_LOCK_v0.3.md](./PROTOCOL_LOCK_v0.3.md) — kept as the historical record of the v0.2 surfaces
 **Git tag:** `v0.2-devnet-stable`
-**Last updated:** 2026-02-16
+**Last updated:** 2026-02-16 (superseded 2026-07-20)
 
 ---
 

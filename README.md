@@ -13,20 +13,34 @@ Mbongo Chain verifies cryptographic receipts from off-chain AI inference. It doe
 
 ## Current Status
 
-**Tag:** `v0.2-devnet-stable`  
+**Protocol:** v0.4 (compute task commitment, RFC 0005, on the v0.3 receipt-anchoring base) — tag `v0.4-devnet-stable` @ `fcec8ddc`; SDK `@mbongo/sdk` 0.2.0
+
 **Branch:** All development targets `dev`. PRs must target `dev`.
+
+> v0.4 activates on a clean version boundary: fresh genesis, wiped data
+> directories, storage schema 3, and stricter receipt validity (a receipt
+> must answer a committed `ComputeTask`). It is not a wire-format change to
+> receipts, and the P2P strings are unchanged, so v0.3 and v0.4 nodes must
+> never share a network; see
+> [PROTOCOL_LOCK_v0.4.md](./docs/specs/PROTOCOL_LOCK_v0.4.md) for the
+> migration procedure. This is a devnet release — not mainnet-ready.
 
 ### Implemented Now
 
 - Block and transaction data structures (SCALE-encoded, BLAKE3 hashing)
+- Typed transaction payloads (`TransactionPayload`, explicit codec indexes)
+- **Receipt anchoring (RFC 0002):** `AnchorReceipt` transactions validated
+  under a normative deterministic rule order and committed atomically with
+  block state; global `task_id` uniqueness; canonical receipt bytes in a
+  dedicated RocksDB column family (schema v2)
 - Account model (balance, nonce)
 - Transfer execution and validation (signature, nonce, balance, replay protection)
-- Persistent storage (RocksDB, atomic `WriteBatch`)
-- Multi-node devnet: 1 producer + N followers over libp2p
+- Persistent storage (RocksDB, atomic `WriteBatch`, schema versioning + migration)
+- Multi-node devnet: 1 producer + N followers over libp2p (`/mbongo-sync/2`)
 - Block sync: bootstrap from genesis, height-based request/response, block announcement
 - Timed block production (`--producer`, `--block-time`)
 - JSON-RPC 2.0 and REST API
-- Deterministic replay harness and devnet convergence harness
+- Deterministic replay harness and devnet convergence harness (with receipt traffic)
 
 ### Explicitly NOT in Scope for v0.2 / v1
 
@@ -117,6 +131,117 @@ See [DEV_ONBOARDING.md](./docs/DEV_ONBOARDING.md) for full CLI reference.
 
 ---
 
+## Dockerised Devnet (3 nodes)
+
+A reproducible 1-producer + 2-follower devnet that boots from a clean
+checkout with one command, on any machine that runs Docker. It is the
+cross-platform counterpart of the PowerShell devnet under `scripts/devnet/`,
+which remains the tool for long-running Windows soaks.
+
+### Prerequisites
+
+- Docker Engine 24+ (Docker Desktop on Windows/macOS)
+- Docker Compose v2+ (`docker compose version`)
+- GNU Make, only if you want the `make` shortcuts
+
+### Boot it
+
+```bash
+make devnet-up
+```
+
+Or, without Make (identical behaviour — the target only delegates):
+
+```bash
+./scripts/devnet/docker-devnet.sh up
+```
+
+That command builds the devnet image, starts the three nodes on a dedicated
+Compose network, waits until each one reports healthy, then runs the
+`convergence_probe` binary against all three. It exits `0` only if the nodes
+agree on the same height and tip hash **and** the chain produced a new block
+while the probe was watching. On failure it prints container state, health
+status and recent per-node logs, then exits non-zero.
+
+### Tear it down
+
+```bash
+make devnet-down            # or ./scripts/devnet/docker-devnet.sh down
+```
+
+This removes the containers, the network and any volumes. It is safe to run
+when nothing is up, and safe to run twice. Node state lives in the container
+writable layer, so every boot starts from a fresh genesis.
+
+### Configuration
+
+Three layers, applied in order:
+
+| File | Versioned | Purpose |
+|------|-----------|---------|
+| `.env.base` | yes | Deterministic defaults. A fresh checkout boots with this file alone. |
+| `.env.local` | **no** (gitignored) | Your personal overrides. Optional — never required. |
+| `.env.ci` | yes | Deterministic overrides for automated runs (`DEVNET_ENV=ci`). |
+
+To override something locally, create `.env.local` with only the keys you
+want to change — never edit `.env.base`:
+
+```bash
+echo "MBONGO_HOST_RPC_PORT=31944" > .env.local
+echo "MBONGO_BLOCK_TIME=2"       >> .env.local
+```
+
+To use the CI layer instead:
+
+```bash
+DEVNET_ENV=ci ./scripts/devnet/docker-devnet.sh up
+```
+
+### Exposed host ports
+
+Only one: the producer JSON-RPC, published on **loopback only** at
+`127.0.0.1:${MBONGO_HOST_RPC_PORT}` (default `29944`, chosen to avoid the
+operational devnet on 9944-9946 and the in-process harness on 19944-19946).
+Followers and the REST APIs are reachable only from inside the Compose
+network. Set `MBONGO_HOST_RPC_PORT=0` to let Docker pick a free port.
+
+```bash
+curl -X POST -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"get_block_height","id":1}' \
+  http://127.0.0.1:29944/rpc
+```
+
+### About `0.0.0.0`
+
+Inside the containers the node is started with `--rpc-host 0.0.0.0` and
+`--rest-host 0.0.0.0` so the services can reach each other across the
+Compose network. **This is a devnet-only setting, not a production
+default.** The node itself still binds `127.0.0.1` when those flags are not
+passed, and the RPC surface has no authentication — never expose it on an
+untrusted network.
+
+### One source of truth for convergence
+
+The verdict comes from `convergence_probe`
+([crates/mbongo-node/src/bin/convergence_probe.rs](./crates/mbongo-node/src/bin/convergence_probe.rs)),
+which shares its height/tip-hash rules with `devnet_harness` through
+`mbongo_node::convergence`. Nothing in the Compose file, the healthchecks
+or the Makefile re-implements that comparison. The container healthchecks
+only answer a narrower question — "does this node serve JSON-RPC yet?" — via
+the `ping` method.
+
+### Further reading
+
+- [Devnet Developer Guide](./docs/development/devnet.md) — day-to-day usage:
+  environment layers, inspecting the running network, troubleshooting, and
+  when to prefer the native harness.
+- [Deterministic Devnet Architecture](./docs/architecture/devnet-infrastructure.md)
+  — design and boundaries: topology, bootstrapping, readiness versus
+  convergence, what determinism does and does not guarantee, and the
+  invariants to preserve when changing this infrastructure.
+
+---
+
 ## Documentation
 
 | Document | Purpose |
@@ -124,12 +249,22 @@ See [DEV_ONBOARDING.md](./docs/DEV_ONBOARDING.md) for full CLI reference.
 | [DEVNET_STABILITY_REPORT.md](./docs/DEVNET_STABILITY_REPORT.md) | Freeze documentation, test matrix |
 | [DEV_ONBOARDING.md](./docs/DEV_ONBOARDING.md) | Quick start, CLI reference, devnet commands |
 | [ARCHITECTURE_OVERVIEW_FOR_NEW_DEVS.md](./docs/ARCHITECTURE_OVERVIEW_FOR_NEW_DEVS.md) | Layer separation and block flow |
-| [PROTOCOL_LOCK_v0.2.md](./docs/specs/PROTOCOL_LOCK_v0.2.md) | Frozen surfaces, versioning rules |
+| [architecture/compute-receipts.md](./docs/architecture/compute-receipts.md) | Receipt anchoring: data model, cryptographic domains, validation, storage |
+| [development/compute-receipts.md](./docs/development/compute-receipts.md) | Building, signing, anchoring and verifying receipts with the SDK |
+| [PROTOCOL_LOCK_v0.4.md](./docs/specs/PROTOCOL_LOCK_v0.4.md) | Current frozen surfaces, migration, versioning rules |
+| [PROTOCOL_LOCK_v0.3.md](./docs/specs/PROTOCOL_LOCK_v0.3.md) | Superseded v0.3 lock (historical) |
+| [PROTOCOL_LOCK_v0.2.md](./docs/specs/PROTOCOL_LOCK_v0.2.md) | Superseded v0.2 lock (historical) |
 | [COMPUTE_INTERFACE_v0.1.md](./docs/specs/COMPUTE_INTERFACE_v0.1.md) | Future receipt spec (no implementation in v0.2) |
 | [VISION_v1.md](./docs/VISION_v1.md) | Verification layer scope |
 | [tokenomics.md](./docs/tokenomics.md) | v1 vs v2+ economics |
 | [CONTRIBUTION_TIERS.md](./docs/CONTRIBUTION_TIERS.md) | Tier 0/1/2 change rules |
 | [RFC_PROCESS.md](./docs/RFC_PROCESS.md) | How to propose changes to locked surfaces |
+
+For everything else, start at [docs/INDEX.md](./docs/INDEX.md). It carries the
+authority map — the one document that decides each subject — and marks which
+parts of `docs/` describe the running system. Much of that directory predates
+the current protocol; the index says which parts, so read it before trusting
+anything not listed above.
 
 ---
 
@@ -147,9 +282,11 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 | Version | Milestone | Scope |
 |---------|-----------|-------|
-| **v0.2** | Devnet stable | Multi-node devnet, single producer, block sync. **FROZEN.** |
-| **v0.3** | PoS minimal + receipt prototype | Stake-weighted validator set. Reserved RPC stubs. Receipt verification prototype. |
-| **v0.4+** | Compute verification expansion | Canonical receipt format, challenge mechanism, SDK. |
+| **v0.2** | Devnet stable | Multi-node devnet, single producer, block sync. **SUPERSEDED by v0.3.** |
+| **v0.3** | Receipt anchoring devnet | RFC 0002 implemented: typed transaction payloads, `AnchorReceipt` consensus rules, receipts column family, protocol string bump. Network-incompatible with v0.2; fresh genesis. **SUPERSEDED by v0.4** (see [PROTOCOL_LOCK_v0.3.md](./docs/specs/PROTOCOL_LOCK_v0.3.md)). |
+| **v0.4** | Compute task commitment devnet | RFC 0005 implemented: `ComputeTask` payload, `task_id`, rules (k)–(s), tasks column family (schema 3), receipts bound to committed tasks, rpc_v0.3, reference worker and conformance suite off-chain. Fresh genesis. **FROZEN** (see [PROTOCOL_LOCK_v0.4.md](./docs/specs/PROTOCOL_LOCK_v0.4.md)). |
+| **MVP v0.1** | First product (frozen scope) | One client (Kaayu), one workload (CV text → JSON profile), one Mbongo-operated CPU worker on llama.cpp with a pinned open model, data off-chain on the PUBLIC profile, anchored receipt verified by the client. No protocol change. See [docs/product/MVP_v0.1.md](./docs/product/MVP_v0.1.md). |
+| **v0.5+** | Compute verification expansion | Receipt RPC activation, challenge mechanism, PoS minimal, SDK release. |
 | **v1.0** | Verified inference primitive | Receipt verification live. No on-chain AI execution. |
 | **v2+** | Optional PoUW | On-chain execution as opt-in extension. PoUW, TEE, ZK-ML are **future** — not current. |
 

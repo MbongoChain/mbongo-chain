@@ -11,6 +11,9 @@ pub enum StorageError {
     /// Serialization or deserialization failed.
     #[error("Serialization error")]
     Serialization,
+    /// The on-disk schema is unknown or unsupported (RFC 0002 §5).
+    #[error("Schema error: {0}")]
+    Schema(String),
 }
 
 /// A single atomic operation within a [`Storage::write_batch`] call.
@@ -29,6 +32,12 @@ pub enum BatchOp {
     SetTxSeq(u64),
     /// Set the last transaction sequence number included in a block.
     SetLastIncludedTxSeq(u64),
+    /// Persist an anchored receipt keyed by its 32-byte task id.
+    /// The value bytes are opaque to the storage layer (RFC 0002 §4).
+    PutReceipt([u8; 32], Vec<u8>),
+    /// Persist a committed compute task keyed by its 32-byte task id.
+    /// The value bytes are opaque to the storage layer (RFC 0005 §4).
+    PutTask([u8; 32], Vec<u8>),
 }
 
 /// Domain-oriented storage interface for Mbongo Chain state.
@@ -137,6 +146,41 @@ pub trait Storage {
     ///
     /// Returns [`StorageError`] on database failure.
     fn set_last_included_tx_seq(&self, seq: u64) -> Result<(), StorageError>;
+
+    /// Return whether a receipt with the given task id has been anchored.
+    ///
+    /// The storage layer never decodes or validates receipt bytes; this is
+    /// a pure key-existence check (RFC 0002 §4–5).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] on database failure.
+    fn has_receipt(&self, task_id: &[u8; 32]) -> Result<bool, StorageError>;
+
+    /// Retrieve the opaque receipt bytes stored under the given task id.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] on database failure.
+    fn get_receipt(&self, task_id: &[u8; 32]) -> Result<Option<Vec<u8>>, StorageError>;
+
+    /// Return whether a compute task with the given task id has been
+    /// committed.
+    ///
+    /// The storage layer never decodes or validates task bytes; this is a
+    /// pure key-existence check (RFC 0005 §4).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] on database failure.
+    fn has_task(&self, task_id: &[u8; 32]) -> Result<bool, StorageError>;
+
+    /// Retrieve the opaque task bytes stored under the given task id.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] on database failure.
+    fn get_task(&self, task_id: &[u8; 32]) -> Result<Option<Vec<u8>>, StorageError>;
 
     /// Apply a list of operations atomically.
     ///

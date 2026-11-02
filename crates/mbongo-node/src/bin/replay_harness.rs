@@ -23,8 +23,13 @@ use tokio::time::sleep;
 // ── Configuration ───────────────────────────────────────────────────────
 
 const BLOCK_TIME_SECS: u64 = 1;
-const WAIT_PRODUCTION_SECS: u64 = 15;
 const MIN_HEIGHT: u64 = 10;
+
+// Production polling: wait for the chain to reach MIN_HEIGHT with a
+// bounded poll instead of a fixed sleep (slow runners produce slower
+// than one block per second).
+const PRODUCTION_POLL_INTERVAL_MS: u64 = 500;
+const PRODUCTION_TIMEOUT_SECS: u64 = 60;
 const RPC_PORT: u16 = 39944;
 const REST_PORT: u16 = 38080;
 const P2P_PORT: u16 = 50333;
@@ -169,6 +174,90 @@ async fn main() {
     }
 }
 
+/// Builds a fully valid `AnchorReceipt` transaction from the dev account
+/// (the pre-funded key `[0xAA; 32]`, matching `ensure_genesis`) answering
+/// the task `task_id` that `build_task_tx` committed: same
+/// `input_commitment`, and the dev key as the executor the task named
+/// (RFC 0005 rules q–s). Returns the transaction as RPC JSON, the task id,
+/// and the canonical SCALE receipt bytes for the replay comparison.
+fn build_anchor_tx(nonce: u64, task_id: [u8; 32]) -> (Value, [u8; 32], Vec<u8>) {
+    use ed25519_dalek::{Signer, SigningKey};
+    use mbongo_core::{Address, Receipt, Transaction, TransactionPayload, TransactionType};
+    use parity_scale_codec::Encode;
+
+    let sk = SigningKey::from_bytes(&[0xAAu8; 32]);
+    let sender = Address(sk.verifying_key().to_bytes());
+
+    let mut receipt = Receipt {
+        version: 1,
+        task_id,
+        input_commitment: [0x10u8; 32],
+        output_commitment: [0x20u8; 32],
+        executor: sender,
+        metadata: b"replay-harness".to_vec(),
+        signature: [0u8; 64],
+    };
+    receipt.signature = sk.sign(&receipt.receipt_hash().0).to_bytes();
+    let receipt_bytes = receipt.encode();
+
+    let mut tx = Transaction {
+        tx_type: TransactionType::AnchorReceipt,
+        sender,
+        receiver: Address::zero(),
+        amount: 0,
+        nonce,
+        payload: TransactionPayload::AnchorReceipt(Box::new(receipt)),
+        signature: [0u8; 64],
+    };
+    tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+
+    let tx_json = serde_json::to_value(&tx).expect("transaction serializes");
+    (tx_json, task_id, receipt_bytes)
+}
+
+/// Builds a fully valid `ComputeTask` transaction from the dev account
+/// (RFC 0005 §2.8: amount 0, zero receiver, `submitter == sender`).
+/// Returns the transaction as RPC JSON, the derived `task_id`, and the
+/// canonical SCALE task bytes for the replay comparison.
+fn build_task_tx(nonce: u64, salt: [u8; 32]) -> (Value, [u8; 32], Vec<u8>) {
+    use ed25519_dalek::{Signer, SigningKey};
+    use mbongo_core::{
+        Address, ComputeTask, Transaction, TransactionPayload, TransactionType,
+        COMPUTE_TASK_VERSION,
+    };
+    use parity_scale_codec::Encode;
+
+    let sk = SigningKey::from_bytes(&[0xAAu8; 32]);
+    let sender = Address(sk.verifying_key().to_bytes());
+
+    let task = ComputeTask {
+        version: COMPUTE_TASK_VERSION,
+        submitter: sender,
+        // The dev key answers its own task: it is the only pre-funded
+        // account, and the anchor below must come from the named executor.
+        executor: sender,
+        salt,
+        input_commitment: [0x10u8; 32],
+        execution_spec: b"replay-harness".to_vec(),
+    };
+    let task_id = task.task_id();
+    let task_bytes = task.encode();
+
+    let mut tx = Transaction {
+        tx_type: TransactionType::ComputeTask,
+        sender,
+        receiver: Address::zero(),
+        amount: 0,
+        nonce,
+        payload: TransactionPayload::ComputeTask(Box::new(task)),
+        signature: [0u8; 64],
+    };
+    tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+
+    let tx_json = serde_json::to_value(&tx).expect("transaction serializes");
+    (tx_json, task_id, task_bytes)
+}
+
 async fn run_replay(client: &Client, producer_dir: &std::path::Path) -> Result<(), String> {
     // ── Phase A: Produce chain ──────────────────────────────────────────
 
@@ -178,36 +267,95 @@ async fn run_replay(client: &Client, producer_dir: &std::path::Path) -> Result<(
     wait_for_rpc(client).await?;
     println!("  Producer RPC ready");
 
-    println!("  Waiting {WAIT_PRODUCTION_SECS}s for block production...");
-    sleep(Duration::from_secs(WAIT_PRODUCTION_SECS)).await;
+    // Submit one ComputeTask from the dev account (nonce 0) so the chain
+    // carries task state (RFC 0005 §4 replay coverage: the tasks index is
+    // derived from blocks), then the AnchorReceipt answering it (nonce 1,
+    // behind the task: rules q–s need the task registered first).
+    let (task_tx_json, compute_task_id, compute_task_bytes) = build_task_tx(0, [0x5Fu8; 32]);
+    rpc_call(client, "submit_transaction", Some(task_tx_json))
+        .await
+        .map_err(|e| format!("compute task submission failed: {e}"))?;
+    println!("  ComputeTask submitted (salt 0x5f..5f)");
 
-    // Get original height.
-    let original_height = rpc_call(client, "get_block_height", None)
-        .await?
-        .as_u64()
-        .ok_or("height is not u64")?;
+    let (anchor_tx_json, anchor_task_id, anchor_receipt_bytes) =
+        build_anchor_tx(1, compute_task_id);
+    rpc_call(client, "submit_transaction", Some(anchor_tx_json))
+        .await
+        .map_err(|e| format!("anchor submission failed: {e}"))?;
+    println!("  AnchorReceipt submitted (bound to the committed task)");
 
-    println!("  Original height: {original_height}");
-    if original_height < MIN_HEIGHT {
-        return Err(format!("height {original_height} < minimum {MIN_HEIGHT}"));
-    }
+    // Bounded height polling: succeed once the chain reaches MIN_HEIGHT.
+    println!(
+        "  Polling for height >= {MIN_HEIGHT} \
+         (every {PRODUCTION_POLL_INTERVAL_MS}ms, up to {PRODUCTION_TIMEOUT_SECS}s)..."
+    );
+    let poll_start = std::time::Instant::now();
+    let snapshot_height = loop {
+        let h = rpc_call(client, "get_block_height", None)
+            .await?
+            .as_u64()
+            .ok_or("height is not u64")?;
+        if h >= MIN_HEIGHT {
+            break h;
+        }
+        if poll_start.elapsed() >= Duration::from_secs(PRODUCTION_TIMEOUT_SECS) {
+            return Err(format!(
+                "height {h} did not reach minimum {MIN_HEIGHT} within \
+                 {PRODUCTION_TIMEOUT_SECS}s ({:.1}s elapsed): producer is stalled \
+                 or producing too slowly — check its stdout/stderr",
+                poll_start.elapsed().as_secs_f64()
+            ));
+        }
+        sleep(Duration::from_millis(PRODUCTION_POLL_INTERVAL_MS)).await;
+    };
 
-    // Get original tip hash.
-    let original_tip_hash = rpc_call(client, "get_latest_block_hash", None)
-        .await?
-        .as_str()
-        .map(String::from)
-        .ok_or("tip hash is not string")?;
-    println!("  Original tip hash: {original_tip_hash}");
+    // ONE immutable snapshot: everything below — export range, tip
+    // reference, and replay comparison — derives from this single value.
+    // The producer keeps running, but blocks at heights <= snapshot are
+    // immutable, so no later production can affect the snapshot.
+    println!("  Snapshot height: {snapshot_height}");
 
-    // Export all blocks from height 0..=original_height.
-    println!("  Exporting {} blocks...", original_height + 1);
-    let mut exported_blocks: Vec<Value> = Vec::new();
-    for h in 0..=original_height {
-        let block = rpc_call(client, "get_block_by_height", Some(json!({"height": h}))).await?;
+    // Export exactly blocks 0..=snapshot_height, deserialized eagerly.
+    use mbongo_core::Block;
+    println!("  Exporting {} blocks...", snapshot_height + 1);
+    let mut exported_blocks: Vec<Block> = Vec::new();
+    for h in 0..=snapshot_height {
+        let value = rpc_call(client, "get_block_by_height", Some(json!({"height": h}))).await?;
+        let block: Block = serde_json::from_value(value)
+            .map_err(|e| format!("failed to deserialize exported block {h}: {e}"))?;
         exported_blocks.push(block);
     }
     println!("  Exported {} blocks", exported_blocks.len());
+
+    // The replay reference is derived LOCALLY from the exported snapshot
+    // tip — never from a separate moving-tip RPC query, which can race
+    // with ongoing production (a block minted between two tip reads made
+    // the reference hash belong to a later height than the export).
+    let (ref_height, original_tip_hash) =
+        derive_snapshot_reference(&exported_blocks).ok_or("no blocks were exported")?;
+    if ref_height != snapshot_height {
+        return Err(format!(
+            "exported tip height {ref_height} != snapshot height {snapshot_height}"
+        ));
+    }
+    println!("  Snapshot tip hash (derived from exported block {ref_height}): {original_tip_hash}");
+
+    // Consistency cross-check via the immutable by-height query: the
+    // chain must still serve the identical block at the snapshot height.
+    let refetched = rpc_call(
+        client,
+        "get_block_by_height",
+        Some(json!({"height": snapshot_height})),
+    )
+    .await?;
+    let refetched: Block = serde_json::from_value(refetched)
+        .map_err(|e| format!("failed to deserialize refetched snapshot block: {e}"))?;
+    if compute_block_hash(&refetched) != original_tip_hash {
+        return Err(format!(
+            "block at height {snapshot_height} changed between export and re-fetch: \
+             immutable-by-height guarantee violated"
+        ));
+    }
 
     // Kill producer — we're done with it.
     let _ = producer.kill().await;
@@ -219,18 +367,16 @@ async fn run_replay(client: &Client, producer_dir: &std::path::Path) -> Result<(
     println!("Phase B: Creating fresh backend...");
     println!("Phase C: Replaying {} blocks...", exported_blocks.len());
 
-    use mbongo_core::Block;
     use mbongo_storage::InMemoryStorage;
 
     let replay_storage = InMemoryStorage::new();
 
     // Apply genesis first (block 0).
-    let genesis_block: Block = serde_json::from_value(exported_blocks[0].clone())
-        .map_err(|e| format!("failed to deserialize genesis block: {e}"))?;
-    let genesis_hash = compute_block_hash(&genesis_block);
+    let genesis_block: &Block = &exported_blocks[0];
+    let genesis_hash = compute_block_hash(genesis_block);
 
     replay_storage
-        .put_block(&genesis_hash, &genesis_block)
+        .put_block(&genesis_hash, genesis_block)
         .map_err(|e| format!("storage error: {e}"))?;
     replay_storage
         .put_block_height_index(0, genesis_hash)
@@ -275,11 +421,10 @@ async fn run_replay(client: &Client, producer_dir: &std::path::Path) -> Result<(
     // This is valid because the blocks were already validated by the producer.
     // We're testing that the exported data, when stored, produces the same tip.
 
-    for (i, block_json) in exported_blocks.iter().enumerate().skip(1) {
-        let block: Block = serde_json::from_value(block_json.clone())
-            .map_err(|e| format!("failed to deserialize block {i}: {e}"))?;
-
-        let block_hash = compute_block_hash(&block);
+    let mut replayed_receipts: u64 = 0;
+    let mut replayed_tasks: u64 = 0;
+    for (i, block) in exported_blocks.iter().enumerate().skip(1) {
+        let block_hash = compute_block_hash(block);
 
         // Validate parent linkage against stored chain.
         let parent_height = block.header.height - 1;
@@ -304,9 +449,38 @@ async fn run_replay(client: &Client, producer_dir: &std::path::Path) -> Result<(
             ));
         }
 
+        // Reconstruct derived state: the receipts index (RFC 0002 §5) and
+        // the tasks index (RFC 0005 §4) are fully derived from chain
+        // blocks, so replaying a block stores the canonical SCALE bytes
+        // of every embedded receipt and task under its task_id.
+        {
+            use mbongo_core::TransactionPayload;
+            use mbongo_storage::BatchOp;
+            use parity_scale_codec::Encode;
+            let mut derived_ops = Vec::new();
+            for tx in &block.body.transactions {
+                match &tx.payload {
+                    TransactionPayload::AnchorReceipt(receipt) => {
+                        derived_ops.push(BatchOp::PutReceipt(receipt.task_id, receipt.encode()));
+                        replayed_receipts += 1;
+                    }
+                    TransactionPayload::ComputeTask(task) => {
+                        derived_ops.push(BatchOp::PutTask(task.task_id(), task.encode()));
+                        replayed_tasks += 1;
+                    }
+                    TransactionPayload::None => {}
+                }
+            }
+            if !derived_ops.is_empty() {
+                replay_storage
+                    .write_batch(derived_ops)
+                    .map_err(|e| format!("storage error: {e}"))?;
+            }
+        }
+
         // Store the block.
         replay_storage
-            .put_block(&block_hash, &block)
+            .put_block(&block_hash, block)
             .map_err(|e| format!("storage error: {e}"))?;
         replay_storage
             .put_block_height_index(block.header.height, block_hash)
@@ -316,6 +490,8 @@ async fn run_replay(client: &Client, producer_dir: &std::path::Path) -> Result<(
             println!("  Replayed block {i}/{}", exported_blocks.len() - 1);
         }
     }
+    println!("  Replayed {replayed_receipts} anchored receipt(s)");
+    println!("  Replayed {replayed_tasks} committed task(s)");
 
     println!("  Phase C: DONE\n");
 
@@ -329,27 +505,83 @@ async fn run_replay(client: &Client, producer_dir: &std::path::Path) -> Result<(
         .get_block_by_height(replay_height)
         .map_err(|e| format!("storage error: {e}"))?
         .ok_or("replay tip block not found")?;
-    let replay_tip_hash = compute_block_hash(&replay_tip_block).to_string();
+    let replay_tip_hash = compute_block_hash(&replay_tip_block);
 
     println!("  Replay height:     {replay_height}");
-    println!("  Original height:   {original_height}");
+    println!("  Snapshot height:   {snapshot_height}");
     println!("  Replay tip hash:   {replay_tip_hash}");
-    println!("  Original tip hash: {original_tip_hash}");
+    println!("  Snapshot tip hash: {original_tip_hash}");
 
-    if replay_height != original_height {
+    if replay_height != snapshot_height {
         return Err(format!(
-            "height mismatch: replay={replay_height}, original={original_height}"
+            "height mismatch: replay={replay_height}, snapshot={snapshot_height}"
         ));
     }
 
     if replay_tip_hash != original_tip_hash {
+        let final_exported = exported_blocks.last().map_or(0, |b| b.header.height);
         return Err(format!(
-            "tip hash mismatch: replay={replay_tip_hash}, original={original_tip_hash}"
+            "tip hash mismatch at snapshot height {snapshot_height} \
+             (final exported block height {final_exported}):\n  \
+             replay:   {replay_tip_hash}\n  \
+             snapshot: {original_tip_hash}"
         ));
     }
 
+    // Receipt state comparison (RFC 0002 Phase 3): the submitted anchor
+    // must have been included by the producer, and the replayed receipt
+    // bytes must equal the canonical SCALE encoding submitted.
+    if replayed_receipts == 0 {
+        return Err("submitted AnchorReceipt was not included in any exported block".to_string());
+    }
+    if !replay_storage
+        .has_receipt(&anchor_task_id)
+        .map_err(|e| format!("storage error: {e}"))?
+    {
+        return Err("replayed chain is missing the anchored receipt".to_string());
+    }
+    let replayed_bytes = replay_storage
+        .get_receipt(&anchor_task_id)
+        .map_err(|e| format!("storage error: {e}"))?
+        .ok_or("anchored receipt bytes missing after replay")?;
+    if replayed_bytes != anchor_receipt_bytes {
+        return Err("replayed receipt bytes differ from canonical encoding".to_string());
+    }
+    println!("  Receipt state: anchored receipt reproduced byte-for-byte");
+
+    // Task state comparison (RFC 0005 §4): the submitted task must have
+    // been included by the producer, and the replayed task bytes must
+    // equal the canonical SCALE encoding submitted.
+    if replayed_tasks == 0 {
+        return Err("submitted ComputeTask was not included in any exported block".to_string());
+    }
+    if !replay_storage
+        .has_task(&compute_task_id)
+        .map_err(|e| format!("storage error: {e}"))?
+    {
+        return Err("replayed chain is missing the committed task".to_string());
+    }
+    let replayed_task = replay_storage
+        .get_task(&compute_task_id)
+        .map_err(|e| format!("storage error: {e}"))?
+        .ok_or("committed task bytes missing after replay")?;
+    if replayed_task != compute_task_bytes {
+        return Err("replayed task bytes differ from canonical encoding".to_string());
+    }
+    println!("  Task state: committed task reproduced byte-for-byte");
+
     println!("  Phase D: PASS");
     Ok(())
+}
+
+// ── Snapshot reference ──────────────────────────────────────────────────
+
+/// Returns `(height, canonical hash)` of the FINAL exported block — the
+/// immutable snapshot reference for the replay comparison. Derived
+/// locally from exported data only, so no later producer tip can affect
+/// it.
+fn derive_snapshot_reference(exported: &[mbongo_core::Block]) -> Option<(u64, mbongo_core::Hash)> {
+    exported.last().map(|block| (block.header.height, compute_block_hash(block)))
 }
 
 // ── Hash computation (same as backend.rs) ───────────────────────────────
@@ -361,4 +593,51 @@ fn compute_block_hash(block: &mbongo_core::Block) -> mbongo_core::Hash {
     let mut out = [0u8; 32];
     out.copy_from_slice(digest.as_bytes());
     mbongo_core::Hash(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mbongo_core::{Block, BlockBody, BlockHeader, Hash};
+
+    fn block_at(height: u64, timestamp: u64) -> Block {
+        Block {
+            header: BlockHeader {
+                parent_hash: Hash::zero(),
+                state_root: Hash::zero(),
+                transactions_root: Hash::zero(),
+                timestamp,
+                height,
+            },
+            body: BlockBody {
+                transactions: vec![],
+            },
+        }
+    }
+
+    #[test]
+    fn snapshot_reference_is_final_exported_block() {
+        let exported = vec![block_at(0, 0), block_at(1, 100), block_at(2, 200)];
+        let (height, hash) = derive_snapshot_reference(&exported).unwrap();
+        assert_eq!(height, 2);
+        assert_eq!(hash, compute_block_hash(&exported[2]));
+    }
+
+    #[test]
+    fn later_producer_tip_cannot_change_snapshot_reference() {
+        // The reference is a pure function of the exported slice: a block
+        // the producer mints AFTER the export (height 3) is not in the
+        // slice and therefore cannot influence the reference.
+        let exported = vec![block_at(0, 0), block_at(1, 100), block_at(2, 200)];
+        let reference = derive_snapshot_reference(&exported).unwrap();
+
+        let later_tip = block_at(3, 300);
+        assert_ne!(reference.1, compute_block_hash(&later_tip));
+        assert_eq!(reference, derive_snapshot_reference(&exported).unwrap());
+    }
+
+    #[test]
+    fn snapshot_reference_empty_export_is_none() {
+        assert!(derive_snapshot_reference(&[]).is_none());
+    }
 }

@@ -3,7 +3,8 @@
 //! Provides peer-to-peer connectivity with:
 //! - **Ping** – connection liveness checks
 //! - **Identify** – protocol/agent version exchange
-//! - **mDNS** – automatic local peer discovery
+//! - **mDNS** – automatic local peer discovery (on by default; off with
+//!   [`P2PNode::with_mdns`]`(false)`, e.g. `mbongo-node --no-mdns`)
 //! - **Request/Response** – block sync protocol
 //!
 //! Inbound sync requests are forwarded over an mpsc channel so that
@@ -16,7 +17,7 @@ use futures::StreamExt;
 use libp2p::{
     identify, mdns, noise, ping,
     request_response::{self, ProtocolSupport, ResponseChannel},
-    swarm::{NetworkBehaviour, SwarmEvent},
+    swarm::{behaviour::toggle::Toggle, NetworkBehaviour, SwarmEvent},
     tcp, yamux, Multiaddr, PeerId, Swarm,
 };
 use log::{debug, info, warn};
@@ -82,8 +83,16 @@ pub trait BlockBroadcaster: Send + Sync {
     fn broadcast(&self, block: Block);
 }
 
-/// Protocol version string exchanged during identify handshake.
-const PROTOCOL_VERSION: &str = "/mbongo/0.1.0";
+/// Protocol version string exchanged during the libp2p Identify
+/// handshake.
+///
+/// v0.3: this is **informational metadata only** — peers advertise it but
+/// nothing gates on it, and it must never grow fallback or admission
+/// logic. The authoritative compatibility gates are the Sync and Block
+/// Notify protocol negotiations ([`SYNC_PROTOCOL`],
+/// [`BLOCK_NOTIFY_PROTOCOL`]), which fail deterministically across
+/// versions.
+const IDENTIFY_PROTOCOL_VERSION: &str = "/mbongo/0.3.0";
 
 /// Agent version string exchanged during identify handshake.
 const AGENT_VERSION: &str = "mbongo-node/0.1.0";
@@ -93,7 +102,9 @@ const AGENT_VERSION: &str = "mbongo-node/0.1.0";
 struct Behaviour {
     ping: ping::Behaviour,
     identify: identify::Behaviour,
-    mdns: mdns::tokio::Behaviour,
+    /// Disabled: no mDNS socket, no advertisement, no discovery event, so
+    /// nothing is ever auto-dialed from mDNS.
+    mdns: Toggle<mdns::tokio::Behaviour>,
     sync: request_response::Behaviour<SyncCodec>,
     block_notify: request_response::Behaviour<BlockNotifyCodec>,
 }
@@ -139,12 +150,26 @@ pub struct P2PNode {
 }
 
 impl P2PNode {
-    /// Creates a new P2P node with a fresh Ed25519 identity.
+    /// Creates a new P2P node with a fresh Ed25519 identity and mDNS
+    /// discovery enabled (the default behaviour).
     ///
     /// # Errors
     ///
     /// Returns an error if the transport or mDNS initialisation fails.
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        Self::with_mdns(true)
+    }
+
+    /// Creates a new P2P node with a fresh Ed25519 identity; `mdns` chooses
+    /// whether mDNS local discovery runs. With `false` the mDNS behaviour is
+    /// never constructed: it opens no socket, advertises nothing and
+    /// discovers (so auto-dials) no peer. Explicit dials and bootnodes are
+    /// unaffected.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the transport or mDNS initialisation fails.
+    pub fn with_mdns(mdns: bool) -> Result<Self, Box<dyn std::error::Error>> {
         let swarm = libp2p::SwarmBuilder::with_new_identity()
             .with_tokio()
             .with_tcp(
@@ -154,13 +179,17 @@ impl P2PNode {
             )?
             .with_behaviour(|key| {
                 let identify = identify::Behaviour::new(
-                    identify::Config::new(PROTOCOL_VERSION.to_string(), key.public())
+                    identify::Config::new(IDENTIFY_PROTOCOL_VERSION.to_string(), key.public())
                         .with_agent_version(AGENT_VERSION.to_string()),
                 );
-                let mdns = mdns::tokio::Behaviour::new(
-                    mdns::Config::default(),
-                    key.public().to_peer_id(),
-                )?;
+                let mdns = if mdns {
+                    Some(mdns::tokio::Behaviour::new(
+                        mdns::Config::default(),
+                        key.public().to_peer_id(),
+                    )?)
+                } else {
+                    None
+                };
                 let ping = ping::Behaviour::default();
 
                 // Block-sync request/response behaviour.
@@ -178,7 +207,7 @@ impl P2PNode {
                 Ok(Behaviour {
                     ping,
                     identify,
-                    mdns,
+                    mdns: Toggle::from(mdns),
                     sync,
                     block_notify,
                 })
@@ -207,6 +236,11 @@ impl P2PNode {
             sync_cmd_rx,
             sync_cmd_tx,
         })
+    }
+
+    /// Whether mDNS local discovery is running on this node.
+    pub fn mdns_enabled(&self) -> bool {
+        self.swarm.behaviour().mdns.is_enabled()
     }
 
     /// Takes ownership of the inbound-sync receiver.
@@ -281,7 +315,21 @@ impl P2PNode {
     ///
     /// Returns an error if the listen address cannot be parsed or bound.
     pub fn listen(&mut self, port: u16) -> Result<(), Box<dyn std::error::Error>> {
-        let listen_addr: Multiaddr = format!("/ip4/0.0.0.0/tcp/{port}").parse()?;
+        self.listen_on_host(std::net::Ipv4Addr::UNSPECIFIED, port)
+    }
+
+    /// Start listening on the given port on one IPv4 interface
+    /// (`127.0.0.1` keeps a single-host devnet off the network).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the listen address cannot be parsed or bound.
+    pub fn listen_on_host(
+        &mut self,
+        host: std::net::Ipv4Addr,
+        port: u16,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let listen_addr: Multiaddr = format!("/ip4/{host}/tcp/{port}").parse()?;
         self.swarm.listen_on(listen_addr)?;
         Ok(())
     }
@@ -546,5 +594,18 @@ impl BlockBroadcaster for ChannelBroadcaster {
         if self.tx.send(block).is_err() {
             warn!("P2P broadcast channel closed; block not broadcast");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::IDENTIFY_PROTOCOL_VERSION;
+
+    #[test]
+    fn identify_protocol_version_pinned() {
+        // Locked identifier (PROTOCOL_LOCK_v0.3): informational Identify
+        // metadata only — never a negotiation gate. Changing it is a
+        // protocol version bump.
+        assert_eq!(IDENTIFY_PROTOCOL_VERSION, "/mbongo/0.3.0");
     }
 }

@@ -1,0 +1,243 @@
+{
+  "fixture_version": 1,
+  "purpose": "Neutral cross-language vectors for RFC 0005 rules (q)–(s): the binding between an anchored receipt and the registered ComputeTask it answers. One vector per outcome, as RFC 0005 §12 requires: a bound receipt from the named executor; a receipt whose input_commitment does not match (rule r); a receipt from an executor the task did not name (rule s); and a receipt for a task that was never registered (rule q).",
+  "authority": {
+    "binding_rules": "docs/rfcs/0005-compute-task-commitment-v1.md §3 rules (q), (r), (s); §5.2; §9.1",
+    "anchoring_rules": "docs/rfcs/0002-receipt-anchoring-v0.3.md §2 rules (a)–(j); PROTOCOL_LOCK_v0.3 (FROZEN)",
+    "receipt_encoding": "test-vectors/receipt/receipt-v1.json — unchanged; no receipt field is added or changed by rules (q)–(s)",
+    "anchor_transaction_encoding": "test-vectors/transaction/anchor-receipt-v1.json — unchanged",
+    "tasks": "test-vectors/compute-task/compute-task-v1.json — every task_vector resolves there; task identities are never restated",
+    "consensus": "crates/mbongo-node/src/backend.rs — check_receipt_binding, apply_block"
+  },
+  "conventions": {
+    "hex": "lowercase, no 0x prefix",
+    "byte_order": "fixed-width integers are little-endian and never compact",
+    "task_reference": "task_vector names a vector in compute-task-v1.json `tasks`; null means the receipt's task_id is registered nowhere",
+    "sender": "<receipt.executor> means: the anchoring transaction is signed by the receipt's executor, which rule (g) requires",
+    "metadata_pattern": "{pattern:repeat, byte:<hex>, length:<n>} expands to that byte repeated length times"
+  },
+  "derivation": {
+    "method": "Every expected value was constructed from the protocol rules, not by encoding with production Rust or the TypeScript SDK: receipt and transaction SCALE laid out by hand, hashes by an independent BLAKE3, signatures by an independent Ed25519. Rules (q)–(s) introduce no new encoding, so the only new pinned bytes are the hashes and signatures of these five receipts and their carrying transactions.",
+    "machine_inputs": "test-vectors/receipt/receipt-v1.json (submitter test key) and test-vectors/compute-task/compute-task-v1.json (task identities, executor test key)."
+  },
+  "binding_rules": {
+    "q": "a task with receipt.task_id exists in prior chain state or earlier in the same block",
+    "r": "receipt.input_commitment == task.input_commitment",
+    "s": "receipt.executor == task.executor",
+    "order": "after RFC 0002 rules (a)–(j), in the order q, r, s",
+    "what_is_not_checked": "how either commitment was derived; the input; the output; whether the answer is correct (RFC 0005 §2.4, §9.2)"
+  },
+  "test_keys": {
+    "warning": "TEST ONLY. NOT PRODUCTION KEYS. Both seeds are public and resolved from the referenced fixtures.",
+    "executor": {
+      "source": "compute-task-v1.json test_keys.executor",
+      "public_key": "4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff"
+    },
+    "submitter": {
+      "source": "receipt-v1.json test_key",
+      "public_key": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61"
+    }
+  },
+  "vectors": [
+    {
+      "name": "bound-named-executor",
+      "note": "The task's named executor anchors a receipt carrying the task's task_id and input_commitment: rules (q), (r), (s) all hold.",
+      "task_vector": "canonical",
+      "receipt": {
+        "version": 1,
+        "task_id": "78aa35b0a94673dc67258bc5475a326f8a5f6d9994c9cc8f907b962530ddce1b",
+        "input_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+        "output_commitment": "4444444444444444444444444444444444444444444444444444444444444444",
+        "executor": "4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff",
+        "metadata": {
+          "pattern": "repeat",
+          "byte": "ab",
+          "length": 0
+        }
+      },
+      "transaction": {
+        "sender": "<receipt.executor>",
+        "receiver": "0000000000000000000000000000000000000000000000000000000000000000",
+        "amount": 0,
+        "nonce": 0
+      },
+      "expected": {
+        "receipt_signing_payload_length": 130,
+        "receipt_hash": "f9eced9f6f6da20a42df692a94544f3b91ce3769e77ca5ae53a60f0975b3a026",
+        "executor_signature": "a90fc992bc25c1aceabb25295ce042bb45989828ac8d57613651fb59b584f87b8e3b8a3fd8a9ae5399ce79289f388294bcab51a67248ac568ea20dab322edd0e",
+        "receipt_full_encoding": "0178aa35b0a94673dc67258bc5475a326f8a5f6d9994c9cc8f907b962530ddce1b222222222222222222222222222222222222222222222222222222222222222244444444444444444444444444444444444444444444444444444444444444444508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff00a90fc992bc25c1aceabb25295ce042bb45989828ac8d57613651fb59b584f87b8e3b8a3fd8a9ae5399ce79289f388294bcab51a67248ac568ea20dab322edd0e",
+        "signing_payload_length": 284,
+        "signing_payload": "034508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010178aa35b0a94673dc67258bc5475a326f8a5f6d9994c9cc8f907b962530ddce1b222222222222222222222222222222222222222222222222222222222222222244444444444444444444444444444444444444444444444444444444444444444508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff00a90fc992bc25c1aceabb25295ce042bb45989828ac8d57613651fb59b584f87b8e3b8a3fd8a9ae5399ce79289f388294bcab51a67248ac568ea20dab322edd0e",
+        "transaction_signature": "5449bc6861fcd0a7af02f605ab302d754e68cfc150121825fc381aa7576d0a9449c83968ae1fbbe59a9350e2657ce714f73f6765d0c904708416bdf644032506",
+        "full_transaction_length": 348,
+        "full_transaction": "034508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010178aa35b0a94673dc67258bc5475a326f8a5f6d9994c9cc8f907b962530ddce1b222222222222222222222222222222222222222222222222222222222222222244444444444444444444444444444444444444444444444444444444444444444508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff00a90fc992bc25c1aceabb25295ce042bb45989828ac8d57613651fb59b584f87b8e3b8a3fd8a9ae5399ce79289f388294bcab51a67248ac568ea20dab322edd0e5449bc6861fcd0a7af02f605ab302d754e68cfc150121825fc381aa7576d0a9449c83968ae1fbbe59a9350e2657ce714f73f6765d0c904708416bdf644032506",
+        "transaction_hash": "da872bd55047a901003ab6a98a136d9e2ff5973571923f4076bad62ea2563c70"
+      },
+      "consensus": {
+        "valid": true,
+        "rule": null,
+        "reason": "registered task, matching commitment, named executor"
+      }
+    },
+    {
+      "name": "bound-maximal-task",
+      "note": "Same relation against the maximal task: the binding does not depend on execution_spec size.",
+      "task_vector": "spec-max-1024",
+      "receipt": {
+        "version": 1,
+        "task_id": "897dde88bb8f5d2d2aca7270dad6386c28ceefc14c5e4852ef9477cc31113fc0",
+        "input_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+        "output_commitment": "4444444444444444444444444444444444444444444444444444444444444444",
+        "executor": "4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff",
+        "metadata": {
+          "pattern": "repeat",
+          "byte": "ab",
+          "length": 0
+        }
+      },
+      "transaction": {
+        "sender": "<receipt.executor>",
+        "receiver": "0000000000000000000000000000000000000000000000000000000000000000",
+        "amount": 0,
+        "nonce": 1
+      },
+      "expected": {
+        "receipt_signing_payload_length": 130,
+        "receipt_hash": "23a025ef12686c67234f96d583d55a168fe1570d787b42a4dca049fa5ddb73e8",
+        "executor_signature": "28e4cc88826d164aeeac4cf1dc41bcb10d712cdab0ff39f6633f79185c12146af048489cd5430f5a1a1c154d0974a6209666233c12b1b0a5d34139d732d7f70b",
+        "receipt_full_encoding": "01897dde88bb8f5d2d2aca7270dad6386c28ceefc14c5e4852ef9477cc31113fc0222222222222222222222222222222222222222222222222222222222222222244444444444444444444444444444444444444444444444444444444444444444508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff0028e4cc88826d164aeeac4cf1dc41bcb10d712cdab0ff39f6633f79185c12146af048489cd5430f5a1a1c154d0974a6209666233c12b1b0a5d34139d732d7f70b",
+        "signing_payload_length": 284,
+        "signing_payload": "034508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000000000101897dde88bb8f5d2d2aca7270dad6386c28ceefc14c5e4852ef9477cc31113fc0222222222222222222222222222222222222222222222222222222222222222244444444444444444444444444444444444444444444444444444444444444444508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff0028e4cc88826d164aeeac4cf1dc41bcb10d712cdab0ff39f6633f79185c12146af048489cd5430f5a1a1c154d0974a6209666233c12b1b0a5d34139d732d7f70b",
+        "transaction_signature": "7de79e33a36cb57dec009ee00a1f88a3eafb7a047b3a2e8eccb41ab70104448ea085cf5e816fea3fde490fcbd75e00a5a746a897b14f0a4ed26a2eac316daf00",
+        "full_transaction_length": 348,
+        "full_transaction": "034508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000000000101897dde88bb8f5d2d2aca7270dad6386c28ceefc14c5e4852ef9477cc31113fc0222222222222222222222222222222222222222222222222222222222222222244444444444444444444444444444444444444444444444444444444444444444508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff0028e4cc88826d164aeeac4cf1dc41bcb10d712cdab0ff39f6633f79185c12146af048489cd5430f5a1a1c154d0974a6209666233c12b1b0a5d34139d732d7f70b7de79e33a36cb57dec009ee00a1f88a3eafb7a047b3a2e8eccb41ab70104448ea085cf5e816fea3fde490fcbd75e00a5a746a897b14f0a4ed26a2eac316daf00",
+        "transaction_hash": "dbed951c76918c0dbc6a79d073f976570d303d049b2c651fe1d8cc6092fcb82f"
+      },
+      "consensus": {
+        "valid": true,
+        "rule": null,
+        "reason": "registered task, matching commitment, named executor"
+      }
+    },
+    {
+      "name": "unknown-task",
+      "note": "A well-formed, correctly signed receipt whose task_id was never registered. Before RFC 0005 this anchored; rule (q) now rejects it.",
+      "task_vector": null,
+      "receipt": {
+        "version": 1,
+        "task_id": "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a",
+        "input_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+        "output_commitment": "4444444444444444444444444444444444444444444444444444444444444444",
+        "executor": "4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff",
+        "metadata": {
+          "pattern": "repeat",
+          "byte": "ab",
+          "length": 0
+        }
+      },
+      "transaction": {
+        "sender": "<receipt.executor>",
+        "receiver": "0000000000000000000000000000000000000000000000000000000000000000",
+        "amount": 0,
+        "nonce": 0
+      },
+      "expected": {
+        "receipt_signing_payload_length": 130,
+        "receipt_hash": "edf3d43d06d81869ea7d3e9457a87416ae5c12a0e21bef630a43bf383c78decc",
+        "executor_signature": "eaebe2eaa740eff36affd676e46240a378362979ce7a02e5725a73ed624702f079a9b963f2d5eb7af755ea29d411dcd2554834bb6e2bbb515537526dfcbb0a0e",
+        "receipt_full_encoding": "017a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a222222222222222222222222222222222222222222222222222222222222222244444444444444444444444444444444444444444444444444444444444444444508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff00eaebe2eaa740eff36affd676e46240a378362979ce7a02e5725a73ed624702f079a9b963f2d5eb7af755ea29d411dcd2554834bb6e2bbb515537526dfcbb0a0e",
+        "signing_payload_length": 284,
+        "signing_payload": "034508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001017a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a222222222222222222222222222222222222222222222222222222222222222244444444444444444444444444444444444444444444444444444444444444444508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff00eaebe2eaa740eff36affd676e46240a378362979ce7a02e5725a73ed624702f079a9b963f2d5eb7af755ea29d411dcd2554834bb6e2bbb515537526dfcbb0a0e",
+        "transaction_signature": "acb7a590a155d0e09caf2f5a66b320b6d29c41eee144c1c313889ed587be333ae1a5a0d6c7fd447628564484149e4dff6dd2f0826c0a7d315b3c7e334beac304",
+        "full_transaction_length": 348,
+        "full_transaction": "034508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001017a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a222222222222222222222222222222222222222222222222222222222222222244444444444444444444444444444444444444444444444444444444444444444508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff00eaebe2eaa740eff36affd676e46240a378362979ce7a02e5725a73ed624702f079a9b963f2d5eb7af755ea29d411dcd2554834bb6e2bbb515537526dfcbb0a0eacb7a590a155d0e09caf2f5a66b320b6d29c41eee144c1c313889ed587be333ae1a5a0d6c7fd447628564484149e4dff6dd2f0826c0a7d315b3c7e334beac304",
+        "transaction_hash": "78c85037c7c586e6fd77924bc0c410c3bd9219826c70ed80042ca6bcd5b770e2"
+      },
+      "consensus": {
+        "valid": false,
+        "rule": "q",
+        "reason": "no task with this task_id"
+      }
+    },
+    {
+      "name": "input-commitment-mismatch",
+      "note": "The named executor, the right task_id, but a commitment to different input: rule (r).",
+      "task_vector": "canonical",
+      "receipt": {
+        "version": 1,
+        "task_id": "78aa35b0a94673dc67258bc5475a326f8a5f6d9994c9cc8f907b962530ddce1b",
+        "input_commitment": "2323232323232323232323232323232323232323232323232323232323232323",
+        "output_commitment": "4444444444444444444444444444444444444444444444444444444444444444",
+        "executor": "4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff",
+        "metadata": {
+          "pattern": "repeat",
+          "byte": "ab",
+          "length": 0
+        }
+      },
+      "transaction": {
+        "sender": "<receipt.executor>",
+        "receiver": "0000000000000000000000000000000000000000000000000000000000000000",
+        "amount": 0,
+        "nonce": 0
+      },
+      "expected": {
+        "receipt_signing_payload_length": 130,
+        "receipt_hash": "964f744375bb1ed60613fe9abc1e6846985e9131b3a1a6ceac71d5cbebe0c7da",
+        "executor_signature": "939c85cc618b1f20e078c2694289bd2d7a48c80b2f4ee7c3f442d30ae7d5d3ec5409e0a8d71c68a280f1aaf545d2a28f7ffbf91e9ed45e0f139ee7cd2a90bd0a",
+        "receipt_full_encoding": "0178aa35b0a94673dc67258bc5475a326f8a5f6d9994c9cc8f907b962530ddce1b232323232323232323232323232323232323232323232323232323232323232344444444444444444444444444444444444444444444444444444444444444444508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff00939c85cc618b1f20e078c2694289bd2d7a48c80b2f4ee7c3f442d30ae7d5d3ec5409e0a8d71c68a280f1aaf545d2a28f7ffbf91e9ed45e0f139ee7cd2a90bd0a",
+        "signing_payload_length": 284,
+        "signing_payload": "034508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010178aa35b0a94673dc67258bc5475a326f8a5f6d9994c9cc8f907b962530ddce1b232323232323232323232323232323232323232323232323232323232323232344444444444444444444444444444444444444444444444444444444444444444508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff00939c85cc618b1f20e078c2694289bd2d7a48c80b2f4ee7c3f442d30ae7d5d3ec5409e0a8d71c68a280f1aaf545d2a28f7ffbf91e9ed45e0f139ee7cd2a90bd0a",
+        "transaction_signature": "45f93c2e0cf847ab12f6b82e00669915229f2559373cf1008fb53ec2d7d1e3ca64e662454ab98090a56b1754ead5dd22acca6a79cfff0eecb4ff27739e8c8a01",
+        "full_transaction_length": 348,
+        "full_transaction": "034508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010178aa35b0a94673dc67258bc5475a326f8a5f6d9994c9cc8f907b962530ddce1b232323232323232323232323232323232323232323232323232323232323232344444444444444444444444444444444444444444444444444444444444444444508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff00939c85cc618b1f20e078c2694289bd2d7a48c80b2f4ee7c3f442d30ae7d5d3ec5409e0a8d71c68a280f1aaf545d2a28f7ffbf91e9ed45e0f139ee7cd2a90bd0a45f93c2e0cf847ab12f6b82e00669915229f2559373cf1008fb53ec2d7d1e3ca64e662454ab98090a56b1754ead5dd22acca6a79cfff0eecb4ff27739e8c8a01",
+        "transaction_hash": "357a57fc1c9a4934ef20781dc560e1a12d028760280177c073aa30eb2a336261"
+      },
+      "consensus": {
+        "valid": false,
+        "rule": "r",
+        "reason": "receipt.input_commitment != task.input_commitment"
+      }
+    },
+    {
+      "name": "executor-not-named",
+      "note": "The task's own submitter answers its own task, correctly signed as both receipt executor and anchoring sender, but the task named someone else: rule (s). This is the squatting receipt of RFC 0005 §9.1.",
+      "task_vector": "canonical",
+      "receipt": {
+        "version": 1,
+        "task_id": "78aa35b0a94673dc67258bc5475a326f8a5f6d9994c9cc8f907b962530ddce1b",
+        "input_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+        "output_commitment": "4444444444444444444444444444444444444444444444444444444444444444",
+        "executor": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "metadata": {
+          "pattern": "repeat",
+          "byte": "ab",
+          "length": 0
+        }
+      },
+      "transaction": {
+        "sender": "<receipt.executor>",
+        "receiver": "0000000000000000000000000000000000000000000000000000000000000000",
+        "amount": 0,
+        "nonce": 1
+      },
+      "expected": {
+        "receipt_signing_payload_length": 130,
+        "receipt_hash": "fb71ae412a76edf1df0712db0943f774bef7529be067635c7921f3448aa7d141",
+        "executor_signature": "49c7d3056f0db4e32340a5241ae3a803f3b7098b20d09c521aee5ebfe460a9faf3aa96ec6f9c68bad1e33e11dd505cfbecf607c54e35cb9134fa0b011cb3250c",
+        "receipt_full_encoding": "0178aa35b0a94673dc67258bc5475a326f8a5f6d9994c9cc8f907b962530ddce1b22222222222222222222222222222222222222222222222222222222222222224444444444444444444444444444444444444444444444444444444444444444197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d610049c7d3056f0db4e32340a5241ae3a803f3b7098b20d09c521aee5ebfe460a9faf3aa96ec6f9c68bad1e33e11dd505cfbecf607c54e35cb9134fa0b011cb3250c",
+        "signing_payload_length": 284,
+        "signing_payload": "03197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d610000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000010178aa35b0a94673dc67258bc5475a326f8a5f6d9994c9cc8f907b962530ddce1b22222222222222222222222222222222222222222222222222222222222222224444444444444444444444444444444444444444444444444444444444444444197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d610049c7d3056f0db4e32340a5241ae3a803f3b7098b20d09c521aee5ebfe460a9faf3aa96ec6f9c68bad1e33e11dd505cfbecf607c54e35cb9134fa0b011cb3250c",
+        "transaction_signature": "63cb4753b71abb21cede9749c82d0b8413a6652450ea32dd6fdf7a331b2fc249e9384919abf1f469d5e43f0d91868faa648a22aeb9b6f7ef165ac73352bf6d05",
+        "full_transaction_length": 348,
+        "full_transaction": "03197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d610000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000010178aa35b0a94673dc67258bc5475a326f8a5f6d9994c9cc8f907b962530ddce1b22222222222222222222222222222222222222222222222222222222222222224444444444444444444444444444444444444444444444444444444444444444197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d610049c7d3056f0db4e32340a5241ae3a803f3b7098b20d09c521aee5ebfe460a9faf3aa96ec6f9c68bad1e33e11dd505cfbecf607c54e35cb9134fa0b011cb3250c63cb4753b71abb21cede9749c82d0b8413a6652450ea32dd6fdf7a331b2fc249e9384919abf1f469d5e43f0d91868faa648a22aeb9b6f7ef165ac73352bf6d05",
+        "transaction_hash": "5f86b827c7c483e5ee99bca9efc157db3f4b8077b5c302b056587ae5cfefbe44"
+      },
+      "consensus": {
+        "valid": false,
+        "rule": "s",
+        "reason": "receipt.executor != task.executor"
+      }
+    }
+  ]
+}

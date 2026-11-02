@@ -14,6 +14,9 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use mbongo_node::convergence::{
+    await_convergence, get_height, rpc_call, rpc_call_with_params, NodeEndpoint,
+};
 use reqwest::Client;
 use serde_json::{json, Value};
 use tokio::process::{Child, Command};
@@ -22,9 +25,14 @@ use tokio::time::sleep;
 // ── Configuration ───────────────────────────────────────────────────────
 
 const BLOCK_TIME_SECS: u64 = 1;
-const WAIT_INITIAL_SECS: u64 = 15;
-const WAIT_RESTART_SECS: u64 = 8;
 const MIN_HEIGHT: u64 = 5;
+
+// Convergence polling: with a 1s block time the cluster is perpetually one
+// block "in flux", so a single fixed-time equality check races against
+// block production. Instead, poll until all nodes report identical height
+// and tip hash, bounded by an overall deadline.
+const CONVERGENCE_POLL_INTERVAL_MS: u64 = 500;
+const CONVERGENCE_TIMEOUT_SECS: u64 = 30;
 
 // Explicit port constants — same values used for spawning AND probing.
 // CLI flags verified against main.rs Args struct:
@@ -95,48 +103,6 @@ fn preflight_ports(config: &NodeConfig) -> Result<(), String> {
     Ok(())
 }
 
-// ── RPC helpers ─────────────────────────────────────────────────────────
-
-async fn rpc_call(client: &Client, port: u16, method: &str) -> Result<Value, String> {
-    let url = format!("http://127.0.0.1:{port}/rpc");
-    let body = json!({
-        "jsonrpc": "2.0",
-        "method": method,
-        "id": 1
-    });
-
-    let resp = client
-        .post(&url)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("HTTP request to {url} failed: {e}"))?;
-
-    let json: Value =
-        resp.json().await.map_err(|e| format!("failed to parse JSON response: {e}"))?;
-
-    if let Some(err) = json.get("error") {
-        return Err(format!("RPC error: {err}"));
-    }
-
-    json.get("result")
-        .cloned()
-        .ok_or_else(|| "missing 'result' in RPC response".to_string())
-}
-
-async fn get_height(client: &Client, port: u16) -> Result<u64, String> {
-    let result = rpc_call(client, port, "get_block_height").await?;
-    result.as_u64().ok_or_else(|| format!("expected u64 height, got: {result}"))
-}
-
-async fn get_tip_hash(client: &Client, port: u16) -> Result<String, String> {
-    let result = rpc_call(client, port, "get_latest_block_hash").await?;
-    result
-        .as_str()
-        .map(String::from)
-        .ok_or_else(|| format!("expected string hash, got: {result}"))
-}
-
 /// Wait until the node's RPC port is reachable.
 ///
 /// Uses a fixed retry loop: an initial delay to let the OS bind ports,
@@ -166,7 +132,7 @@ async fn wait_for_rpc(client: &Client, managed: &mut ManagedChild) -> Result<(),
             ));
         }
 
-        match rpc_call(client, port, "ping").await {
+        match rpc_call(client, &NodeEndpoint::localhost_port("node", port), "ping").await {
             Ok(_) => return Ok(()),
             Err(_) => {
                 if attempt == RPC_PROBE_MAX_ATTEMPTS {
@@ -392,71 +358,151 @@ fn extract_node_name_from_cmdline(cmdline: &str) -> String {
         .to_string()
 }
 
-// ── Convergence validation ──────────────────────────────────────────────
+// ── Receipt traffic (RFC 0002 Phase 3) ──────────────────────────────────
 
-struct ConvergenceResult {
-    heights: Vec<(String, u64)>,
-    hashes: Vec<(String, String)>,
+/// Builds a fully valid `ComputeTask` transaction from the dev account
+/// (`[0xAA; 32]`, pre-funded by `ensure_genesis`) naming that same key as
+/// executor, as RPC JSON, together with the derived task id the matching
+/// anchor must carry (RFC 0005 rules q–s).
+fn build_task_tx(nonce: u64, salt: [u8; 32]) -> (Value, [u8; 32]) {
+    use ed25519_dalek::{Signer, SigningKey};
+    use mbongo_core::{
+        Address, ComputeTask, Transaction, TransactionPayload, TransactionType,
+        COMPUTE_TASK_VERSION,
+    };
+
+    let sk = SigningKey::from_bytes(&[0xAAu8; 32]);
+    let sender = Address(sk.verifying_key().to_bytes());
+    let task = ComputeTask {
+        version: COMPUTE_TASK_VERSION,
+        submitter: sender,
+        executor: sender,
+        salt,
+        input_commitment: [0x10u8; 32],
+        execution_spec: b"devnet-harness".to_vec(),
+    };
+    let task_id = task.task_id();
+    let mut tx = Transaction {
+        tx_type: TransactionType::ComputeTask,
+        sender,
+        receiver: Address::zero(),
+        amount: 0,
+        nonce,
+        payload: TransactionPayload::ComputeTask(Box::new(task)),
+        signature: [0u8; 64],
+    };
+    tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+    (
+        serde_json::to_value(&tx).expect("transaction serializes"),
+        task_id,
+    )
 }
 
-async fn check_convergence(
+/// Builds a fully valid `AnchorReceipt` transaction from the dev account
+/// (`[0xAA; 32]`, pre-funded by `ensure_genesis`) as RPC JSON, answering
+/// the task `build_task_tx` committed under `task_id`: same
+/// `input_commitment`, and the dev key as the named executor.
+fn build_anchor_tx(nonce: u64, task_id: [u8; 32]) -> Value {
+    use ed25519_dalek::{Signer, SigningKey};
+    use mbongo_core::{Address, Receipt, Transaction, TransactionPayload, TransactionType};
+
+    let sk = SigningKey::from_bytes(&[0xAAu8; 32]);
+    let sender = Address(sk.verifying_key().to_bytes());
+
+    let mut receipt = Receipt {
+        version: 1,
+        task_id,
+        input_commitment: [0x10u8; 32],
+        output_commitment: [0x20u8; 32],
+        executor: sender,
+        metadata: b"devnet-harness".to_vec(),
+        signature: [0u8; 64],
+    };
+    receipt.signature = sk.sign(&receipt.receipt_hash().0).to_bytes();
+
+    let mut tx = Transaction {
+        tx_type: TransactionType::AnchorReceipt,
+        sender,
+        receiver: Address::zero(),
+        amount: 0,
+        nonce,
+        payload: TransactionPayload::AnchorReceipt(Box::new(receipt)),
+        signature: [0u8; 64],
+    };
+    tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+    serde_json::to_value(&tx).expect("transaction serializes")
+}
+
+/// Returns whether the block chain visible on `node` contains an
+/// `AnchorReceipt` transaction with the given task id. Scans blocks
+/// 1..=height via `get_block_by_height` (no receipt RPC exists until
+/// RFC 0002 Phase 4, so inclusion — plus tip-hash convergence — is the
+/// cross-node receipt-state check).
+async fn anchor_visible(
     client: &Client,
-    nodes: &[(&str, u16)],
-) -> Result<ConvergenceResult, String> {
-    let mut heights = Vec::new();
-    let mut hashes = Vec::new();
-
-    for (name, port) in nodes {
-        let h = get_height(client, *port).await?;
-        let hash = get_tip_hash(client, *port).await?;
-        heights.push((name.to_string(), h));
-        hashes.push((name.to_string(), hash));
+    node: &NodeEndpoint,
+    task_id: [u8; 32],
+) -> Result<Option<u64>, String> {
+    let expected = json!(task_id.to_vec());
+    let height = get_height(client, node).await?;
+    for h in 1..=height {
+        let block = rpc_call_with_params(
+            client,
+            node,
+            "get_block_by_height",
+            Some(json!({"height": h})),
+        )
+        .await?;
+        if let Some(txs) = block["body"]["transactions"].as_array() {
+            for tx in txs {
+                if tx["payload"]["AnchorReceipt"]["task_id"] == expected {
+                    return Ok(Some(h));
+                }
+            }
+        }
     }
-
-    Ok(ConvergenceResult { heights, hashes })
+    Ok(None)
 }
 
-fn validate_convergence(result: &ConvergenceResult, min_height: u64) -> Result<(), String> {
-    println!("  Heights:");
-    for (name, h) in &result.heights {
-        println!("    {name}: {h}");
-    }
-    println!("  Tip hashes:");
-    for (name, hash) in &result.hashes {
-        println!("    {name}: {hash}");
-    }
-
-    // Check minimum height.
-    for (name, h) in &result.heights {
-        if *h < min_height {
-            return Err(format!("{name} height {h} < minimum expected {min_height}"));
-        }
-    }
-
-    // Check all heights equal.
-    let first_height = result.heights[0].1;
-    for (name, h) in &result.heights[1..] {
-        if *h != first_height {
-            return Err(format!(
-                "height mismatch: {} has {}, {} has {first_height}",
-                name, h, result.heights[0].0
+/// Polls until the anchor with `task_id` is visible in a block on every
+/// node, at the same height everywhere. Bounded by the convergence
+/// deadline; on timeout reports per-node visibility.
+async fn await_anchor_on_all(
+    client: &Client,
+    nodes: &[NodeEndpoint],
+    task_id: [u8; 32],
+) -> Result<u64, String> {
+    let start = std::time::Instant::now();
+    let deadline = Duration::from_secs(CONVERGENCE_TIMEOUT_SECS);
+    loop {
+        let mut heights: Vec<(String, Option<u64>)> = Vec::new();
+        for node in nodes {
+            heights.push((
+                node.name().to_string(),
+                anchor_visible(client, node, task_id).await?,
             ));
         }
-    }
-
-    // Check all hashes equal.
-    let first_hash = &result.hashes[0].1;
-    for (name, hash) in &result.hashes[1..] {
-        if hash != first_hash {
+        if let Some(first) = heights[0].1 {
+            if heights.iter().all(|(_, h)| *h == Some(first)) {
+                println!(
+                    "  Anchor visible on all nodes at height {first} ({:.1}s)",
+                    start.elapsed().as_secs_f64()
+                );
+                return Ok(first);
+            }
+        }
+        if start.elapsed() >= deadline {
+            let state = heights
+                .iter()
+                .map(|(n, h)| format!("    {n}: {h:?}"))
+                .collect::<Vec<_>>()
+                .join("\n");
             return Err(format!(
-                "tip hash mismatch: {} has {}, {} has {first_hash}",
-                name, hash, result.hashes[0].0
+                "anchor not visible on all nodes within {CONVERGENCE_TIMEOUT_SECS}s:\n{state}"
             ));
         }
+        sleep(Duration::from_millis(CONVERGENCE_POLL_INTERVAL_MS)).await;
     }
-
-    println!("  Converged: height={first_height}, hash={first_hash}");
-    Ok(())
 }
 
 // ── Cleanup ─────────────────────────────────────────────────────────────
@@ -583,18 +629,38 @@ async fn run_harness(client: &Client, data_dirs: &[PathBuf]) -> Result<(), Strin
 
     // ── Phase 2: Wait for convergence ───────────────────────────────────
 
-    println!("Phase 2: Waiting {WAIT_INITIAL_SECS}s for block production...");
-    sleep(Duration::from_secs(WAIT_INITIAL_SECS)).await;
-
     let nodes = vec![
-        ("producer", PRODUCER_RPC),
-        ("follower_a", FOLLOWER1_RPC),
-        ("follower_b", FOLLOWER2_RPC),
+        NodeEndpoint::localhost_port("producer", PRODUCER_RPC),
+        NodeEndpoint::localhost_port("follower_a", FOLLOWER1_RPC),
+        NodeEndpoint::localhost_port("follower_b", FOLLOWER2_RPC),
     ];
+    let poll = Duration::from_millis(CONVERGENCE_POLL_INTERVAL_MS);
+    let conv_timeout = Duration::from_secs(CONVERGENCE_TIMEOUT_SECS);
 
-    println!("Phase 2: Checking convergence...");
-    let conv = check_convergence(client, &nodes).await?;
-    validate_convergence(&conv, MIN_HEIGHT)?;
+    println!(
+        "Phase 2: Polling for convergence (every {CONVERGENCE_POLL_INTERVAL_MS}ms, \
+         up to {CONVERGENCE_TIMEOUT_SECS}s)..."
+    );
+    let phase2_height = await_convergence(client, &nodes, MIN_HEIGHT, poll, conv_timeout).await?;
+
+    // Receipt traffic (RFC 0002 Phase 3, RFC 0005 q–s): commit task A
+    // from the dev account, anchor its receipt, and require the anchor to
+    // be visible in a block on every node.
+    let (task_a_json, task_a) = build_task_tx(0, [0xA1u8; 32]);
+    println!("Phase 2: Submitting ComputeTask (task A)...");
+    rpc_call_with_params(client, &nodes[0], "submit_transaction", Some(task_a_json))
+        .await
+        .map_err(|e| format!("task A submission failed: {e}"))?;
+    println!("Phase 2: Submitting AnchorReceipt (task A)...");
+    rpc_call_with_params(
+        client,
+        &nodes[0],
+        "submit_transaction",
+        Some(build_anchor_tx(1, task_a)),
+    )
+    .await
+    .map_err(|e| format!("anchor A submission failed: {e}"))?;
+    await_anchor_on_all(client, &nodes, task_a).await?;
     println!("  Phase 2: PASS\n");
 
     // ── Phase 3: Restart producer ───────────────────────────────────────
@@ -609,12 +675,62 @@ async fn run_harness(client: &Client, data_dirs: &[PathBuf]) -> Result<(), Strin
     wait_for_rpc(client, &mut producer).await?;
     println!("  Producer restarted, RPC ready on port {PRODUCER_RPC}");
 
-    println!("Waiting 10 seconds for network re-sync...");
-    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+    // Baseline: the restarted producer's height right after its RPC is
+    // ready. It restarts from persisted state, so this is >= its pre-kill
+    // tip >= phase2_height, and heights are monotonic — the baseline
+    // cannot race backward. Requiring convergence at baseline + 1 proves
+    // the restarted producer minted at least one NEW block and both
+    // followers received it; converging on an old persisted tip cannot
+    // pass. (max() with phase2_height also enforces the phase-2-derived
+    // floor explicitly.)
+    let restart_baseline = get_height(client, &nodes[0]).await?;
+    let phase3_floor = restart_baseline.max(phase2_height) + 1;
+    println!(
+        "Phase 3: Polling for convergence after producer restart \
+         (baseline {restart_baseline}, floor {phase3_floor})..."
+    );
+    let phase3_height = await_convergence(client, &nodes, phase3_floor, poll, conv_timeout).await?;
 
-    println!("Phase 3: Checking convergence...");
-    let conv = check_convergence(client, &nodes).await?;
-    validate_convergence(&conv, MIN_HEIGHT)?;
+    // Receipt state survived the producer restart: re-anchoring task A
+    // must be rejected at admission by the persistent duplicate check.
+    println!("Phase 3: Re-submitting task A (must be rejected as already anchored)...");
+    match rpc_call_with_params(
+        client,
+        &nodes[0],
+        "submit_transaction",
+        Some(build_anchor_tx(2, task_a)),
+    )
+    .await
+    {
+        Ok(_) => {
+            return Err(
+                "duplicate task_id was accepted after restart: receipt state lost".to_string(),
+            );
+        }
+        Err(e) if e.contains("already anchored") => {
+            println!("  Duplicate correctly rejected: receipt state persisted across restart");
+        }
+        Err(e) => return Err(format!("unexpected rejection for duplicate anchor: {e}")),
+    }
+
+    // Post-restart task commitment and anchoring still work end-to-end:
+    // task B converges on all nodes (including followers syncing the new
+    // block). The rejected duplicate above consumed no nonce.
+    let (task_b_json, task_b) = build_task_tx(2, [0xB2u8; 32]);
+    println!("Phase 3: Submitting ComputeTask (task B)...");
+    rpc_call_with_params(client, &nodes[0], "submit_transaction", Some(task_b_json))
+        .await
+        .map_err(|e| format!("task B submission failed: {e}"))?;
+    println!("Phase 3: Submitting AnchorReceipt (task B)...");
+    rpc_call_with_params(
+        client,
+        &nodes[0],
+        "submit_transaction",
+        Some(build_anchor_tx(3, task_b)),
+    )
+    .await
+    .map_err(|e| format!("anchor B submission failed: {e}"))?;
+    await_anchor_on_all(client, &nodes, task_b).await?;
     println!("  Phase 3: PASS\n");
 
     // ── Phase 4: Restart follower ───────────────────────────────────────
@@ -629,10 +745,27 @@ async fn run_harness(client: &Client, data_dirs: &[PathBuf]) -> Result<(), Strin
     wait_for_rpc(client, &mut follower_a).await?;
     println!("  Follower A restarted, RPC ready on port {FOLLOWER1_RPC}");
 
-    sleep(Duration::from_secs(WAIT_RESTART_SECS)).await;
-    println!("Phase 4: Checking convergence...");
-    let conv = check_convergence(client, &nodes).await?;
-    validate_convergence(&conv, MIN_HEIGHT)?;
+    // Baseline: the PRODUCER's height sampled after the restarted
+    // follower's RPC is ready. The producer was not restarted in this
+    // phase and its height is monotonic, so the baseline cannot race
+    // backward. Requiring convergence at baseline + 1 proves the active
+    // chain progressed while follower A was back up AND the restarted
+    // follower caught up to that new tip — agreement on follower A's old
+    // persisted height cannot pass. (max() with phase3_height also keeps
+    // the floor monotonic across phases.)
+    let follower_baseline = get_height(client, &nodes[0]).await?;
+    let phase4_floor = follower_baseline.max(phase3_height) + 1;
+    println!(
+        "Phase 4: Polling for convergence after follower restart \
+         (baseline {follower_baseline}, floor {phase4_floor})..."
+    );
+    await_convergence(client, &nodes, phase4_floor, poll, conv_timeout).await?;
+
+    // The restarted follower resynced the full receipt-bearing chain:
+    // both anchors must be visible on all nodes.
+    println!("Phase 4: Verifying anchored receipts on all nodes...");
+    await_anchor_on_all(client, &nodes, task_a).await?;
+    await_anchor_on_all(client, &nodes, task_b).await?;
     println!("  Phase 4: PASS\n");
 
     // ── Cleanup: kill all remaining ─────────────────────────────────────

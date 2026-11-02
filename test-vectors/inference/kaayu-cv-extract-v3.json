@@ -1,0 +1,68 @@
+{
+  "$comment": "Golden vector for mbongo-infer:v1 / kaayu-cv-extract:v3 (docs/product/KAAYU_CV_EXTRACT_PROFILE_v3.md, change control CC-2). v3 is v2 with a new prompt template; schema, bounds, budget, runtime and model are v2's.",
+  "contract": "mbongo-infer:v1",
+  "diff_from_v2": {
+    "profile.prompt_template_sha256": [
+      "93ec9176e8d267ec1753476cbdc26862f8672cff14c1c41e2104b084c39a1f87",
+      "87be4340f639002422ee4fb52d6aba13efe9201c180a7ba7cf5998da96a80b3e"
+    ],
+    "profile.version": [
+      2,
+      3
+    ]
+  },
+  "execution_spec_hex": "6d626f6e676f2d696e6665723a7631d767501bc595c7447ecb4b6ec3a6ee96b3bb71dbaf5571114f6c48b30142a2a0",
+  "execution_spec_layout": "ASCII tag mbongo-infer:v1 (15 bytes) || job_spec_digest (32 bytes) = 47 bytes",
+  "job_spec": {
+    "contract": "mbongo-infer:v1",
+    "generation": {
+      "max_tokens": 600,
+      "seed": 42,
+      "temperature_milli": 0,
+      "top_p_milli": 1000
+    },
+    "limits": {
+      "max_input_bytes": 10000,
+      "max_output_bytes": 8000
+    },
+    "model": {
+      "artifact_name": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+      "artifact_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+      "artifact_size_bytes": 2497281120,
+      "family": "Qwen3",
+      "format": "gguf",
+      "license": "Apache-2.0",
+      "name": "Qwen3-4B-Instruct-2507",
+      "quantization": "Q4_K_M",
+      "source": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF",
+      "source_revision": "a06e946bb6b655725eafa393f4a9745d460374c9"
+    },
+    "profile": {
+      "id": "kaayu-cv-extract",
+      "input_contract": "kaayu-cv-extract-input:v1",
+      "output_contract": "kaayu-cv-profile:v2",
+      "output_schema_sha256": "0a81727a7cebdc73e97869f82211c07c7a67912e44b0ee24274003a67d9750ab",
+      "prompt_template_sha256": "87be4340f639002422ee4fb52d6aba13efe9201c180a7ba7cf5998da96a80b3e",
+      "version": 3
+    },
+    "runtime": {
+      "commit": "620d2225cc436ab0b001e3200e590e3b286ef9ab",
+      "family": "llama.cpp",
+      "license": "MIT",
+      "mode": "llama-server",
+      "revision": "v0.7.0"
+    }
+  },
+  "job_spec_canonical": "{\"contract\":\"mbongo-infer:v1\",\"generation\":{\"max_tokens\":600,\"seed\":42,\"temperature_milli\":0,\"top_p_milli\":1000},\"limits\":{\"max_input_bytes\":10000,\"max_output_bytes\":8000},\"model\":{\"artifact_name\":\"Qwen3-4B-Instruct-2507-Q4_K_M.gguf\",\"artifact_sha256\":\"3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597\",\"artifact_size_bytes\":2497281120,\"family\":\"Qwen3\",\"format\":\"gguf\",\"license\":\"Apache-2.0\",\"name\":\"Qwen3-4B-Instruct-2507\",\"quantization\":\"Q4_K_M\",\"source\":\"https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF\",\"source_revision\":\"a06e946bb6b655725eafa393f4a9745d460374c9\"},\"profile\":{\"id\":\"kaayu-cv-extract\",\"input_contract\":\"kaayu-cv-extract-input:v1\",\"output_contract\":\"kaayu-cv-profile:v2\",\"output_schema_sha256\":\"0a81727a7cebdc73e97869f82211c07c7a67912e44b0ee24274003a67d9750ab\",\"prompt_template_sha256\":\"87be4340f639002422ee4fb52d6aba13efe9201c180a7ba7cf5998da96a80b3e\",\"version\":3},\"runtime\":{\"commit\":\"620d2225cc436ab0b001e3200e590e3b286ef9ab\",\"family\":\"llama.cpp\",\"license\":\"MIT\",\"mode\":\"llama-server\",\"revision\":\"v0.7.0\"}}",
+  "job_spec_canonical_hex": "7b22636f6e7472616374223a226d626f6e676f2d696e6665723a7631222c2267656e65726174696f6e223a7b226d61785f746f6b656e73223a3630302c2273656564223a34322c2274656d70657261747572655f6d696c6c69223a302c22746f705f705f6d696c6c69223a313030307d2c226c696d697473223a7b226d61785f696e7075745f6279746573223a31303030302c226d61785f6f75747075745f6279746573223a383030307d2c226d6f64656c223a7b2261727469666163745f6e616d65223a225177656e332d34422d496e7374727563742d323530372d51345f4b5f4d2e67677566222c2261727469666163745f736861323536223a2233363035383033623938326362363461656164343466366331623261653336653361636462343164386534366338613934633635333362633463363765353937222c2261727469666163745f73697a655f6279746573223a323439373238313132302c2266616d696c79223a225177656e33222c22666f726d6174223a2267677566222c226c6963656e7365223a224170616368652d322e30222c226e616d65223a225177656e332d34422d496e7374727563742d32353037222c227175616e74697a6174696f6e223a2251345f4b5f4d222c22736f75726365223a2268747470733a2f2f68756767696e67666163652e636f2f756e736c6f74682f5177656e332d34422d496e7374727563742d323530372d47475546222c22736f757263655f7265766973696f6e223a2261303665393436626236623635353732356561666133393366346139373435643436303337346339227d2c2270726f66696c65223a7b226964223a226b616179752d63762d65787472616374222c22696e7075745f636f6e7472616374223a226b616179752d63762d657874726163742d696e7075743a7631222c226f75747075745f636f6e7472616374223a226b616179752d63762d70726f66696c653a7632222c226f75747075745f736368656d615f736861323536223a2230613831373237613763656264633733653937383639663832323131633037633761363739313265343462306565323432373430303361363764393735306162222c2270726f6d70745f74656d706c6174655f736861323536223a2238376265343334306636333930303234323265653466623532643661626131336566653932303163313830613762613763663539393864613936613830623365222c2276657273696f6e223a337d2c2272756e74696d65223a7b22636f6d6d6974223a2236323064323232356363343336616230623030316533323030653539306533623238366566396162222c2266616d696c79223a226c6c616d612e637070222c226c6963656e7365223a224d4954222c226d6f6465223a226c6c616d612d736572766572222c227265766973696f6e223a2276302e372e30227d7d",
+  "job_spec_digest": "d767501bc595c7447ecb4b6ec3a6ee96b3bb71dbaf5571114f6c48b30142a2a0",
+  "job_spec_digest_rule": "BLAKE3(job_spec_domain || job_spec_canonical)",
+  "job_spec_domain": "mbongo:infer-job-spec:v1",
+  "job_spec_path": "crates/mbongo-compute/profiles/kaayu-cv-extract-v3/job-spec.json",
+  "output_schema_path": "crates/mbongo-compute/profiles/kaayu-cv-extract-v2/output-schema.json",
+  "output_schema_sha256": "0a81727a7cebdc73e97869f82211c07c7a67912e44b0ee24274003a67d9750ab",
+  "profile": "kaayu-cv-extract:v3",
+  "prompt_template_path": "crates/mbongo-compute/profiles/kaayu-cv-extract-v3/prompt-template.txt",
+  "prompt_template_sha256": "87be4340f639002422ee4fb52d6aba13efe9201c180a7ba7cf5998da96a80b3e",
+  "supersedes": "kaayu-cv-extract:v2"
+}

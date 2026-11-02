@@ -2,9 +2,22 @@
 
 > **Document Type:** OpenAPI-Style Reference  
 > **Last Updated:** November 2025  
-> **Status:** Official Reference  
+> **Status:** ASPIRATIONAL  
 > **Version:** v1.0.0  
 > **Audience:** API Developers, SDK Integrators, DApp Builders
+
+> [!WARNING]
+> **None of the endpoints below are served.** This document describes
+> eighteen `/v1/*` REST paths covering transactions, compute, governance,
+> mempool and staking. Not one of them matches a route the node exposes.
+>
+> A REST surface does exist, in `crates/mbongo-api`, but it is small and
+> differently named: `/blocks`, `/blocks/:hash`, `/transactions/:hash`,
+> `/accounts/:address`, `/validators`. It has no versioned prefix and no
+> compute, governance or staking endpoints.
+>
+> For the JSON-RPC contract, which is the interface the SDK and CLI use, see
+> [`specs/rpc_v0.2.md`](specs/rpc_v0.2.md) (**FROZEN**).
 
 ---
 

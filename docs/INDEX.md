@@ -1,18 +1,115 @@
 # Mbongo Chain Documentation Index
 
-> **Complete hierarchical index of all technical documentation**
-
-This index provides a structured, hierarchical view of all Mbongo Chain documentation organized by topic and depth level.
+> **If you need to know what Mbongo Chain currently does, read the authority
+> map below and nothing else.** The rest of this file catalogues the whole
+> documentation corpus, most of which predates the current protocol and
+> describes designs that were never built.
 
 ---
 
-## Document Hierarchy Legend
+## Authority map — what is true today
+
+Each row names the one document that decides its subject. Where another
+document disagrees with one of these, this table wins.
+
+| Subject | Authority | Status |
+|---|---|---|
+| Project vision and scope | [`VISION_v1.md`](VISION_v1.md) | NORMATIVE |
+| What Mbongo launches first — the MVP: first user, workload, runtime, model, worker, privacy level, provider model, payment, client surface, exit criteria, and the frozen defer list that separates MVP BLOCKING from POST-MVP and PARALLEL RESEARCH | [`product/MVP_v0.1.md`](product/MVP_v0.1.md) | NORMATIVE (FROZEN PRODUCT SCOPE; product decision, non-consensus — every protocol and architecture row above wins on its own subject) |
+| What a `ComputeTask` means when it asks for the MVP inference: the `mbongo-infer:v1` `execution_spec` layout, the off-chain job spec and its canonical form and digest, runtime and model artifact identity, the `kaayu-cv-extract:v1` profile (input contract, prompt template, output schema, generation parameters), result canonicalization, the worker validation order and error taxonomy, what the receipt proves | [`product/MVP_INFERENCE_CONTRACT_v1.md`](product/MVP_INFERENCE_CONTRACT_v1.md) | NORMATIVE (APPLICATION CONTRACT, non-consensus — RFC 0005 wins on protocol; implementation in `crates/mbongo-compute/src/inference/`, vectors in `test-vectors/inference/`) |
+| The MVP inference profile `kaayu-cv-extract:v2` (superseded for the MVP by v3, still resolvable and reproducible): why v1 was superseded (output larger than its own token budget), the v2 output bounds and 600-token budget, the maximal-output analysis, the v1/v2 diff, real corpus and latency evidence, and what the profile does not promise (no full CV transcription) | [`product/KAAYU_CV_EXTRACT_PROFILE_v2.md`](product/KAAYU_CV_EXTRACT_PROFILE_v2.md) | NORMATIVE (APPLICATION PROFILE, non-consensus — change control CC-1 of `MVP_v0.1.md`; the inference contract and RFC 0005 win; code in `crates/mbongo-compute/src/profiles/`) |
+| The active MVP inference profile `kaayu-cv-extract:v3`: prompt-injection hardening (change control CC-2) — what changed (the prompt only), the adversarial and corpus evidence, the latency cost, what it does not promise (no immunity, no accuracy) | [`product/KAAYU_CV_EXTRACT_PROFILE_v3.md`](product/KAAYU_CV_EXTRACT_PROFILE_v3.md) | NORMATIVE (APPLICATION PROFILE, non-consensus — change control CC-2 of `MVP_v0.1.md`; the inference contract and RFC 0005 win; code in `crates/mbongo-compute/src/profiles/kaayu_v3.rs`, vector `test-vectors/inference/kaayu-cv-extract-v3.json`) |
+| How the MVP worker executes `mbongo-infer:v1` on CPU: pinned llama.cpp build and model acquisition and verification, worker configuration, start-up checks, profile dispatch, the llama-server request, failure, retry and crash behaviour, privacy, measured performance, the real-model proof, CI strategy | [`product/MVP_CPU_INFERENCE_WORKER.md`](product/MVP_CPU_INFERENCE_WORKER.md) | CURRENT (MVP v0.1 implementation, non-consensus — the inference contract and RFC 0005 win; code in `crates/mbongo-compute/src/cpu_inference/`) |
+| How a client uses the MVP: the loopback HTTP front's four routes over the control plane and private data plane, request signing, the `mbongo-mvp` CLI (`submit`, `status`, `result`, `verify`), the client-side verification order and its four separate results (receipt integrity, result integrity, schema conformity, business accuracy `NOT ASSESSED`), error model and exit codes, privacy, retention, the MVP-D handoff | [`product/MVP_HTTP_CLI.md`](product/MVP_HTTP_CLI.md) | CURRENT (MVP v0.1 implementation, non-consensus — RFC 0005, rpc_v0.3 and the inference contract win; code in `crates/mbongo-compute/src/mvp/`, vector in `test-vectors/mvp/`) |
+| Whether the frozen MVP path is reliable, fast and private enough to proceed to launch hardening: the 20-job acceptance campaign on the reference host — environment, corpus, procedure, per-job results, reliability, latency percentiles, the recovery case, receipt and result integrity, schema conformity, privacy scans, operational observations, the decision and the MVP-E handoff | [`product/MVP_D_ACCEPTANCE.md`](product/MVP_D_ACCEPTANCE.md) | CURRENT (MVP v0.1 acceptance evidence, non-consensus — measures, never redefines, the documents above; harness `scripts/mvp-d-acceptance.mjs`, corpus `test-vectors/mvp/mvp-d-corpus-v1.json`, evidence `docs/product/evidence/mvp-d/`) |
+| Whether the MVP is safe enough to launch, controlled: the threat model, prompt injection (D18 root cause, threat model, profile v3 and the injection screen, adversarial matrix), request-signing review and findings, capabilities, secret inventory, network exposure, dependency licenses and advisories, findings register, accepted risks, launch smoke, decision | [`security/MVP_LAUNCH_SECURITY_REVIEW.md`](security/MVP_LAUNCH_SECURITY_REVIEW.md) | CURRENT (MVP v0.1 launch hardening, non-consensus; test groups `mvp_launch_auth`, `mvp_prompt_injection`, `mvp_launch_ops`) |
+| How to operate the controlled MVP launch: boundary, build and provenance, configuration and keys, checklist, startup, health, metrics and alerts, in-memory state, limits, shutdown, incident, key-compromise and privacy-incident procedures, backups | [`product/MVP_LAUNCH_RUNBOOK.md`](product/MVP_LAUNCH_RUNBOOK.md) | CURRENT (CONTROLLED MVP OPERATIONS, non-consensus; tooling `scripts/mvp-launch.mjs`, template `config/mvp-launch.env.example`) |
+| Frozen protocol surfaces, versioning | [`specs/PROTOCOL_LOCK_v0.4.md`](specs/PROTOCOL_LOCK_v0.4.md) | NORMATIVE (FROZEN; tag `v0.4-devnet-stable` @ `fcec8ddc`; SDK `@mbongo/sdk` 0.2.0) |
+| Protocol surfaces before RFC 0005 | [`specs/PROTOCOL_LOCK_v0.3.md`](specs/PROTOCOL_LOCK_v0.3.md) | SUPERSEDED (historical record, kept intact) |
+| JSON-RPC contract | [`specs/rpc_v0.3.md`](specs/rpc_v0.3.md) | NORMATIVE (FROZEN — v0.2 plus the `ComputeTask` payload variant; independently audited by the v0.4 lock gate) |
+| JSON-RPC contract before RFC 0005 | [`specs/rpc_v0.2.md`](specs/rpc_v0.2.md) | SUPERSEDED (FROZEN, kept intact) |
+| Receipt v1 structure | [`specs/RECEIPT_SPEC_v0.1.md`](specs/RECEIPT_SPEC_v0.1.md) | NORMATIVE |
+| Receipt anchoring consensus rules | [`rfcs/0002-receipt-anchoring-v0.3.md`](rfcs/0002-receipt-anchoring-v0.3.md) | NORMATIVE (Accepted) |
+| Compute task commitment: envelope, `task_id`, rules (k)–(s), task storage | [`rfcs/0005-compute-task-commitment-v1.md`](rfcs/0005-compute-task-commitment-v1.md) | NORMATIVE (Accepted, implemented; locked by PROTOCOL_LOCK_v0.4) |
+| How protocol changes are proposed and accepted | [`RFC_PROCESS.md`](RFC_PROCESS.md) | NORMATIVE |
+| Which changes need an RFC | [`CONTRIBUTION_TIERS.md`](CONTRIBUTION_TIERS.md) | NORMATIVE |
+| Contribution workflow | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | NORMATIVE |
+| What counts as engineering proof | [`ENGINEERING_EVIDENCE.md`](ENGINEERING_EVIDENCE.md) | NORMATIVE |
+| Receipt anchoring: data model, crypto domains, storage | [`architecture/compute-receipts.md`](architecture/compute-receipts.md) | CURRENT |
+| Where customer and model data may exist across Compute; the public-chain / control-plane / private-data-plane boundary | [`architecture/compute-privacy-data-plane.md`](architecture/compute-privacy-data-plane.md) | NORMATIVE (architecture, non-consensus — RFC 0005 wins on protocol) |
+| How a client, the control plane, the private data plane and a worker hand private inputs and results to one another | [`architecture/compute-private-data-plane-interface.md`](architecture/compute-private-data-plane-interface.md) | NORMATIVE (architecture, non-consensus — RFC 0005 wins on protocol) |
+| What the control plane may and must do between an accepted `ComputeTask` and an anchored receipt; leases, attempts, retry, duplicate handling, receipt relay | [`architecture/compute-control-plane-worker-interface.md`](architecture/compute-control-plane-worker-interface.md) | NORMATIVE (architecture, non-consensus — RFC 0005 wins on protocol) |
+| Whether a provider's worker is eligible to execute a task: provider / worker / executor identities, capability advertisements as claims, evidence levels, policy requirements and composition, the PUBLIC / VERIFIED / CONFIDENTIAL / SOVEREIGN profiles, the deterministic eligibility decision, the handoff to confidential compute (`provider-policy-v1`) | [`architecture/compute-provider-capability-policy.md`](architecture/compute-provider-capability-policy.md) | NORMATIVE (architecture, non-consensus — RFC 0005 wins on protocol; reference evaluator in `crates/mbongo-compute/src/policy.rs`) |
+| How a confidential input is released to an execution environment: attestation challenge, evidence envelope, verifier boundary, trust and measurement policy, conversion into J evidence, release authorization, conditional fetch capability and content-key release (`confidential-auth-v1`, `attestation-envelope-v1`) | [`architecture/compute-confidential-attestation-key-release.md`](architecture/compute-confidential-attestation-key-release.md) | NORMATIVE (architecture, non-consensus — RFC 0005 wins on protocol; reference path in `crates/mbongo-compute/src/confidential/` is REFERENCE_ATTESTED, test only, not hardware attestation) |
+| The first hardware-backed attestation adapter: AMD SEV-SNP evidence, the pinned AMD root chain, `REPORT_DATA` binding of challenge / session / executor / task / purpose / environment key, platform and TCB policy, normalization into K, the live-guest test and the exact confidentiality claim (`hardware-attestation-v1`, `snp-adapter-v1`) | [`architecture/compute-hardware-attestation-adapter.md`](architecture/compute-hardware-attestation-adapter.md) | NORMATIVE (architecture, non-consensus — RFC 0005 wins on protocol; adapter in `crates/mbongo-compute/src/confidential/snp.rs`; live SEV-SNP end-to-end run **not yet performed** — see §16 and #144) |
+| Building, signing, anchoring, verifying receipts | [`development/compute-receipts.md`](development/compute-receipts.md) | CURRENT |
+| The reference compute worker, control plane and private data plane: what runs, what is public, what is private, crash and retry | [`development/reference-worker.md`](development/reference-worker.md) | CURRENT (implementation of E and F; not protocol authority) |
+| What every compute implementation must satisfy — the named conformance suite (`compute-conformance-v1`), its cases, how a future worker or data plane runs it | [`development/compute-conformance.md`](development/compute-conformance.md) | CURRENT (tests the architecture contracts; not protocol authority) |
+| Devnet topology and infrastructure | [`architecture/devnet-infrastructure.md`](architecture/devnet-infrastructure.md) | CURRENT |
+| Running a devnet locally | [`development/devnet.md`](development/devnet.md) | CURRENT |
+| Devnet operations for protocol v0.4 and the first Compute vertical: profile, activation and reset, bootstrap, the full flow, restarts, failure runbook | [`runbooks/DEVNET_V0.4_OPERATIONS.md`](runbooks/DEVNET_V0.4_OPERATIONS.md) | CURRENT |
+| Devnet operations, v0.3 PowerShell persistent deployment | [`runbooks/DEVNET_V0.3_OPERATIONS.md`](runbooks/DEVNET_V0.3_OPERATIONS.md) | SUPERSEDED for Compute; still the v0.3-pinned deployment's own runbook |
+| How the SDK is released | [`runbooks/RELEASE.md`](runbooks/RELEASE.md) | NORMATIVE |
+| TypeScript SDK | [`../sdk/typescript/README.md`](../sdk/typescript/README.md) | CURRENT |
+
+The shipped RPC surface is **six JSON-RPC methods**. Receipt anchoring travels
+through the generic `submit_transaction`; there is no compute RPC, and no
+lookup of a receipt by `task_id`.
+
+---
+
+## Status vocabulary
+
+| Status | Meaning |
+|---|---|
+| **NORMATIVE** | Defines a contract or process other documents defer to. |
+| **CURRENT** | Accurately describes what is implemented or operated today. |
+| **HISTORICAL** | Records past work or evidence. Not current authority. |
+| **SUPERSEDED** | A newer authoritative document replaces it. |
+| **ASPIRATIONAL** | Describes planned or imagined behaviour that is not implemented. |
+
+Only documents named in the authority map above, or explicitly marked in this
+file, carry a status. The rest of the corpus is unclassified.
+
+---
+
+## Reading anything else in this directory
+
+Most of `docs/` was written between November 2025 and February 2026, before
+the protocol was locked, before RPC v0.2, and before the vision narrowed to a
+verification layer for off-chain inference receipts. Those documents were
+written in good faith as design material and remain useful for understanding
+intent and history.
+
+**They are not authoritative, and several describe systems that do not
+exist.** Unless a document appears in the authority map above, or the sections
+below mark it CURRENT or NORMATIVE, assume it records a design idea rather
+than the running system, and verify against the code, the specs, or the tests
+before relying on it.
+
+Four documents are known to contradict the running system and carry a banner
+saying so: [`ts_sdk_overview.md`](ts_sdk_overview.md),
+[`rpc_overview.md`](rpc_overview.md),
+[`openapi_reference.md`](openapi_reference.md) and
+[`governance_model.md`](governance_model.md). Others may be wrong without
+having been checked yet.
+
+---
+
+## Catalogue
+
+Everything below is a map of the corpus, not a statement about correctness.
+
+### Legend
 
 - **[L1]** - High-level overviews and introductions
 - **[L2]** - Detailed specifications and guides
 - **[L3]** - Implementation details and advanced topics
-- **[PRIMARY]** - Canonical/authoritative document for this topic
+- **[PRIMARY]** - Most complete document on the topic within this catalogue
 - **[ARCHIVE]** - Older version, kept for reference
+
+`[PRIMARY]` marks depth within the catalogue. It does **not** mean current or
+authoritative; the authority map above is the only source of that.
 
 ---
 
@@ -24,8 +121,9 @@ This index provides a structured, hierarchical view of all Mbongo Chain document
 │   └── Project vision, mission, and long-term goals
 ├── mbongo_whitepaper.md [L1]
 │   └── High-level technical whitepaper
-├── roadmap.md [L1]
-│   └── Development roadmap and milestones
+├── roadmap.md [L1] [HISTORICAL]
+│   └── 2025 quarterly plan, predates the protocol lock; the live roadmap is
+│       the README table and product/MVP_v0.1.md
 └── faq.md [L1]
     └── Frequently asked questions
 ```
@@ -81,8 +179,9 @@ This index provides a structured, hierarchical view of all Mbongo Chain document
 ```
 ├── competitive_analysis.md [L2]
 │   └── Comparison vs Render, Akash, io.net, Gensyn, Bittensor, RunPod
-└── target_market.md [L2]
-    └── Market analysis, customer personas, TAM estimation
+└── target_market.md [L2] [SUPERSEDED]
+    └── Market analysis, customer personas, TAM estimation — superseded by
+        product/MVP_v0.1.md on who the first user is
 ```
 
 ---
@@ -112,6 +211,20 @@ This index provides a structured, hierarchical view of all Mbongo Chain document
 │   └── Fundamental transaction schema, serialization, signatures
 ├── block_structure.md [L2]
 │   └── Block header/body schema, roots, and serialization
+├── architecture/compute-receipts.md [L2] [PRIMARY]
+│   └── Compute receipts, anchoring, cryptographic domains, validation
+├── architecture/compute-privacy-data-plane.md [L2] [PRIMARY]
+│   └── Compute privacy boundary: public chain, control plane, private data plane, worker
+├── architecture/compute-private-data-plane-interface.md [L2] [PRIMARY]
+│   └── Private data plane handoff contract: references, capabilities, fetch, result, failure windows
+├── architecture/compute-control-plane-worker-interface.md [L2] [PRIMARY]
+│   └── Control plane and worker coordination contract: discovery, leases, attempts, lifecycle, retry, receipt relay
+├── architecture/compute-provider-capability-policy.md [L2] [PRIMARY]
+│   └── Provider capability and policy model: claims vs evidence, policy composition, profiles, eligibility decision, K handoff
+├── architecture/compute-confidential-attestation-key-release.md [L2] [PRIMARY]
+│   └── Confidential compute: attestation challenge, verifier boundary, trust policy, release authorization, conditional key release (reference path test-only)
+├── architecture/compute-hardware-attestation-adapter.md [L2] [PRIMARY]
+│   └── Hardware attestation adapter: AMD SEV-SNP backend, trust chain, REPORT_DATA binding, platform/TCB policy, live-guest test, confidentiality claim
 ├── compute_engine_overview.md [L3]
 │   └── GPU compute execution runtime
 ├── mempool_overview.md [L3]
@@ -168,8 +281,10 @@ This index provides a structured, hierarchical view of all Mbongo Chain document
 
 ### 4.4 Governance
 ```
-├── governance_model.md [L2]
-│   └── DAO governance: proposals, voting, treasury
+├── governance_model.md [L2] [ASPIRATIONAL]
+│   └── Stake-weighted on-chain DAO: proposals, voting, treasury.
+│       No such mechanism exists. Repository and protocol changes are
+│       governed by RFC_PROCESS.md and CONTRIBUTION_TIERS.md.
 └── oracle_model.md [L3]
     └── Oracle design for external data feeds
 ```
@@ -243,11 +358,22 @@ This index provides a structured, hierarchical view of all Mbongo Chain document
 │   ├── Core types and traits
 │   ├── Transaction building
 │   └── Code examples
-└── ts_sdk_overview.md [L2]
-    ├── TypeScript SDK installation
-    ├── Client initialization
-    ├── Wallet integration
-    └── Code examples
+├── ts_sdk_overview.md [L2] [ASPIRATIONAL]
+│   └── Wallet, ComputeClient, GovernanceClient and providers that
+│       @mbongo/sdk does not implement. For the shipped package see
+│       ../sdk/typescript/README.md.
+├── development/compute-receipts.md [L2] [PRIMARY]
+│   ├── Receipt primitives and anchoring API
+│   ├── Nonce, errors and retry semantics
+│   └── Testing against the shared fixtures
+├── development/reference-worker.md [L2] [PRIMARY]
+│   ├── The reference worker, control plane and data plane (crates/mbongo-compute)
+│   ├── Lifecycle, identities, grants, trust assumptions
+│   └── Crash and retry, logging, the confidential extension point
+└── development/compute-conformance.md [L2] [PRIMARY]
+    ├── Mbongo Compute Conformance: the Subject adapter and the case catalog
+    ├── P4 / P5 / P15 / F19 traceability; what a pass does and does not mean
+    └── Running it for a future CPU, GPU, AI worker or persistent data plane
 ```
 
 ---
@@ -268,13 +394,18 @@ This index provides a structured, hierarchical view of all Mbongo Chain document
 
 ### 7.2 APIs
 ```
-├── rpc_overview.md [L2] [PRIMARY]
-│   ├── JSON-RPC 2.0 API
-│   ├── WebSocket subscriptions
-│   ├── Method reference
-│   └── Error codes
-└── openapi_reference.md [L3]
-    └── OpenAPI/Swagger specification for REST endpoints
+├── specs/rpc_v0.3.md [L2] [PRIMARY]
+│   └── The JSON-RPC contract the node actually serves: v0.2 plus the
+│       ComputeTask payload variant (RFC 0005). Six methods, no
+│       subscriptions. FROZEN by the v0.4 lock gate's audit.
+├── specs/rpc_v0.2.md [L2] [SUPERSEDED]
+│   └── The contract before RFC 0005. FROZEN and kept intact.
+├── rpc_overview.md [L2] [ASPIRATIONAL]
+│   └── An Ethereum-compatible surface (eth_*, mbongo_* camelCase,
+│       WebSocket subscriptions) that the node does not serve.
+└── openapi_reference.md [L3] [ASPIRATIONAL]
+    └── Eighteen /v1/* REST paths, none of which the node serves.
+        A small REST surface does exist; see crates/mbongo-api.
 ```
 
 ---
@@ -297,24 +428,26 @@ This index provides a structured, hierarchical view of all Mbongo Chain document
 
 ### 9.1 Project Information
 ```
-├── README.md [L1] [PRIMARY]
-│   └── Documentation navigation hub (this directory)
 ├── INDEX.md [L1] [PRIMARY]
-│   └── Hierarchical documentation index (this file)
+│   └── Authority map and documentation catalogue (this file)
+├── README.md [L1] [SUPERSEDED]
+│   └── An earlier navigation hub for this directory, superseded by
+│       this file. Kept for its category descriptions.
 ├── vision.md [L1]
 │   └── Project vision and goals
 ├── mbongo_whitepaper.md [L1]
 │   └── Technical whitepaper
-└── roadmap.md [L1]
-    └── Development roadmap
+└── roadmap.md [L1] [HISTORICAL]
+    └── 2025 quarterly plan; see product/MVP_v0.1.md for the frozen first product
 ```
 
 ### 9.2 Validation & Status
 ```
 ├── spec_validation_summary.md [L3]
 │   └── Specification validation status
-└── final_doc_index.md [L3]
-    └── Alternative documentation listing
+└── final_doc_index.md [L3] [SUPERSEDED]
+    └── A third documentation index from November 2025, superseded by
+        this file.
 ```
 
 ### 9.3 Archive
@@ -355,7 +488,13 @@ TOTAL                             68 documents
 [ARCHIVE] Archived documents       5 documents
 ```
 
-### Primary Documents (Most Important)
+### Longest documents in the catalogue
+
+This ranks depth of coverage within the 2025 design corpus. It is not a
+statement about what is current, and it is not the authority map — that is at
+the top of this file. `rpc_overview.md` below is aspirational; `README.md` is
+superseded by this file.
+
 ```
 1.  consensus_master_overview.md
 2.  poc_consensus_mechanics.md
@@ -377,6 +516,23 @@ TOTAL                             68 documents
 
 ## Documentation Reading Paths
 
+**Path 0 is the only one that traverses current documents.** Paths 1 to 6
+below were written for the November 2025 corpus and route through design
+material, including documents now known to be aspirational. They are kept
+because they show how that material was meant to be read, not because they
+describe the running system.
+
+### Path 0: What Mbongo Chain currently is
+```
+1. ../README.md                            what runs today, how to start it
+2. VISION_v1.md                            scope, and what is excluded
+3. specs/PROTOCOL_LOCK_v0.4.md             which surfaces are frozen
+4. specs/rpc_v0.3.md                       the RPC contract
+5. architecture/compute-receipts.md        receipts on chain
+6. ../sdk/typescript/README.md             the shipped SDK
+7. RFC_PROCESS.md                          how any of it changes
+```
+
 ### Path 1: New User (Non-Technical)
 ```
 1. vision.md
@@ -391,10 +547,13 @@ TOTAL                             68 documents
 1. getting_started.md
 2. developer_guide.md
 3. developer_environment.md
-4. rust_sdk_overview.md or ts_sdk_overview.md
+4. rust_sdk_overview.md
 5. cli_overview.md
-6. rpc_overview.md
 ```
+For the SDK and the RPC contract this path is superseded by Path 0:
+`../sdk/typescript/README.md` and `specs/rpc_v0.2.md`. The documents it
+used to name here, `ts_sdk_overview.md` and `rpc_overview.md`, are
+aspirational.
 
 ### Path 3: Validator (Operations)
 ```

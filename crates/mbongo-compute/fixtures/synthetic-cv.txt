@@ -1,0 +1,31 @@
+SYNTHETIC CV - fictional person generated for Mbongo MVP tests. Not a real candidate.
+
+Name: Zorvath Quillane-Example
+Location: Port Fictiva, Example Province
+Contact: zorvath.quillane@example.invalid
+
+Summary
+Data platform engineer with nine years of experience building batch and streaming
+pipelines, data quality tooling and internal analytics platforms for mid-size logistics
+companies. Comfortable leading small teams and working with security reviewers.
+
+Experience
+Lead Data Engineer - Fictivex Analytics (2021-03 to present)
+  Led a team of four building the Quillane ingestion mesh on Kafka and PostgreSQL;
+  cut nightly batch time from six hours to forty minutes.
+Data Engineer - Placeholder Logistics Ltd (2017-06 to 2021-02)
+  Built shipment tracking pipelines in Python and Rust; introduced data contracts.
+Junior Developer - Sample Freight Co (2015-09 to 2017-05)
+  Maintained reporting jobs and SQL dashboards.
+
+Education
+BSc Computer Science - University of Example City, 2015
+
+Languages
+English (fluent), French (intermediate)
+
+Certifications
+Example Cloud Data Architect (synthetic certification)
+
+Skills
+Rust, Python, PostgreSQL, Kafka, Terraform, data modelling, observability

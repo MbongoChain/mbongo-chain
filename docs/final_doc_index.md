@@ -2,7 +2,15 @@
 
 > **Document Type:** Master Index  
 > **Last Updated:** November 2025  
-> **Status:** Canonical Reference
+> **Status:** SUPERSEDED
+
+> [!IMPORTANT]
+> **This is not the master index.** [`INDEX.md`](INDEX.md) is, and it carries
+> the authority map naming the document that decides each subject.
+>
+> The listing below is a November 2025 snapshot of the corpus. It makes no
+> distinction between documents that describe the running system and
+> documents that describe designs which were never built.
 
 ---
 

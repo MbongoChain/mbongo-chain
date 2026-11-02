@@ -17,8 +17,10 @@ pub use storage::{BatchOp, Storage, StorageError};
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rocksdb::SCHEMA_VERSION_CURRENT;
     use mbongo_core::{
-        Account, Address, Block, BlockBody, BlockHeader, Hash, Transaction, TransactionType,
+        Account, Address, Block, BlockBody, BlockHeader, Hash, Transaction, TransactionPayload,
+        TransactionType,
     };
 
     fn sample_account() -> (Address, Account) {
@@ -37,6 +39,7 @@ mod tests {
             receiver: Address([4u8; 32]),
             amount: 100,
             nonce: 0,
+            payload: TransactionPayload::None,
             signature: [0u8; 64],
         };
         (hash, tx)
@@ -59,6 +62,7 @@ mod tests {
                     receiver: Address([6u8; 32]),
                     amount: 50,
                     nonce: 0,
+                    payload: TransactionPayload::None,
                     signature: [0u8; 64],
                 }],
             },
@@ -315,5 +319,352 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = RocksDbStorage::open(dir.path()).unwrap();
         write_batch_suite(&store);
+    }
+
+    // ── Receipt store tests (RFC 0002 Phase 1) ───────────────────────
+
+    /// Run the receipt suite against any [`Storage`] implementation.
+    /// Storage treats receipt bytes as opaque; these are arbitrary bytes.
+    fn receipt_suite(store: &dyn Storage) {
+        let task_a = [0xA1u8; 32];
+        let task_b = [0xB2u8; 32];
+        let bytes_a = vec![1u8, 2, 3, 4, 5];
+
+        // Missing lookup.
+        assert!(!store.has_receipt(&task_a).unwrap());
+        assert!(store.get_receipt(&task_a).unwrap().is_none());
+
+        // Write via batch, read back.
+        store.write_batch(vec![BatchOp::PutReceipt(task_a, bytes_a.clone())]).unwrap();
+        assert!(store.has_receipt(&task_a).unwrap());
+        assert_eq!(store.get_receipt(&task_a).unwrap(), Some(bytes_a));
+
+        // Unrelated task id still missing.
+        assert!(!store.has_receipt(&task_b).unwrap());
+
+        // Receipt write participates in a batch with existing op kinds.
+        let (addr, account) = sample_account();
+        let bytes_b = vec![9u8; 64];
+        store
+            .write_batch(vec![
+                BatchOp::PutAccount(addr, account.clone()),
+                BatchOp::PutReceipt(task_b, bytes_b.clone()),
+            ])
+            .unwrap();
+        assert!(store.has_receipt(&task_b).unwrap());
+        assert_eq!(store.get_receipt(&task_b).unwrap(), Some(bytes_b));
+        assert_eq!(store.get_account(&addr).unwrap(), Some(account));
+    }
+
+    #[test]
+    fn memory_receipts() {
+        let store = InMemoryStorage::new();
+        receipt_suite(&store);
+    }
+
+    #[test]
+    fn rocksdb_receipts() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RocksDbStorage::open(dir.path()).unwrap();
+        receipt_suite(&store);
+    }
+
+    // ── Task store tests (RFC 0005 §4) ───────────────────────────────
+
+    /// Run the task suite against any [`Storage`] implementation.
+    /// Storage treats task bytes as opaque; these are arbitrary bytes.
+    fn task_suite(store: &dyn Storage) {
+        let task_a = [0xC1u8; 32];
+        let task_b = [0xD2u8; 32];
+        let bytes_a = vec![7u8, 8, 9];
+
+        // Missing lookup.
+        assert!(!store.has_task(&task_a).unwrap());
+        assert!(store.get_task(&task_a).unwrap().is_none());
+
+        // Write via batch, read back.
+        store.write_batch(vec![BatchOp::PutTask(task_a, bytes_a.clone())]).unwrap();
+        assert!(store.has_task(&task_a).unwrap());
+        assert_eq!(store.get_task(&task_a).unwrap(), Some(bytes_a));
+
+        // Unrelated task id still missing.
+        assert!(!store.has_task(&task_b).unwrap());
+
+        // The tasks and receipts indexes are distinct keyspaces: a task
+        // under an id says nothing about a receipt under the same id, and
+        // vice versa (RFC 0005 §4.1 — two derived states, two indexes).
+        assert!(!store.has_receipt(&task_a).unwrap());
+        store.write_batch(vec![BatchOp::PutReceipt(task_b, vec![1u8])]).unwrap();
+        assert!(store.has_receipt(&task_b).unwrap());
+        assert!(!store.has_task(&task_b).unwrap());
+
+        // Task write participates in a batch with existing op kinds.
+        let (addr, account) = sample_account();
+        let bytes_b = vec![3u8; 1155];
+        store
+            .write_batch(vec![
+                BatchOp::PutAccount(addr, account.clone()),
+                BatchOp::PutTask(task_b, bytes_b.clone()),
+            ])
+            .unwrap();
+        assert!(store.has_task(&task_b).unwrap());
+        assert_eq!(store.get_task(&task_b).unwrap(), Some(bytes_b));
+        assert_eq!(store.get_account(&addr).unwrap(), Some(account));
+    }
+
+    #[test]
+    fn memory_tasks() {
+        let store = InMemoryStorage::new();
+        task_suite(&store);
+    }
+
+    #[test]
+    fn rocksdb_tasks() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RocksDbStorage::open(dir.path()).unwrap();
+        task_suite(&store);
+    }
+
+    // ── Schema version and migration tests (RFC 0002 §5) ─────────────
+
+    use ::rocksdb::{ColumnFamilyDescriptor, Options, DB};
+
+    const V1_CFS: [&str; 6] = [
+        "accounts",
+        "blocks",
+        "transactions",
+        "meta",
+        "height_index",
+        "tx_seq_index",
+    ];
+
+    /// Creates a database with the v0.2 (schema v1) layout the way v0.2
+    /// code did, bypassing the new open sequence. Optionally seeds sample
+    /// account/block/transaction data through raw handles.
+    fn create_v1_database(path: &std::path::Path, seed_data: bool) {
+        use parity_scale_codec::Encode;
+        let mut db_opts = Options::default();
+        db_opts.create_if_missing(true);
+        db_opts.create_missing_column_families(true);
+        let cfs: Vec<ColumnFamilyDescriptor> = V1_CFS
+            .iter()
+            .map(|name| ColumnFamilyDescriptor::new(*name, Options::default()))
+            .collect();
+        let db = DB::open_cf_descriptors(&db_opts, path, cfs).unwrap();
+        if seed_data {
+            let (addr, account) = sample_account();
+            let (block_hash, block) = sample_block();
+            let (tx_hash, tx) = sample_transaction();
+            let cf = db.cf_handle("accounts").unwrap();
+            db.put_cf(&cf, addr.0, account.encode()).unwrap();
+            let cf = db.cf_handle("blocks").unwrap();
+            db.put_cf(&cf, block_hash.0, block.encode()).unwrap();
+            let cf = db.cf_handle("transactions").unwrap();
+            db.put_cf(&cf, tx_hash.0, tx.encode()).unwrap();
+        }
+        // Dropped here: database closed with no schema_version key and no
+        // receipts column family — exactly the v0.2 on-disk state.
+    }
+
+    #[test]
+    fn rocksdb_fresh_database_is_schema_v3() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RocksDbStorage::open(dir.path()).unwrap();
+        assert_eq!(SCHEMA_VERSION_CURRENT, 3);
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION_CURRENT);
+        assert!(!store.has_receipt(&[0u8; 32]).unwrap());
+        assert!(!store.has_task(&[0u8; 32]).unwrap());
+    }
+
+    #[test]
+    fn rocksdb_v1_database_migrates_to_v3() {
+        let dir = tempfile::tempdir().unwrap();
+        create_v1_database(dir.path(), true);
+
+        let store = RocksDbStorage::open(dir.path()).unwrap();
+        // Migration created the receipts and tasks CFs and stamped the
+        // version.
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION_CURRENT);
+        assert!(!store.has_receipt(&[0u8; 32]).unwrap());
+        assert!(!store.has_task(&[0u8; 32]).unwrap());
+
+        // Existing v0.2 data survives migration.
+        let (addr, account) = sample_account();
+        assert_eq!(store.get_account(&addr).unwrap(), Some(account));
+        let (block_hash, block) = sample_block();
+        assert_eq!(store.get_block(&block_hash).unwrap(), Some(block));
+        let (tx_hash, tx) = sample_transaction();
+        assert_eq!(store.get_transaction(&tx_hash).unwrap(), Some(tx));
+    }
+
+    /// Creates a database with the v0.3 (schema v2) layout the way v0.3
+    /// code did: the six v1 column families plus `receipts`, stamped 2.
+    /// Optionally seeds one receipt through raw handles.
+    fn create_v2_database(path: &std::path::Path, seed_receipt: Option<([u8; 32], Vec<u8>)>) {
+        let mut db_opts = Options::default();
+        db_opts.create_if_missing(true);
+        db_opts.create_missing_column_families(true);
+        let mut names: Vec<&str> = V1_CFS.to_vec();
+        names.push("receipts");
+        let cfs: Vec<ColumnFamilyDescriptor> = names
+            .iter()
+            .map(|name| ColumnFamilyDescriptor::new(*name, Options::default()))
+            .collect();
+        let db = DB::open_cf_descriptors(&db_opts, path, cfs).unwrap();
+        let cf = db.cf_handle("meta").unwrap();
+        db.put_cf(&cf, b"schema_version", 2u32.to_be_bytes()).unwrap();
+        if let Some((task_id, bytes)) = seed_receipt {
+            let cf = db.cf_handle("receipts").unwrap();
+            db.put_cf(&cf, task_id, bytes).unwrap();
+        }
+        // Dropped here: exactly the v0.3 on-disk state, no `tasks` CF.
+    }
+
+    #[test]
+    fn rocksdb_v2_database_migrates_to_v3() {
+        let dir = tempfile::tempdir().unwrap();
+        let task_id = [0x77u8; 32];
+        let bytes = vec![42u8; 16];
+        create_v2_database(dir.path(), Some((task_id, bytes.clone())));
+
+        // Migration created the tasks CF and stamped 3; the anchored
+        // receipt survives untouched and no task appears from nowhere.
+        let store = RocksDbStorage::open(dir.path()).unwrap();
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION_CURRENT);
+        assert!(store.has_receipt(&task_id).unwrap());
+        assert_eq!(store.get_receipt(&task_id).unwrap(), Some(bytes));
+        assert!(!store.has_task(&task_id).unwrap());
+    }
+
+    #[test]
+    fn rocksdb_interrupted_migration_recovers() {
+        let dir = tempfile::tempdir().unwrap();
+        create_v1_database(dir.path(), false);
+
+        // Simulate a crash between migration steps 5 and 6: both derived
+        // CFs created, schema_version never stamped.
+        {
+            let db_opts = Options::default();
+            let existing = DB::list_cf(&Options::default(), dir.path()).unwrap();
+            let cfs: Vec<ColumnFamilyDescriptor> = existing
+                .iter()
+                .map(|n| ColumnFamilyDescriptor::new(n.clone(), Options::default()))
+                .collect();
+            let mut db = DB::open_cf_descriptors(&db_opts, dir.path(), cfs).unwrap();
+            db.create_cf("receipts", &Options::default()).unwrap();
+            db.create_cf("tasks", &Options::default()).unwrap();
+        }
+
+        // Reopen: creation is skipped, the stamp is applied — idempotent.
+        let store = RocksDbStorage::open(dir.path()).unwrap();
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION_CURRENT);
+        assert!(!store.has_receipt(&[0u8; 32]).unwrap());
+        assert!(!store.has_task(&[0u8; 32]).unwrap());
+    }
+
+    #[test]
+    fn rocksdb_interrupted_v3_migration_recovers() {
+        // A v2 database whose open crashed after creating `tasks` but
+        // before stamping 3: reopen must skip creation and stamp.
+        let dir = tempfile::tempdir().unwrap();
+        create_v2_database(dir.path(), None);
+        {
+            let existing = DB::list_cf(&Options::default(), dir.path()).unwrap();
+            let cfs: Vec<ColumnFamilyDescriptor> = existing
+                .iter()
+                .map(|n| ColumnFamilyDescriptor::new(n.clone(), Options::default()))
+                .collect();
+            let mut db = DB::open_cf_descriptors(&Options::default(), dir.path(), cfs).unwrap();
+            db.create_cf("tasks", &Options::default()).unwrap();
+        }
+        let store = RocksDbStorage::open(dir.path()).unwrap();
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION_CURRENT);
+        assert!(!store.has_task(&[0u8; 32]).unwrap());
+    }
+
+    #[test]
+    fn rocksdb_v3_database_reopens() {
+        let dir = tempfile::tempdir().unwrap();
+        let task_id = [0x77u8; 32];
+        let bytes = vec![42u8; 16];
+        let task_bytes = vec![43u8; 24];
+        {
+            let store = RocksDbStorage::open(dir.path()).unwrap();
+            store
+                .write_batch(vec![
+                    BatchOp::PutReceipt(task_id, bytes.clone()),
+                    BatchOp::PutTask(task_id, task_bytes.clone()),
+                ])
+                .unwrap();
+        }
+        // Receipt and task persist across reopen; version stays 3.
+        let store = RocksDbStorage::open(dir.path()).unwrap();
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION_CURRENT);
+        assert!(store.has_receipt(&task_id).unwrap());
+        assert_eq!(store.get_receipt(&task_id).unwrap(), Some(bytes));
+        assert!(store.has_task(&task_id).unwrap());
+        assert_eq!(store.get_task(&task_id).unwrap(), Some(task_bytes));
+    }
+
+    #[test]
+    fn rocksdb_newer_schema_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        // Create a valid v3 database, then stamp a newer version directly.
+        {
+            let _ = RocksDbStorage::open(dir.path()).unwrap();
+        }
+        {
+            let existing = DB::list_cf(&Options::default(), dir.path()).unwrap();
+            let cfs: Vec<ColumnFamilyDescriptor> = existing
+                .iter()
+                .map(|n| ColumnFamilyDescriptor::new(n.clone(), Options::default()))
+                .collect();
+            let db = DB::open_cf_descriptors(&Options::default(), dir.path(), cfs).unwrap();
+            let cf = db.cf_handle("meta").unwrap();
+            db.put_cf(&cf, b"schema_version", 4u32.to_be_bytes()).unwrap();
+        }
+        match RocksDbStorage::open(dir.path()) {
+            Err(StorageError::Schema(msg)) => {
+                assert!(
+                    msg.contains('4'),
+                    "error should name the found version: {msg}"
+                );
+                assert!(
+                    msg.contains('3'),
+                    "error should name the supported version: {msg}"
+                );
+            }
+            Err(other) => panic!("expected Schema error, got: {other:?}"),
+            Ok(_) => panic!("open must reject a newer schema version"),
+        }
+    }
+
+    #[test]
+    fn rocksdb_unknown_column_family_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        // Create a database containing a column family this binary does
+        // not know.
+        {
+            let mut db_opts = Options::default();
+            db_opts.create_if_missing(true);
+            db_opts.create_missing_column_families(true);
+            let mut names: Vec<&str> = V1_CFS.to_vec();
+            names.push("future_cf");
+            let cfs: Vec<ColumnFamilyDescriptor> = names
+                .iter()
+                .map(|n| ColumnFamilyDescriptor::new(*n, Options::default()))
+                .collect();
+            let _db = DB::open_cf_descriptors(&db_opts, dir.path(), cfs).unwrap();
+        }
+        match RocksDbStorage::open(dir.path()) {
+            Err(StorageError::Schema(msg)) => {
+                assert!(
+                    msg.contains("future_cf"),
+                    "error should name the unknown CF: {msg}"
+                );
+            }
+            Err(other) => panic!("expected Schema error, got: {other:?}"),
+            Ok(_) => panic!("open must reject an unknown column family"),
+        }
     }
 }

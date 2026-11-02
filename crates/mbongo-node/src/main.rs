@@ -26,7 +26,7 @@ mod backend;
 mod mempool;
 mod sync_service;
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use clap::Parser;
@@ -65,13 +65,34 @@ struct Args {
     #[arg(long, default_value = "9944")]
     rpc_port: u16,
 
+    /// RPC bind host (IP literal; 0.0.0.0 exposes it on all interfaces)
+    #[arg(long, default_value = "127.0.0.1")]
+    rpc_host: String,
+
     /// REST API port
     #[arg(long, default_value = "8080")]
     rest_port: u16,
 
+    /// REST bind host (IP literal; 0.0.0.0 exposes it on all interfaces)
+    #[arg(long, default_value = "127.0.0.1")]
+    rest_host: String,
+
     /// P2P port
     #[arg(long, default_value = "30333")]
     p2p_port: u16,
+
+    /// P2P bind host (IPv4 literal). The default listens on all interfaces,
+    /// as multi-host and container devnets need; a single-host deployment
+    /// passes 127.0.0.1 so no other host can reach the P2P port.
+    #[arg(long, default_value = "0.0.0.0")]
+    p2p_host: std::net::Ipv4Addr,
+
+    /// Disable mDNS local peer discovery. By default the node advertises
+    /// itself and auto-dials peers found by mDNS on every interface, whatever
+    /// --p2p-host says; a loopback-only deployment passes this flag and
+    /// reaches its peers through --bootnodes only.
+    #[arg(long)]
+    no_mdns: bool,
 
     /// Bootnodes (multiaddr format)
     #[arg(long)]
@@ -90,16 +111,47 @@ struct Args {
     data_dir: String,
 }
 
+/// Resolves a bind address from a host string and a port.
+///
+/// The host must be a literal IP address: `127.0.0.1` keeps the service
+/// loopback-only (the default, unchanged behaviour), `0.0.0.0` accepts
+/// connections from other hosts, which is what running inside a container
+/// requires. Names are deliberately not resolved: a bind address must be
+/// unambiguous.
+fn resolve_bind_addr(host: &str, port: u16, flag: &str) -> Result<SocketAddr, String> {
+    let ip: IpAddr = host.parse().map_err(|_| {
+        format!("invalid {flag} value {host:?}: expected an IP literal, e.g. 127.0.0.1 or 0.0.0.0")
+    })?;
+    Ok(SocketAddr::new(ip, port))
+}
+
+/// The protocol lock this binary implements (informational; see the lock).
+const PROTOCOL_AUTHORITY: &str = "PROTOCOL_LOCK_v0.4";
+/// The RPC contract this binary serves (informational).
+const RPC_AUTHORITY: &str = "rpc_v0.3";
+/// The on-disk schema this binary writes (informational; the storage layer
+/// is the authority and stamps it itself).
+const STORAGE_SCHEMA: u32 = 3;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
     let args = Args::parse();
 
+    // Resolve bind addresses up front so an invalid host fails before any
+    // storage or network side effect happens.
+    let rpc_addr = resolve_bind_addr(&args.rpc_host, args.rpc_port, "--rpc-host")?;
+    let rest_addr = resolve_bind_addr(&args.rest_host, args.rest_port, "--rest-host")?;
+
     println!("Starting Mbongo Chain node...");
+    // Operator version visibility (not a protocol field, not negotiated):
+    // the authority this binary implements. See
+    // docs/specs/PROTOCOL_LOCK_v0.4.md and docs/runbooks/DEVNET_V0.4_OPERATIONS.md.
+    println!("  Protocol: {PROTOCOL_AUTHORITY} ({RPC_AUTHORITY}, storage schema {STORAGE_SCHEMA})");
     println!("  Chain:    {}", args.chain);
-    println!("  RPC:      http://127.0.0.1:{}", args.rpc_port);
-    println!("  REST:     http://127.0.0.1:{}", args.rest_port);
+    println!("  RPC:      http://{rpc_addr}");
+    println!("  REST:     http://{rest_addr}");
     println!("  P2P:      0.0.0.0:{}", args.p2p_port);
 
     if let Some(name) = &args.name {
@@ -120,10 +172,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Genesis:  OK");
 
     // ── P2P ────────────────────────────────────────────────────────────
-    let mut p2p = P2PNode::new()?;
+    let mut p2p = P2PNode::with_mdns(!args.no_mdns)?;
     println!("  PeerId:   {}", p2p.peer_id);
+    // Printed only with --no-mdns: the default node's output is unchanged.
+    if !p2p.mdns_enabled() {
+        println!("  mDNS:     disabled (--no-mdns)");
+    }
 
-    p2p.listen(args.p2p_port)?;
+    p2p.listen_on_host(args.p2p_host, args.p2p_port)?;
 
     for addr in &args.bootnodes {
         if let Err(e) = p2p.dial(addr) {
@@ -164,7 +220,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // ── RPC ────────────────────────────────────────────────────────────
-    let rpc_addr: SocketAddr = ([127, 0, 0, 1], args.rpc_port).into();
     let rpc_backend = backend.clone();
     let rpc_handle = tokio::spawn(async move {
         if let Err(e) = mbongo_network::serve_on_addr(rpc_addr, rpc_backend).await {
@@ -173,7 +228,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // ── REST ───────────────────────────────────────────────────────────
-    let rest_addr: SocketAddr = ([127, 0, 0, 1], args.rest_port).into();
     let rest_backend = backend.clone();
     let rest_handle = tokio::spawn(async move {
         if let Err(e) = mbongo_api::rest::serve_on_addr(rest_addr, rest_backend).await {
@@ -421,8 +475,95 @@ async fn run_sync_orchestrator<S: mbongo_storage::Storage + Send + Sync + 'stati
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn it_works() {
         assert_eq!(2 + 2, 4);
+    }
+
+    #[test]
+    fn rpc_and_rest_bind_to_loopback_by_default() {
+        // Backward compatibility: with no new flags the node must bind
+        // exactly where it always has.
+        let args = Args::parse_from(["mbongo-node"]);
+        assert_eq!(args.rpc_host, "127.0.0.1");
+        assert_eq!(args.rest_host, "127.0.0.1");
+        assert_eq!(
+            resolve_bind_addr(&args.rpc_host, args.rpc_port, "--rpc-host").unwrap(),
+            "127.0.0.1:9944".parse::<SocketAddr>().unwrap()
+        );
+        assert_eq!(
+            resolve_bind_addr(&args.rest_host, args.rest_port, "--rest-host").unwrap(),
+            "127.0.0.1:8080".parse::<SocketAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn explicit_wildcard_host_is_accepted() {
+        let args = Args::parse_from([
+            "mbongo-node",
+            "--rpc-host",
+            "0.0.0.0",
+            "--rest-host",
+            "0.0.0.0",
+        ]);
+        assert_eq!(
+            resolve_bind_addr(&args.rpc_host, args.rpc_port, "--rpc-host").unwrap(),
+            "0.0.0.0:9944".parse::<SocketAddr>().unwrap()
+        );
+        assert_eq!(
+            resolve_bind_addr(&args.rest_host, args.rest_port, "--rest-host").unwrap(),
+            "0.0.0.0:8080".parse::<SocketAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn invalid_host_is_rejected_with_an_actionable_error() {
+        let err = resolve_bind_addr("not-an-ip", 9944, "--rpc-host").unwrap_err();
+        assert!(err.contains("--rpc-host"), "error names the flag: {err}");
+        assert!(err.contains("not-an-ip"), "error quotes the value: {err}");
+        assert!(resolve_bind_addr("", 9944, "--rpc-host").is_err());
+        assert!(resolve_bind_addr("127.0.0.1:9944", 9944, "--rpc-host").is_err());
+    }
+
+    #[test]
+    fn hosts_and_ports_stay_independent() {
+        let args = Args::parse_from([
+            "mbongo-node",
+            "--rpc-host",
+            "0.0.0.0",
+            "--rpc-port",
+            "19944",
+        ]);
+        assert_eq!(args.rpc_port, 19944);
+        assert_eq!(args.rpc_host, "0.0.0.0");
+        // --rpc-host must not leak into the REST side.
+        assert_eq!(args.rest_host, "127.0.0.1");
+        assert_eq!(args.rest_port, 8080);
+    }
+
+    #[test]
+    fn p2p_behaviour_is_untouched() {
+        // P2P has no host flag: it keeps its own listen semantics.
+        let args = Args::parse_from(["mbongo-node"]);
+        assert_eq!(args.p2p_port, 30333);
+    }
+
+    #[test]
+    fn mdns_stays_enabled_by_default() {
+        // F-N2: the default node keeps mDNS discovery exactly as before.
+        let args = Args::parse_from(["mbongo-node"]);
+        assert!(!args.no_mdns);
+        assert_eq!(args.p2p_host, std::net::Ipv4Addr::UNSPECIFIED);
+    }
+
+    #[test]
+    fn no_mdns_flag_disables_mdns() {
+        let args = Args::parse_from(["mbongo-node", "--p2p-host", "127.0.0.1", "--no-mdns"]);
+        assert!(args.no_mdns);
+        assert_eq!(args.p2p_host, std::net::Ipv4Addr::LOCALHOST);
+        // The flag takes no value.
+        assert!(Args::try_parse_from(["mbongo-node", "--no-mdns", "true"]).is_err());
     }
 }

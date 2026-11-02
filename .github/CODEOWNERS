@@ -1,9 +1,19 @@
+# Code review routing only.
+#
+# CODEOWNERS routes review requests. It does NOT confer protocol approval
+# authority: that comes solely from the Core Maintainer roster in
+# docs/RFC_PROCESS.md. See that file for governance modes.
+#
+# Entries must name accounts that are repository collaborators. GitHub
+# refuses review requests to anyone else, which silently makes the entry
+# inert.
+
 # Core protocol ownership
-/crates/ @Mutshipayi91
-/runtime/ @Mutshipayi91
+/crates/ @gkalombo21
+/runtime/ @gkalombo21
 
 # CI and repository governance
-/.github/ @Mutshipayi91
+/.github/ @gkalombo21
 
 # Default owner
-* @Mutshipayi91
+* @gkalombo21

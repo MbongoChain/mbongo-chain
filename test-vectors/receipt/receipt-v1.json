@@ -1,0 +1,227 @@
+{
+  "fixture_version": 1,
+  "receipt_spec": "RECEIPT_SPEC_v0.1 as consumed by protocol v0.3",
+  "authority": [
+    "docs/specs/RECEIPT_SPEC_v0.1.md",
+    "docs/rfcs/0002-receipt-anchoring-v0.3.md",
+    "docs/specs/PROTOCOL_LOCK_v0.3.md"
+  ],
+  "conventions": {
+    "hex": "lowercase, no 0x prefix",
+    "byte_order": "fixed-width fields are contiguous bytes in canonical order",
+    "metadata_encoding": "SCALE compact length prefix, then the raw bytes",
+    "metadata_pattern": "{pattern:repeat, byte:<hex>, length:<n>} expands to that byte repeated length times"
+  },
+  "canonical_field_order": [
+    "version",
+    "task_id",
+    "input_commitment",
+    "output_commitment",
+    "executor",
+    "metadata",
+    "signature"
+  ],
+  "rules": {
+    "signing_payload": "SCALE encoding of fields 1-6; signature is excluded",
+    "receipt_hash": "BLAKE3(signing_payload)",
+    "executor_signature": "Ed25519 over the RAW 32 bytes of receipt_hash, never over its hex text",
+    "full_encoding": "signing_payload || signature"
+  },
+  "metadata_max_bytes": 4096,
+  "test_key": {
+    "warning": "TEST ONLY. NOT A PRODUCTION KEY. The seed is public.",
+    "ed25519_seed": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
+    "public_key": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61"
+  },
+  "valid": [
+    {
+      "name": "empty-metadata",
+      "note": "Shortest encoding: empty Vec, prefix 0x00.",
+      "receipt": {
+        "version": 1,
+        "task_id": "1111111111111111111111111111111111111111111111111111111111111111",
+        "input_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+        "output_commitment": "3333333333333333333333333333333333333333333333333333333333333333",
+        "executor": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "metadata": {
+          "pattern": "repeat",
+          "byte": "ab",
+          "length": 0
+        }
+      },
+      "expected": {
+        "metadata_compact_prefix": "00",
+        "signing_payload_length": 130,
+        "receipt_hash": "575f4e4b248eba0fcb28accc072fab685e14567c957fd9fcda4d4efff0ad4b9f",
+        "executor_signature": "1b654790b317c65123e0b40692b4727e1ba5133a078e15b4e9960a47fb0524ff19a4b146197ee5fa542a9c08809dfe40db899327a8fba87cbdd23baeff32e602",
+        "full_encoding_length": 194,
+        "signing_payload": "01111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d6100",
+        "full_encoding": "01111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61001b654790b317c65123e0b40692b4727e1ba5133a078e15b4e9960a47fb0524ff19a4b146197ee5fa542a9c08809dfe40db899327a8fba87cbdd23baeff32e602"
+      }
+    },
+    {
+      "name": "three-bytes",
+      "note": "Matches the historical in-crate vector length.",
+      "receipt": {
+        "version": 1,
+        "task_id": "1111111111111111111111111111111111111111111111111111111111111111",
+        "input_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+        "output_commitment": "3333333333333333333333333333333333333333333333333333333333333333",
+        "executor": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "metadata": {
+          "pattern": "repeat",
+          "byte": "ab",
+          "length": 3
+        }
+      },
+      "expected": {
+        "metadata_compact_prefix": "0c",
+        "signing_payload_length": 133,
+        "receipt_hash": "e2801885858eff4190907470013fa4ccbabe98156721b2d904b9d56d9de0ac7d",
+        "executor_signature": "6a1e058162caa87f15ce273fdb4b38fe5aea569b6e7ce8e29b1d3b96b40e931850eafacbc666f1cc354e74cd10c046ea8e4df892ae8475c5b2b2db76dd531701",
+        "full_encoding_length": 197,
+        "signing_payload": "01111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d610cababab",
+        "full_encoding": "01111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d610cababab6a1e058162caa87f15ce273fdb4b38fe5aea569b6e7ce8e29b1d3b96b40e931850eafacbc666f1cc354e74cd10c046ea8e4df892ae8475c5b2b2db76dd531701"
+      }
+    },
+    {
+      "name": "compact-prefix-max-one-byte",
+      "note": "Last length whose compact prefix is one byte.",
+      "receipt": {
+        "version": 1,
+        "task_id": "1111111111111111111111111111111111111111111111111111111111111111",
+        "input_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+        "output_commitment": "3333333333333333333333333333333333333333333333333333333333333333",
+        "executor": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "metadata": {
+          "pattern": "repeat",
+          "byte": "ab",
+          "length": 63
+        }
+      },
+      "expected": {
+        "metadata_compact_prefix": "fc",
+        "signing_payload_length": 193,
+        "receipt_hash": "05e4582b4f9b8bea50b860e1962acd684e5f1f63932ce97d2ca2a0ee505cefcb",
+        "executor_signature": "ff2d8d0ec0f8a3a6e7476048fb6231c69a11604a8babd0cc960d26adb70d0cf6b91849f7f11833b2f76d5cacae9fd6161c026e55608830d3457192c7a90ec007",
+        "full_encoding_length": 257,
+        "signing_payload": "01111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61fcababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+        "full_encoding": "01111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61fcabababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababff2d8d0ec0f8a3a6e7476048fb6231c69a11604a8babd0cc960d26adb70d0cf6b91849f7f11833b2f76d5cacae9fd6161c026e55608830d3457192c7a90ec007"
+      }
+    },
+    {
+      "name": "compact-prefix-first-two-byte",
+      "note": "First length whose compact prefix is TWO bytes.",
+      "receipt": {
+        "version": 1,
+        "task_id": "1111111111111111111111111111111111111111111111111111111111111111",
+        "input_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+        "output_commitment": "3333333333333333333333333333333333333333333333333333333333333333",
+        "executor": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "metadata": {
+          "pattern": "repeat",
+          "byte": "ab",
+          "length": 64
+        }
+      },
+      "expected": {
+        "metadata_compact_prefix": "0101",
+        "signing_payload_length": 195,
+        "receipt_hash": "08122cb2a43607de0c7fa3f4e294d2761db6fd8d2324baaf62e204f4095b3df2",
+        "executor_signature": "b5f6ca87d6c8b343117a5fc4994cfe43126832dab5559580fe56831921f71bc5918d64794dd2428d79a1297ca39192824469b72641cddc0dd3a6e5557652ce03",
+        "full_encoding_length": 259,
+        "signing_payload": "01111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d610101abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+        "full_encoding": "01111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d610101ababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababb5f6ca87d6c8b343117a5fc4994cfe43126832dab5559580fe56831921f71bc5918d64794dd2428d79a1297ca39192824469b72641cddc0dd3a6e5557652ce03"
+      }
+    },
+    {
+      "name": "metadata-at-consensus-bound",
+      "note": "MAX_RECEIPT_METADATA_BYTES. Prefix is two bytes.",
+      "receipt": {
+        "version": 1,
+        "task_id": "1111111111111111111111111111111111111111111111111111111111111111",
+        "input_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+        "output_commitment": "3333333333333333333333333333333333333333333333333333333333333333",
+        "executor": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "metadata": {
+          "pattern": "repeat",
+          "byte": "ab",
+          "length": 4096
+        }
+      },
+      "expected": {
+        "metadata_compact_prefix": "0140",
+        "signing_payload_length": 4227,
+        "receipt_hash": "92456d24dec6f48657cc19f96bb3989c7fb7c5cb3a1b6cd7f50945c47579a6b7",
+        "executor_signature": "b1314a2b723ef332ed6332f245fb5b9116759780bfc13df74fd38d00945090479cec79270ecb87c44545dea5afba7b60375fbf97f49e3fdcfe8620deaf0dc900",
+        "full_encoding_length": 4291
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "metadata-over-consensus-bound",
+      "proves": "consensus bound violation, not an encoding or signature error",
+      "note": "Encodes and hashes fine; MAX_RECEIPT_METADATA_BYTES rejects it during block application.",
+      "receipt": {
+        "version": 1,
+        "task_id": "1111111111111111111111111111111111111111111111111111111111111111",
+        "input_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+        "output_commitment": "3333333333333333333333333333333333333333333333333333333333333333",
+        "executor": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "metadata": {
+          "pattern": "repeat",
+          "byte": "ab",
+          "length": 4097
+        }
+      },
+      "expected": {
+        "metadata_compact_prefix": "0540",
+        "rejected_by": "metadata_bound"
+      }
+    },
+    {
+      "name": "field-mutated-after-signing",
+      "proves": "signature failure: the hash is recomputed from the mutated payload, so the pinned signature no longer verifies",
+      "note": "task_id is changed while keeping the signature from the unmutated receipt. The verifier recomputes receipt_hash, so this surfaces as a signature failure, not a stored-hash mismatch.",
+      "receipt": {
+        "version": 1,
+        "task_id": "9999999999999999999999999999999999999999999999999999999999999999",
+        "input_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+        "output_commitment": "3333333333333333333333333333333333333333333333333333333333333333",
+        "executor": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "metadata": {
+          "pattern": "repeat",
+          "byte": "ab",
+          "length": 3
+        },
+        "signature": "6a1e058162caa87f15ce273fdb4b38fe5aea569b6e7ce8e29b1d3b96b40e931850eafacbc666f1cc354e74cd10c046ea8e4df892ae8475c5b2b2db76dd531701"
+      },
+      "expected": {
+        "rejected_by": "signature"
+      }
+    },
+    {
+      "name": "signature-from-wrong-key",
+      "proves": "signature failure with an otherwise perfectly canonical receipt",
+      "note": "Every byte is canonical and the hash is correct; only the signer is wrong.",
+      "receipt": {
+        "version": 1,
+        "task_id": "1111111111111111111111111111111111111111111111111111111111111111",
+        "input_commitment": "2222222222222222222222222222222222222222222222222222222222222222",
+        "output_commitment": "3333333333333333333333333333333333333333333333333333333333333333",
+        "executor": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "metadata": {
+          "pattern": "repeat",
+          "byte": "ab",
+          "length": 3
+        },
+        "signature": "13a069b8a72265e4c30ab5a66bb81cfcdf9029c919d5ceed04d5630e45a946f3d2705eb276f3b601704bf2594abdec40c6a9ff2a043dd352efd9b34cb39b950c"
+      },
+      "expected": {
+        "receipt_hash": "e2801885858eff4190907470013fa4ccbabe98156721b2d904b9d56d9de0ac7d",
+        "rejected_by": "signature"
+      }
+    }
+  ]
+}
