@@ -57,7 +57,9 @@ pub fn check_loopback_bind(bind: std::net::SocketAddr) -> Result<(), String> {
 
 /// Everything the MVP service holds only in process memory, and therefore
 /// loses when it stops (`docs/product/MVP_LAUNCH_RUNBOOK.md` §7). Printed at
-/// start-up so no operator has to infer it.
+/// start-up so no operator has to infer it. Public facts are not in this
+/// list: after a restart the control plane rediscovers tasks and receipts
+/// from the chain.
 pub const IN_MEMORY_STATE: &[(&str, &str)] = &[
     (
         "uploaded private inputs",
@@ -77,7 +79,7 @@ pub const IN_MEMORY_STATE: &[(&str, &str)] = &[
     ),
     (
         "status snapshots and inference timings",
-        "LOST: status of earlier tasks answers TASK_NOT_FOUND",
+        "LOST: public task and receipt facts are rediscovered from the chain, but private registration, input and result state is not; an earlier task shows as not_registered (attempts 0, no result) with its receipt still visible; result retrieval stays unavailable and it is never re-executed",
     ),
     (
         "request replay history",

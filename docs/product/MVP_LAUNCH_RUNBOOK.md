@@ -122,10 +122,12 @@ The service holds this state **only in process memory**; stopping or crashing it
 | persisted private results | lost; cannot be recovered | LOST_BUT_ACCEPTABLE — receipts stay on-chain and verifiable |
 | task registrations, input references | lost; tasks registered before are never executed | LOST_BUT_ACCEPTABLE |
 | leases, attempts, parked tasks | lost; counts reset | LOST_BUT_ACCEPTABLE |
-| status snapshots, inference timings | lost; earlier tasks answer `TASK_NOT_FOUND` | LOST_BUT_ACCEPTABLE |
+| status snapshots, inference timings | lost; public task and receipt facts are rediscovered from the chain, private state is not: an earlier task shows as `not_registered` (attempts 0, no result) with its receipt still visible; result retrieval stays unavailable (`404 TASK_NOT_REGISTERED`); it is never re-executed | LOST_BUT_ACCEPTABLE |
 | request replay history | lost; a captured request is replayable only inside its ±120 s window | LOST_BUT_ACCEPTABLE (`REPLAY_DURABILITY = PROCESS_LIFETIME_ONLY`) |
 | front owner key, control-plane issuer key | regenerated at start | RECONSTRUCTIBLE |
 | chain state | on disk in the node data directories | durable |
+
+**What a restart keeps.** The chain is the only durable state. At start-up the control plane re-reads it and rediscovers every task and every anchored receipt, so `status` of an earlier task answers `200` with `state: not_registered`, `attempts: 0`, `result_available: false` and the receipt height. That is public information only: the registration, the input reference, the attempts and the result bytes are gone, `result` answers `404 TASK_NOT_REGISTERED`, and the worker never re-executes the task. The receipt still verifies on-chain (`verify` reports the result as not found). Observed at the controlled-launch gate (#164, release candidate `1c6567f2`), which corrected an earlier statement that earlier tasks answer `TASK_NOT_FOUND`.
 
 None is launch-blocking for a controlled launch with this procedure: **finish or abandon every job before stopping the service**; after any restart, clients re-submit (a new task; the CLI never resubmits by itself). There is no backup of private data, by design: there is none on disk.
 

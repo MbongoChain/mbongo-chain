@@ -275,7 +275,81 @@ fn o03_restart_state_is_disclosed_item_by_item() {
             consequence.starts_with("LOST") || consequence.starts_with("REGENERATED"),
             "{item}: {consequence}"
         );
+        // #164: earlier tasks are rediscovered from the chain, not unknown.
+        assert!(
+            !consequence.contains("TASK_NOT_FOUND"),
+            "{item}: {consequence}"
+        );
     }
+    let (_, status) = IN_MEMORY_STATE.iter().find(|(i, _)| i.contains("status")).unwrap();
+    for needed in [
+        "rediscovered from the chain",
+        "not_registered",
+        "receipt still visible",
+        "result retrieval stays unavailable",
+        "never re-executed",
+    ] {
+        assert!(status.contains(needed), "{needed} not disclosed: {status}");
+    }
+}
+
+/// What o03 discloses, observed: a second front over the same chain (a
+/// service restart: fresh in-memory state, fresh owner key, fresh backend)
+/// rediscovers the completed task and its receipt from the chain, holds no
+/// registration or result for it, and never runs it again.
+#[tokio::test]
+async fn o07_restart_rediscovers_public_facts_only() {
+    let r = ok_rig().await;
+    let id = registered(&r, 0x07).await;
+    for _ in 0..3 {
+        step(&r).await;
+    }
+    let before = r.client.status(id).await.unwrap();
+    assert_eq!(before.state, "completed");
+    assert!(before.result_available);
+    let receipt_height = before.receipt_height.expect("receipt observed");
+
+    // Restart: everything in process memory is new; the chain is the same.
+    let backend = Arc::new(FakeBackend::pinned());
+    backend.push_content(&raw_output());
+    let profile = InferenceProfile::new(Arc::clone(&backend) as Arc<dyn InferenceBackend>).unwrap();
+    let observations = profile.observations();
+    let front = Front::new(
+        r.chain.clone(),
+        Arc::new(r.clock.clone()) as Arc<dyn Clock>,
+        [0x43u8; 32],
+        r.executor.clone(),
+        Arc::new(profile),
+        Some(observations),
+        FrontConfig::default(),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let router = front.router();
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    let client = FrontClient::new(&base, r.key.clone())
+        .unwrap()
+        .with_clock(Arc::new(r.clock.clone()));
+    for _ in 0..3 {
+        r.chain.produce_block();
+        front.tick().await.unwrap();
+    }
+
+    // Public facts: the task and its receipt, rediscovered.
+    let after = client.status(id).await.unwrap();
+    assert_eq!(after.state, "not_registered");
+    assert_eq!(after.attempts, 0);
+    assert!(!after.result_available);
+    assert_eq!(after.receipt_height, Some(receipt_height));
+    // Private state: gone.
+    let e = client.result(id).await.unwrap_err();
+    assert_eq!(e.code(), Some("TASK_NOT_REGISTERED"));
+    // Never re-executed.
+    assert_eq!(backend.calls(), 0);
+    // The receipt is on-chain regardless.
+    assert!(find_anchored_receipt(&r.chain, id, 1).await.unwrap().is_some());
 }
 
 #[test]
