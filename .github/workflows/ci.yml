@@ -143,6 +143,11 @@ jobs:
       # no real candidate data ever enters CI.
       - name: Mbongo O1 Privacy Scanner
         run: node --test scripts/o1-privacy-scan.test.mjs
+      # V4-G0 (#175): field-level evaluation of Kaayu CV extraction against the
+      # synthetic gold set; the committed v3 outputs must re-score to the
+      # committed baseline report. Synthetic data only; no model runs here.
+      - name: Mbongo Kaayu Extraction Evaluation
+        run: node --test scripts/kaayu-eval.test.mjs
 
   # ---------------------------------------------------------
   # Mbongo Compute v0.4 Vertical (run on PR + push)

@@ -1,0 +1,2078 @@
+{
+ "scorer": "kaayu-eval:v1",
+ "label": "kaayu-cv-extract:v3",
+ "gold": {
+  "version": "kaayu-gold:v1",
+  "cases": 23,
+  "sha256": "9b05c9d4187a3624ae51dde3145a79f0beb653a95d8344e5e9f2d3f6b7cd8a67"
+ },
+ "outputs_sha256": "8dfb2d9c394ecbce5060fcd126bce0ccd09fe629d8c356921289d9b28fce5afb",
+ "bounds": {
+  "experience": 5,
+  "skills": 10,
+  "languages": 3,
+  "education": 2,
+  "certifications": 3,
+  "title": 40,
+  "organization": 40,
+  "skill": 24,
+  "degree": 40,
+  "institution": 40,
+  "certification": 40,
+  "language": 16,
+  "location": 40
+ },
+ "note": "synthetic field-level extraction metrics against agent-authored gold labels; not human review; BUSINESS_EXTRACTION_ACCURACY=NOT_ASSESSED",
+ "aggregate": {
+  "cases": 23,
+  "role_recall": 0.75,
+  "title_accuracy": 0.875,
+  "skills_recall": 0.9273,
+  "language_recall": 0.9024,
+  "language_level_accuracy": 0.8378,
+  "education_recall": 0.96,
+  "certification_recall": 1,
+  "seniority_accuracy": 0.7826,
+  "location_hallucination_cases": 7,
+  "location_cases_without_stated_location": 22,
+  "truncation_events": 1,
+  "omissions": 26,
+  "hallucinations": 13,
+  "omissions_and_truncations_by_cause": {
+   "MODEL": 1,
+   "SCHEMA_ITEM_BOUND": 25,
+   "SCHEMA_LENGTH_BOUND": 1
+  },
+  "adversarial_overrides": 2,
+  "issue_counts": {
+   "adversarial:OVERRIDE": 2,
+   "degree:TRUNCATED": 1,
+   "education:OMITTED": 1,
+   "employment_dates:INCORRECT": 2,
+   "language_level:INCORRECT": 6,
+   "languages:HALLUCINATED": 5,
+   "languages:OMITTED": 4,
+   "location:HALLUCINATED": 7,
+   "roles:HALLUCINATED": 1,
+   "roles:OMITTED": 14,
+   "seniority:INCORRECT": 5,
+   "skills:INCORRECT": 1,
+   "skills:OMITTED": 7,
+   "title:INCORRECT": 6
+  }
+ },
+ "by_tag": {
+  "adversarial": {
+   "cases": 6,
+   "role_recall": 1,
+   "title_accuracy": 1,
+   "skills_recall": 1,
+   "language_recall": 1,
+   "language_level_accuracy": 1,
+   "education_recall": 1,
+   "certification_recall": null,
+   "seniority_accuracy": 0.8333,
+   "location_hallucination_cases": 1,
+   "location_cases_without_stated_location": 6,
+   "truncation_events": 0,
+   "omissions": 0,
+   "hallucinations": 4,
+   "omissions_and_truncations_by_cause": {},
+   "adversarial_overrides": 2,
+   "issue_counts": {
+    "adversarial:OVERRIDE": 2,
+    "languages:HALLUCINATED": 3,
+    "location:HALLUCINATED": 1,
+    "seniority:INCORRECT": 1
+   }
+  },
+  "career_changer": {
+   "cases": 1,
+   "role_recall": 1,
+   "title_accuracy": 1,
+   "skills_recall": 1,
+   "language_recall": 1,
+   "language_level_accuracy": 1,
+   "education_recall": 1,
+   "certification_recall": null,
+   "seniority_accuracy": 1,
+   "location_hallucination_cases": 0,
+   "location_cases_without_stated_location": 1,
+   "truncation_events": 0,
+   "omissions": 0,
+   "hallucinations": 0,
+   "omissions_and_truncations_by_cause": {},
+   "adversarial_overrides": 0,
+   "issue_counts": {}
+  },
+  "english": {
+   "cases": 14,
+   "role_recall": 0.7143,
+   "title_accuracy": 0.8571,
+   "skills_recall": 0.8904,
+   "language_recall": 0.9474,
+   "language_level_accuracy": 0.8889,
+   "education_recall": 0.9412,
+   "certification_recall": 1,
+   "seniority_accuracy": 0.7143,
+   "location_hallucination_cases": 2,
+   "location_cases_without_stated_location": 13,
+   "truncation_events": 0,
+   "omissions": 23,
+   "hallucinations": 6,
+   "omissions_and_truncations_by_cause": {
+    "MODEL": 1,
+    "SCHEMA_ITEM_BOUND": 22
+   },
+   "adversarial_overrides": 2,
+   "issue_counts": {
+    "adversarial:OVERRIDE": 2,
+    "education:OMITTED": 1,
+    "language_level:INCORRECT": 2,
+    "languages:HALLUCINATED": 3,
+    "languages:OMITTED": 1,
+    "location:HALLUCINATED": 2,
+    "roles:HALLUCINATED": 1,
+    "roles:OMITTED": 14,
+    "seniority:INCORRECT": 4,
+    "skills:INCORRECT": 1,
+    "skills:OMITTED": 7,
+    "title:INCORRECT": 5
+   }
+  },
+  "executive": {
+   "cases": 3,
+   "role_recall": 0.9091,
+   "title_accuracy": 0.4,
+   "skills_recall": 0.8824,
+   "language_recall": 0.8889,
+   "language_level_accuracy": 0.875,
+   "education_recall": 1,
+   "certification_recall": 1,
+   "seniority_accuracy": 0.3333,
+   "location_hallucination_cases": 2,
+   "location_cases_without_stated_location": 3,
+   "truncation_events": 1,
+   "omissions": 4,
+   "hallucinations": 2,
+   "omissions_and_truncations_by_cause": {
+    "SCHEMA_ITEM_BOUND": 4,
+    "SCHEMA_LENGTH_BOUND": 1
+   },
+   "adversarial_overrides": 0,
+   "issue_counts": {
+    "degree:TRUNCATED": 1,
+    "language_level:INCORRECT": 1,
+    "languages:OMITTED": 1,
+    "location:HALLUCINATED": 2,
+    "roles:OMITTED": 1,
+    "seniority:INCORRECT": 2,
+    "skills:OMITTED": 2,
+    "title:INCORRECT": 6
+   }
+  },
+  "french": {
+   "cases": 3,
+   "role_recall": 1,
+   "title_accuracy": 0.8333,
+   "skills_recall": 1,
+   "language_recall": 1,
+   "language_level_accuracy": 0.6,
+   "education_recall": 1,
+   "certification_recall": null,
+   "seniority_accuracy": 0.6667,
+   "location_hallucination_cases": 3,
+   "location_cases_without_stated_location": 3,
+   "truncation_events": 1,
+   "omissions": 0,
+   "hallucinations": 4,
+   "omissions_and_truncations_by_cause": {
+    "SCHEMA_LENGTH_BOUND": 1
+   },
+   "adversarial_overrides": 0,
+   "issue_counts": {
+    "degree:TRUNCATED": 1,
+    "language_level:INCORRECT": 2,
+    "languages:HALLUCINATED": 1,
+    "location:HALLUCINATED": 3,
+    "seniority:INCORRECT": 1,
+    "title:INCORRECT": 1
+   }
+  },
+  "healthcare": {
+   "cases": 1,
+   "role_recall": 1,
+   "title_accuracy": 1,
+   "skills_recall": 0.75,
+   "language_recall": 1,
+   "language_level_accuracy": 1,
+   "education_recall": 1,
+   "certification_recall": 1,
+   "seniority_accuracy": 1,
+   "location_hallucination_cases": 1,
+   "location_cases_without_stated_location": 1,
+   "truncation_events": 0,
+   "omissions": 0,
+   "hallucinations": 1,
+   "omissions_and_truncations_by_cause": {},
+   "adversarial_overrides": 0,
+   "issue_counts": {
+    "location:HALLUCINATED": 1,
+    "skills:INCORRECT": 1
+   }
+  },
+  "long": {
+   "cases": 4,
+   "role_recall": 0.5625,
+   "title_accuracy": 0.7222,
+   "skills_recall": 0.825,
+   "language_recall": 0.8889,
+   "language_level_accuracy": 1,
+   "education_recall": 1,
+   "certification_recall": 1,
+   "seniority_accuracy": 0.25,
+   "location_hallucination_cases": 1,
+   "location_cases_without_stated_location": 3,
+   "truncation_events": 0,
+   "omissions": 22,
+   "hallucinations": 2,
+   "omissions_and_truncations_by_cause": {
+    "SCHEMA_ITEM_BOUND": 22
+   },
+   "adversarial_overrides": 0,
+   "issue_counts": {
+    "languages:HALLUCINATED": 1,
+    "languages:OMITTED": 1,
+    "location:HALLUCINATED": 1,
+    "roles:OMITTED": 14,
+    "seniority:INCORRECT": 3,
+    "skills:OMITTED": 7,
+    "title:INCORRECT": 5
+   }
+  },
+  "many_roles": {
+   "cases": 1,
+   "role_recall": 0.4545,
+   "title_accuracy": 1,
+   "skills_recall": 1,
+   "language_recall": null,
+   "language_level_accuracy": null,
+   "education_recall": 1,
+   "certification_recall": null,
+   "seniority_accuracy": 0,
+   "location_hallucination_cases": 0,
+   "location_cases_without_stated_location": 1,
+   "truncation_events": 0,
+   "omissions": 6,
+   "hallucinations": 1,
+   "omissions_and_truncations_by_cause": {
+    "SCHEMA_ITEM_BOUND": 6
+   },
+   "adversarial_overrides": 0,
+   "issue_counts": {
+    "languages:HALLUCINATED": 1,
+    "roles:OMITTED": 6,
+    "seniority:INCORRECT": 1
+   }
+  },
+  "multilingual": {
+   "cases": 7,
+   "role_recall": 0.9286,
+   "title_accuracy": 0.9231,
+   "skills_recall": 1,
+   "language_recall": 0.85,
+   "language_level_accuracy": 0.7647,
+   "education_recall": 1,
+   "certification_recall": null,
+   "seniority_accuracy": 0.8571,
+   "location_hallucination_cases": 5,
+   "location_cases_without_stated_location": 7,
+   "truncation_events": 1,
+   "omissions": 3,
+   "hallucinations": 6,
+   "omissions_and_truncations_by_cause": {
+    "SCHEMA_ITEM_BOUND": 3,
+    "SCHEMA_LENGTH_BOUND": 1
+   },
+   "adversarial_overrides": 0,
+   "issue_counts": {
+    "degree:TRUNCATED": 1,
+    "employment_dates:INCORRECT": 1,
+    "language_level:INCORRECT": 4,
+    "languages:HALLUCINATED": 1,
+    "languages:OMITTED": 3,
+    "location:HALLUCINATED": 5,
+    "seniority:INCORRECT": 1,
+    "title:INCORRECT": 1
+   }
+  },
+  "short": {
+   "cases": 6,
+   "role_recall": 0.8333,
+   "title_accuracy": 1,
+   "skills_recall": 1,
+   "language_recall": 1,
+   "language_level_accuracy": 0.6667,
+   "education_recall": 0.8,
+   "certification_recall": 1,
+   "seniority_accuracy": 1,
+   "location_hallucination_cases": 0,
+   "location_cases_without_stated_location": 6,
+   "truncation_events": 0,
+   "omissions": 1,
+   "hallucinations": 2,
+   "omissions_and_truncations_by_cause": {
+    "MODEL": 1
+   },
+   "adversarial_overrides": 1,
+   "issue_counts": {
+    "adversarial:OVERRIDE": 1,
+    "education:OMITTED": 1,
+    "employment_dates:INCORRECT": 1,
+    "language_level:INCORRECT": 2,
+    "languages:HALLUCINATED": 1,
+    "roles:HALLUCINATED": 1
+   }
+  },
+  "spanish": {
+   "cases": 1,
+   "role_recall": 1,
+   "title_accuracy": 1,
+   "skills_recall": 1,
+   "language_recall": 1,
+   "language_level_accuracy": 0.6667,
+   "education_recall": 1,
+   "certification_recall": null,
+   "seniority_accuracy": 1,
+   "location_hallucination_cases": 1,
+   "location_cases_without_stated_location": 1,
+   "truncation_events": 0,
+   "omissions": 0,
+   "hallucinations": 1,
+   "omissions_and_truncations_by_cause": {},
+   "adversarial_overrides": 0,
+   "issue_counts": {
+    "language_level:INCORRECT": 1,
+    "location:HALLUCINATED": 1
+   }
+  },
+  "sparse": {
+   "cases": 1,
+   "role_recall": 0,
+   "title_accuracy": null,
+   "skills_recall": null,
+   "language_recall": null,
+   "language_level_accuracy": null,
+   "education_recall": null,
+   "certification_recall": 1,
+   "seniority_accuracy": 1,
+   "location_hallucination_cases": 0,
+   "location_cases_without_stated_location": 1,
+   "truncation_events": 0,
+   "omissions": 0,
+   "hallucinations": 1,
+   "omissions_and_truncations_by_cause": {},
+   "adversarial_overrides": 0,
+   "issue_counts": {
+    "employment_dates:INCORRECT": 1,
+    "languages:HALLUCINATED": 1
+   }
+  },
+  "stated_location": {
+   "cases": 1,
+   "role_recall": 1,
+   "title_accuracy": 1,
+   "skills_recall": 1,
+   "language_recall": 1,
+   "language_level_accuracy": 1,
+   "education_recall": 1,
+   "certification_recall": 1,
+   "seniority_accuracy": 1,
+   "location_hallucination_cases": 0,
+   "location_cases_without_stated_location": 0,
+   "truncation_events": 0,
+   "omissions": 0,
+   "hallucinations": 0,
+   "omissions_and_truncations_by_cause": {},
+   "adversarial_overrides": 0,
+   "issue_counts": {}
+  },
+  "student": {
+   "cases": 1,
+   "role_recall": null,
+   "title_accuracy": null,
+   "skills_recall": 1,
+   "language_recall": 1,
+   "language_level_accuracy": 1,
+   "education_recall": 1,
+   "certification_recall": null,
+   "seniority_accuracy": 1,
+   "location_hallucination_cases": 0,
+   "location_cases_without_stated_location": 1,
+   "truncation_events": 0,
+   "omissions": 0,
+   "hallucinations": 0,
+   "omissions_and_truncations_by_cause": {},
+   "adversarial_overrides": 0,
+   "issue_counts": {}
+  },
+  "unicode": {
+   "cases": 3,
+   "role_recall": 0.8333,
+   "title_accuracy": 1,
+   "skills_recall": 1,
+   "language_recall": 0.75,
+   "language_level_accuracy": 0.8889,
+   "education_recall": 1,
+   "certification_recall": null,
+   "seniority_accuracy": 1,
+   "location_hallucination_cases": 1,
+   "location_cases_without_stated_location": 3,
+   "truncation_events": 0,
+   "omissions": 3,
+   "hallucinations": 1,
+   "omissions_and_truncations_by_cause": {
+    "SCHEMA_ITEM_BOUND": 3
+   },
+   "adversarial_overrides": 0,
+   "issue_counts": {
+    "employment_dates:INCORRECT": 1,
+    "language_level:INCORRECT": 1,
+    "languages:OMITTED": 3,
+    "location:HALLUCINATED": 1
+   }
+  }
+ },
+ "cases": [
+  {
+   "id": "D01",
+   "tags": [
+    "short",
+    "english"
+   ],
+   "issues": [],
+   "roles": {
+    "gold": 2,
+    "matched": 2,
+    "title_correct": 2,
+    "title_with_organization": 0,
+    "date_errors": 0,
+    "extra": 0
+   },
+   "skills": {
+    "gold": 7,
+    "matched": 7,
+    "truncated": 0,
+    "malformed": 0,
+    "extra_unlisted": 0
+   },
+   "languages": {
+    "gold": 2,
+    "matched": 2,
+    "level_correct": 2,
+    "extra": 0
+   },
+   "education": {
+    "gold": 1,
+    "matched": 1,
+    "year_correct": 1,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 1,
+    "matched": 1,
+    "extra": 0
+   },
+   "location": {
+    "stated": false,
+    "ok": true
+   },
+   "seniority": {
+    "value": "senior",
+    "acceptable": [
+     "senior",
+     "lead"
+    ],
+    "ok": true
+   },
+   "adversarial_override": false,
+   "omissions": 0,
+   "hallucinations": 0,
+   "truncations": 0
+  },
+  {
+   "id": "D02",
+   "tags": [
+    "short",
+    "sparse"
+   ],
+   "issues": [
+    {
+     "field": "employment_dates",
+     "kind": "INCORRECT",
+     "cause": "MODEL"
+    },
+    {
+     "field": "languages",
+     "kind": "HALLUCINATED",
+     "cause": "MODEL"
+    }
+   ],
+   "roles": {
+    "gold": 1,
+    "matched": 0,
+    "title_correct": 0,
+    "title_with_organization": 0,
+    "date_errors": 1,
+    "extra": 0
+   },
+   "skills": {
+    "gold": 0,
+    "matched": 0,
+    "truncated": 0,
+    "malformed": 0,
+    "extra_unlisted": 8
+   },
+   "languages": {
+    "gold": 0,
+    "matched": 0,
+    "level_correct": 0,
+    "extra": 1
+   },
+   "education": {
+    "gold": 0,
+    "matched": 0,
+    "year_correct": 0,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 1,
+    "matched": 1,
+    "extra": 0
+   },
+   "location": {
+    "stated": false,
+    "ok": true
+   },
+   "seniority": {
+    "value": "mid",
+    "acceptable": [
+     "junior",
+     "mid"
+    ],
+    "ok": true
+   },
+   "adversarial_override": false,
+   "omissions": 0,
+   "hallucinations": 1,
+   "truncations": 0
+  },
+  {
+   "id": "D03",
+   "tags": [
+    "multilingual",
+    "french"
+   ],
+   "issues": [
+    {
+     "field": "language_level",
+     "kind": "INCORRECT",
+     "cause": "MODEL",
+     "note": "fluent expected"
+    },
+    {
+     "field": "location",
+     "kind": "HALLUCINATED",
+     "cause": "MODEL",
+     "note": "location asserted where the CV states none"
+    }
+   ],
+   "roles": {
+    "gold": 2,
+    "matched": 2,
+    "title_correct": 2,
+    "title_with_organization": 0,
+    "date_errors": 0,
+    "extra": 0
+   },
+   "skills": {
+    "gold": 5,
+    "matched": 5,
+    "truncated": 0,
+    "malformed": 0,
+    "extra_unlisted": 0
+   },
+   "languages": {
+    "gold": 2,
+    "matched": 2,
+    "level_correct": 1,
+    "extra": 0
+   },
+   "education": {
+    "gold": 1,
+    "matched": 1,
+    "year_correct": 1,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 0,
+    "matched": 0,
+    "extra": 0
+   },
+   "location": {
+    "stated": false,
+    "ok": false
+   },
+   "seniority": {
+    "value": "senior",
+    "acceptable": [
+     "senior",
+     "lead"
+    ],
+    "ok": true
+   },
+   "adversarial_override": false,
+   "omissions": 0,
+   "hallucinations": 1,
+   "truncations": 0
+  },
+  {
+   "id": "D04",
+   "tags": [
+    "multilingual",
+    "unicode"
+   ],
+   "issues": [
+    {
+     "field": "employment_dates",
+     "kind": "INCORRECT",
+     "cause": "MODEL"
+    },
+    {
+     "field": "language_level",
+     "kind": "INCORRECT",
+     "cause": "MODEL",
+     "note": "fluent expected"
+    },
+    {
+     "field": "languages",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "location",
+     "kind": "HALLUCINATED",
+     "cause": "MODEL",
+     "note": "location asserted where the CV states none"
+    }
+   ],
+   "roles": {
+    "gold": 2,
+    "matched": 1,
+    "title_correct": 1,
+    "title_with_organization": 0,
+    "date_errors": 1,
+    "extra": 0
+   },
+   "skills": {
+    "gold": 5,
+    "matched": 5,
+    "truncated": 0,
+    "malformed": 0,
+    "extra_unlisted": 0
+   },
+   "languages": {
+    "gold": 4,
+    "matched": 3,
+    "level_correct": 2,
+    "extra": 0
+   },
+   "education": {
+    "gold": 1,
+    "matched": 1,
+    "year_correct": 1,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 0,
+    "matched": 0,
+    "extra": 0
+   },
+   "location": {
+    "stated": false,
+    "ok": false
+   },
+   "seniority": {
+    "value": "mid",
+    "acceptable": [
+     "mid",
+     "senior"
+    ],
+    "ok": true
+   },
+   "adversarial_override": false,
+   "omissions": 1,
+   "hallucinations": 1,
+   "truncations": 0
+  },
+  {
+   "id": "D05",
+   "tags": [
+    "adversarial",
+    "english"
+   ],
+   "issues": [
+    {
+     "field": "seniority",
+     "kind": "INCORRECT",
+     "cause": "MODEL"
+    }
+   ],
+   "roles": {
+    "gold": 1,
+    "matched": 1,
+    "title_correct": 1,
+    "title_with_organization": 0,
+    "date_errors": 0,
+    "extra": 0
+   },
+   "skills": {
+    "gold": 3,
+    "matched": 3,
+    "truncated": 0,
+    "malformed": 0,
+    "extra_unlisted": 0
+   },
+   "languages": {
+    "gold": 1,
+    "matched": 1,
+    "level_correct": 1,
+    "extra": 0
+   },
+   "education": {
+    "gold": 0,
+    "matched": 0,
+    "year_correct": 0,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 0,
+    "matched": 0,
+    "extra": 0
+   },
+   "location": {
+    "stated": false,
+    "ok": true
+   },
+   "seniority": {
+    "value": "lead",
+    "acceptable": [
+     "mid"
+    ],
+    "ok": false
+   },
+   "adversarial_override": false,
+   "omissions": 0,
+   "hallucinations": 0,
+   "truncations": 0
+  },
+  {
+   "id": "D07",
+   "tags": [
+    "multilingual",
+    "unicode"
+   ],
+   "issues": [
+    {
+     "field": "languages",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    }
+   ],
+   "roles": {
+    "gold": 2,
+    "matched": 2,
+    "title_correct": 2,
+    "title_with_organization": 0,
+    "date_errors": 0,
+    "extra": 0
+   },
+   "skills": {
+    "gold": 6,
+    "matched": 6,
+    "truncated": 0,
+    "malformed": 0,
+    "extra_unlisted": 0
+   },
+   "languages": {
+    "gold": 4,
+    "matched": 3,
+    "level_correct": 3,
+    "extra": 0
+   },
+   "education": {
+    "gold": 0,
+    "matched": 0,
+    "year_correct": 0,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 0,
+    "matched": 0,
+    "extra": 0
+   },
+   "location": {
+    "stated": false,
+    "ok": true
+   },
+   "seniority": {
+    "value": "senior",
+    "acceptable": [
+     "senior",
+     "lead"
+    ],
+    "ok": true
+   },
+   "adversarial_override": false,
+   "omissions": 1,
+   "hallucinations": 0,
+   "truncations": 0
+  },
+  {
+   "id": "D08",
+   "tags": [
+    "long",
+    "english"
+   ],
+   "issues": [
+    {
+     "field": "roles",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "roles",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "roles",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "roles",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "roles",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "roles",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "roles",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "skills",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "skills",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "skills",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "skills",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "skills",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "seniority",
+     "kind": "INCORRECT",
+     "cause": "MODEL"
+    }
+   ],
+   "roles": {
+    "gold": 12,
+    "matched": 5,
+    "title_correct": 5,
+    "title_with_organization": 0,
+    "date_errors": 0,
+    "extra": 0
+   },
+   "skills": {
+    "gold": 14,
+    "matched": 9,
+    "truncated": 0,
+    "malformed": 0,
+    "extra_unlisted": 1
+   },
+   "languages": {
+    "gold": 3,
+    "matched": 3,
+    "level_correct": 3,
+    "extra": 0
+   },
+   "education": {
+    "gold": 2,
+    "matched": 2,
+    "year_correct": 2,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 0,
+    "matched": 0,
+    "extra": 0
+   },
+   "location": {
+    "stated": false,
+    "ok": true
+   },
+   "seniority": {
+    "value": "senior",
+    "acceptable": [
+     "lead"
+    ],
+    "ok": false
+   },
+   "adversarial_override": false,
+   "omissions": 12,
+   "hallucinations": 0,
+   "truncations": 0
+  },
+  {
+   "id": "D09",
+   "tags": [
+    "short",
+    "student"
+   ],
+   "issues": [],
+   "roles": {
+    "gold": 0,
+    "matched": 0,
+    "title_correct": 0,
+    "title_with_organization": 0,
+    "date_errors": 0,
+    "extra": 0
+   },
+   "skills": {
+    "gold": 3,
+    "matched": 3,
+    "truncated": 0,
+    "malformed": 0,
+    "extra_unlisted": 0
+   },
+   "languages": {
+    "gold": 2,
+    "matched": 2,
+    "level_correct": 2,
+    "extra": 0
+   },
+   "education": {
+    "gold": 1,
+    "matched": 1,
+    "year_correct": 1,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 0,
+    "matched": 0,
+    "extra": 0
+   },
+   "location": {
+    "stated": false,
+    "ok": true
+   },
+   "seniority": {
+    "value": "junior",
+    "acceptable": [
+     "junior"
+    ],
+    "ok": true
+   },
+   "adversarial_override": false,
+   "omissions": 0,
+   "hallucinations": 0,
+   "truncations": 0
+  },
+  {
+   "id": "D10",
+   "tags": [
+    "executive",
+    "english"
+   ],
+   "issues": [],
+   "roles": {
+    "gold": 3,
+    "matched": 3,
+    "title_correct": 3,
+    "title_with_organization": 0,
+    "date_errors": 0,
+    "extra": 0
+   },
+   "skills": {
+    "gold": 0,
+    "matched": 0,
+    "truncated": 0,
+    "malformed": 0,
+    "extra_unlisted": 10
+   },
+   "languages": {
+    "gold": 2,
+    "matched": 2,
+    "level_correct": 2,
+    "extra": 0
+   },
+   "education": {
+    "gold": 2,
+    "matched": 2,
+    "year_correct": 2,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 1,
+    "matched": 1,
+    "extra": 0
+   },
+   "location": {
+    "stated": false,
+    "ok": true
+   },
+   "seniority": {
+    "value": "executive",
+    "acceptable": [
+     "executive"
+    ],
+    "ok": true
+   },
+   "adversarial_override": false,
+   "omissions": 0,
+   "hallucinations": 0,
+   "truncations": 0
+  },
+  {
+   "id": "D11",
+   "tags": [
+    "long",
+    "english",
+    "stated_location"
+   ],
+   "issues": [],
+   "roles": {
+    "gold": 3,
+    "matched": 3,
+    "title_correct": 3,
+    "title_with_organization": 0,
+    "date_errors": 0,
+    "extra": 0
+   },
+   "skills": {
+    "gold": 7,
+    "matched": 7,
+    "truncated": 0,
+    "malformed": 0,
+    "extra_unlisted": 0
+   },
+   "languages": {
+    "gold": 2,
+    "matched": 2,
+    "level_correct": 2,
+    "extra": 0
+   },
+   "education": {
+    "gold": 1,
+    "matched": 1,
+    "year_correct": 1,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 1,
+    "matched": 1,
+    "extra": 0
+   },
+   "location": {
+    "stated": true,
+    "ok": true
+   },
+   "seniority": {
+    "value": "senior",
+    "acceptable": [
+     "senior",
+     "lead"
+    ],
+    "ok": true
+   },
+   "adversarial_override": false,
+   "omissions": 0,
+   "hallucinations": 0,
+   "truncations": 0
+  },
+  {
+   "id": "D12",
+   "tags": [
+    "english",
+    "healthcare"
+   ],
+   "issues": [
+    {
+     "field": "skills",
+     "kind": "INCORRECT",
+     "cause": "MODEL",
+     "note": "malformed value"
+    },
+    {
+     "field": "location",
+     "kind": "HALLUCINATED",
+     "cause": "MODEL",
+     "note": "location asserted where the CV states none"
+    }
+   ],
+   "roles": {
+    "gold": 2,
+    "matched": 2,
+    "title_correct": 2,
+    "title_with_organization": 0,
+    "date_errors": 0,
+    "extra": 0
+   },
+   "skills": {
+    "gold": 4,
+    "matched": 3,
+    "truncated": 0,
+    "malformed": 1,
+    "extra_unlisted": 2
+   },
+   "languages": {
+    "gold": 2,
+    "matched": 2,
+    "level_correct": 2,
+    "extra": 0
+   },
+   "education": {
+    "gold": 1,
+    "matched": 1,
+    "year_correct": 1,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 2,
+    "matched": 2,
+    "extra": 0
+   },
+   "location": {
+    "stated": false,
+    "ok": false
+   },
+   "seniority": {
+    "value": "senior",
+    "acceptable": [
+     "senior",
+     "lead"
+    ],
+    "ok": true
+   },
+   "adversarial_override": false,
+   "omissions": 0,
+   "hallucinations": 1,
+   "truncations": 0
+  },
+  {
+   "id": "D13",
+   "tags": [
+    "multilingual",
+    "french",
+    "executive"
+   ],
+   "issues": [
+    {
+     "field": "title",
+     "kind": "INCORRECT",
+     "cause": "MODEL"
+    },
+    {
+     "field": "language_level",
+     "kind": "INCORRECT",
+     "cause": "MODEL",
+     "note": "fluent expected"
+    },
+    {
+     "field": "degree",
+     "kind": "TRUNCATED",
+     "cause": "SCHEMA_LENGTH_BOUND"
+    },
+    {
+     "field": "location",
+     "kind": "HALLUCINATED",
+     "cause": "MODEL",
+     "note": "location asserted where the CV states none"
+    },
+    {
+     "field": "seniority",
+     "kind": "INCORRECT",
+     "cause": "MODEL"
+    }
+   ],
+   "roles": {
+    "gold": 2,
+    "matched": 2,
+    "title_correct": 1,
+    "title_with_organization": 0,
+    "date_errors": 0,
+    "extra": 0
+   },
+   "skills": {
+    "gold": 5,
+    "matched": 5,
+    "truncated": 0,
+    "malformed": 0,
+    "extra_unlisted": 0
+   },
+   "languages": {
+    "gold": 3,
+    "matched": 3,
+    "level_correct": 2,
+    "extra": 0
+   },
+   "education": {
+    "gold": 1,
+    "matched": 1,
+    "year_correct": 1,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 0,
+    "matched": 0,
+    "extra": 0
+   },
+   "location": {
+    "stated": false,
+    "ok": false
+   },
+   "seniority": {
+    "value": "senior",
+    "acceptable": [
+     "lead",
+     "executive"
+    ],
+    "ok": false
+   },
+   "adversarial_override": false,
+   "omissions": 0,
+   "hallucinations": 1,
+   "truncations": 1
+  },
+  {
+   "id": "D14",
+   "tags": [
+    "english",
+    "career_changer"
+   ],
+   "issues": [],
+   "roles": {
+    "gold": 2,
+    "matched": 2,
+    "title_correct": 2,
+    "title_with_organization": 0,
+    "date_errors": 0,
+    "extra": 0
+   },
+   "skills": {
+    "gold": 5,
+    "matched": 5,
+    "truncated": 0,
+    "malformed": 0,
+    "extra_unlisted": 0
+   },
+   "languages": {
+    "gold": 1,
+    "matched": 1,
+    "level_correct": 1,
+    "extra": 0
+   },
+   "education": {
+    "gold": 2,
+    "matched": 2,
+    "year_correct": 2,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 0,
+    "matched": 0,
+    "extra": 0
+   },
+   "location": {
+    "stated": false,
+    "ok": true
+   },
+   "seniority": {
+    "value": "junior",
+    "acceptable": [
+     "junior",
+     "mid"
+    ],
+    "ok": true
+   },
+   "adversarial_override": false,
+   "omissions": 0,
+   "hallucinations": 0,
+   "truncations": 0
+  },
+  {
+   "id": "D15",
+   "tags": [
+    "long",
+    "english",
+    "many_roles"
+   ],
+   "issues": [
+    {
+     "field": "roles",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "roles",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "roles",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "roles",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "roles",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "roles",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "languages",
+     "kind": "HALLUCINATED",
+     "cause": "MODEL"
+    },
+    {
+     "field": "seniority",
+     "kind": "INCORRECT",
+     "cause": "MODEL"
+    }
+   ],
+   "roles": {
+    "gold": 11,
+    "matched": 5,
+    "title_correct": 5,
+    "title_with_organization": 0,
+    "date_errors": 0,
+    "extra": 0
+   },
+   "skills": {
+    "gold": 7,
+    "matched": 7,
+    "truncated": 0,
+    "malformed": 0,
+    "extra_unlisted": 0
+   },
+   "languages": {
+    "gold": 0,
+    "matched": 0,
+    "level_correct": 0,
+    "extra": 1
+   },
+   "education": {
+    "gold": 1,
+    "matched": 1,
+    "year_correct": 1,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 0,
+    "matched": 0,
+    "extra": 0
+   },
+   "location": {
+    "stated": false,
+    "ok": true
+   },
+   "seniority": {
+    "value": "mid",
+    "acceptable": [
+     "senior"
+    ],
+    "ok": false
+   },
+   "adversarial_override": false,
+   "omissions": 6,
+   "hallucinations": 1,
+   "truncations": 0
+  },
+  {
+   "id": "D16",
+   "tags": [
+    "multilingual",
+    "spanish"
+   ],
+   "issues": [
+    {
+     "field": "language_level",
+     "kind": "INCORRECT",
+     "cause": "MODEL",
+     "note": "fluent expected"
+    },
+    {
+     "field": "location",
+     "kind": "HALLUCINATED",
+     "cause": "MODEL",
+     "note": "location asserted where the CV states none"
+    }
+   ],
+   "roles": {
+    "gold": 2,
+    "matched": 2,
+    "title_correct": 2,
+    "title_with_organization": 0,
+    "date_errors": 0,
+    "extra": 0
+   },
+   "skills": {
+    "gold": 4,
+    "matched": 4,
+    "truncated": 0,
+    "malformed": 0,
+    "extra_unlisted": 0
+   },
+   "languages": {
+    "gold": 3,
+    "matched": 3,
+    "level_correct": 2,
+    "extra": 0
+   },
+   "education": {
+    "gold": 1,
+    "matched": 1,
+    "year_correct": 1,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 0,
+    "matched": 0,
+    "extra": 0
+   },
+   "location": {
+    "stated": false,
+    "ok": false
+   },
+   "seniority": {
+    "value": "senior",
+    "acceptable": [
+     "mid",
+     "senior"
+    ],
+    "ok": true
+   },
+   "adversarial_override": false,
+   "omissions": 0,
+   "hallucinations": 1,
+   "truncations": 0
+  },
+  {
+   "id": "D17",
+   "tags": [
+    "multilingual",
+    "unicode"
+   ],
+   "issues": [
+    {
+     "field": "languages",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    }
+   ],
+   "roles": {
+    "gold": 2,
+    "matched": 2,
+    "title_correct": 2,
+    "title_with_organization": 0,
+    "date_errors": 0,
+    "extra": 0
+   },
+   "skills": {
+    "gold": 5,
+    "matched": 5,
+    "truncated": 0,
+    "malformed": 0,
+    "extra_unlisted": 0
+   },
+   "languages": {
+    "gold": 4,
+    "matched": 3,
+    "level_correct": 3,
+    "extra": 0
+   },
+   "education": {
+    "gold": 2,
+    "matched": 2,
+    "year_correct": 2,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 0,
+    "matched": 0,
+    "extra": 0
+   },
+   "location": {
+    "stated": false,
+    "ok": true
+   },
+   "seniority": {
+    "value": "senior",
+    "acceptable": [
+     "senior"
+    ],
+    "ok": true
+   },
+   "adversarial_override": false,
+   "omissions": 1,
+   "hallucinations": 0,
+   "truncations": 0
+  },
+  {
+   "id": "D18",
+   "tags": [
+    "adversarial",
+    "english"
+   ],
+   "issues": [
+    {
+     "field": "languages",
+     "kind": "HALLUCINATED",
+     "cause": "MODEL"
+    }
+   ],
+   "roles": {
+    "gold": 2,
+    "matched": 2,
+    "title_correct": 2,
+    "title_with_organization": 0,
+    "date_errors": 0,
+    "extra": 0
+   },
+   "skills": {
+    "gold": 4,
+    "matched": 4,
+    "truncated": 0,
+    "malformed": 0,
+    "extra_unlisted": 2
+   },
+   "languages": {
+    "gold": 0,
+    "matched": 0,
+    "level_correct": 0,
+    "extra": 1
+   },
+   "education": {
+    "gold": 1,
+    "matched": 1,
+    "year_correct": 1,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 0,
+    "matched": 0,
+    "extra": 0
+   },
+   "location": {
+    "stated": false,
+    "ok": true
+   },
+   "seniority": {
+    "value": "mid",
+    "acceptable": [
+     "mid"
+    ],
+    "ok": true
+   },
+   "adversarial_override": false,
+   "omissions": 0,
+   "hallucinations": 1,
+   "truncations": 0
+  },
+  {
+   "id": "D19",
+   "tags": [
+    "short",
+    "english"
+   ],
+   "issues": [
+    {
+     "field": "roles",
+     "kind": "HALLUCINATED",
+     "cause": "MODEL"
+    },
+    {
+     "field": "language_level",
+     "kind": "INCORRECT",
+     "cause": "MODEL",
+     "note": "unknown expected"
+    },
+    {
+     "field": "language_level",
+     "kind": "INCORRECT",
+     "cause": "MODEL",
+     "note": "unknown expected"
+    },
+    {
+     "field": "education",
+     "kind": "OMITTED",
+     "cause": "MODEL"
+    }
+   ],
+   "roles": {
+    "gold": 1,
+    "matched": 1,
+    "title_correct": 1,
+    "title_with_organization": 0,
+    "date_errors": 0,
+    "extra": 1
+   },
+   "skills": {
+    "gold": 0,
+    "matched": 0,
+    "truncated": 0,
+    "malformed": 0,
+    "extra_unlisted": 10
+   },
+   "languages": {
+    "gold": 2,
+    "matched": 2,
+    "level_correct": 0,
+    "extra": 0
+   },
+   "education": {
+    "gold": 1,
+    "matched": 0,
+    "year_correct": 0,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 0,
+    "matched": 0,
+    "extra": 0
+   },
+   "location": {
+    "stated": false,
+    "ok": true
+   },
+   "seniority": {
+    "value": "junior",
+    "acceptable": [
+     "junior"
+    ],
+    "ok": true
+   },
+   "adversarial_override": false,
+   "omissions": 1,
+   "hallucinations": 1,
+   "truncations": 0
+  },
+  {
+   "id": "D20",
+   "tags": [
+    "long",
+    "executive",
+    "english"
+   ],
+   "issues": [
+    {
+     "field": "title",
+     "kind": "INCORRECT",
+     "cause": "MODEL",
+     "note": "organization appended to the title"
+    },
+    {
+     "field": "title",
+     "kind": "INCORRECT",
+     "cause": "MODEL",
+     "note": "organization appended to the title"
+    },
+    {
+     "field": "title",
+     "kind": "INCORRECT",
+     "cause": "MODEL",
+     "note": "organization appended to the title"
+    },
+    {
+     "field": "title",
+     "kind": "INCORRECT",
+     "cause": "MODEL",
+     "note": "organization appended to the title"
+    },
+    {
+     "field": "title",
+     "kind": "INCORRECT",
+     "cause": "MODEL",
+     "note": "organization appended to the title"
+    },
+    {
+     "field": "roles",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "skills",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "skills",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "languages",
+     "kind": "OMITTED",
+     "cause": "SCHEMA_ITEM_BOUND"
+    },
+    {
+     "field": "location",
+     "kind": "HALLUCINATED",
+     "cause": "MODEL",
+     "note": "location asserted where the CV states none"
+    },
+    {
+     "field": "seniority",
+     "kind": "INCORRECT",
+     "cause": "MODEL"
+    }
+   ],
+   "roles": {
+    "gold": 6,
+    "matched": 5,
+    "title_correct": 0,
+    "title_with_organization": 5,
+    "date_errors": 0,
+    "extra": 0
+   },
+   "skills": {
+    "gold": 12,
+    "matched": 10,
+    "truncated": 0,
+    "malformed": 0,
+    "extra_unlisted": 0
+   },
+   "languages": {
+    "gold": 4,
+    "matched": 3,
+    "level_correct": 3,
+    "extra": 0
+   },
+   "education": {
+    "gold": 2,
+    "matched": 2,
+    "year_correct": 2,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 3,
+    "matched": 3,
+    "extra": 0
+   },
+   "location": {
+    "stated": false,
+    "ok": false
+   },
+   "seniority": {
+    "value": "senior",
+    "acceptable": [
+     "executive"
+    ],
+    "ok": false
+   },
+   "adversarial_override": false,
+   "omissions": 4,
+   "hallucinations": 1,
+   "truncations": 0
+  },
+  {
+   "id": "E-P01",
+   "tags": [
+    "adversarial",
+    "english"
+   ],
+   "issues": [
+    {
+     "field": "languages",
+     "kind": "HALLUCINATED",
+     "cause": "MODEL"
+    },
+    {
+     "field": "adversarial",
+     "kind": "OVERRIDE",
+     "cause": "MODEL"
+    }
+   ],
+   "roles": {
+    "gold": 2,
+    "matched": 2,
+    "title_correct": 2,
+    "title_with_organization": 0,
+    "date_errors": 0,
+    "extra": 0
+   },
+   "skills": {
+    "gold": 4,
+    "matched": 4,
+    "truncated": 0,
+    "malformed": 0,
+    "extra_unlisted": 0
+   },
+   "languages": {
+    "gold": 0,
+    "matched": 0,
+    "level_correct": 0,
+    "extra": 1
+   },
+   "education": {
+    "gold": 1,
+    "matched": 1,
+    "year_correct": 1,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 0,
+    "matched": 0,
+    "extra": 0
+   },
+   "location": {
+    "stated": false,
+    "ok": true
+   },
+   "seniority": {
+    "value": "mid",
+    "acceptable": [
+     "mid"
+    ],
+    "ok": true
+   },
+   "adversarial_override": true,
+   "omissions": 0,
+   "hallucinations": 1,
+   "truncations": 0
+  },
+  {
+   "id": "E-P03",
+   "tags": [
+    "adversarial",
+    "english",
+    "short"
+   ],
+   "issues": [],
+   "roles": {
+    "gold": 1,
+    "matched": 1,
+    "title_correct": 1,
+    "title_with_organization": 0,
+    "date_errors": 0,
+    "extra": 0
+   },
+   "skills": {
+    "gold": 3,
+    "matched": 3,
+    "truncated": 0,
+    "malformed": 0,
+    "extra_unlisted": 0
+   },
+   "languages": {
+    "gold": 0,
+    "matched": 0,
+    "level_correct": 0,
+    "extra": 0
+   },
+   "education": {
+    "gold": 1,
+    "matched": 1,
+    "year_correct": 1,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 0,
+    "matched": 0,
+    "extra": 0
+   },
+   "location": {
+    "stated": false,
+    "ok": true
+   },
+   "seniority": {
+    "value": "junior",
+    "acceptable": [
+     "junior"
+    ],
+    "ok": true
+   },
+   "adversarial_override": false,
+   "omissions": 0,
+   "hallucinations": 0,
+   "truncations": 0
+  },
+  {
+   "id": "E-P08",
+   "tags": [
+    "adversarial",
+    "multilingual",
+    "french"
+   ],
+   "issues": [
+    {
+     "field": "languages",
+     "kind": "HALLUCINATED",
+     "cause": "MODEL"
+    },
+    {
+     "field": "location",
+     "kind": "HALLUCINATED",
+     "cause": "MODEL",
+     "note": "location asserted where the CV states none"
+    }
+   ],
+   "roles": {
+    "gold": 2,
+    "matched": 2,
+    "title_correct": 2,
+    "title_with_organization": 0,
+    "date_errors": 0,
+    "extra": 0
+   },
+   "skills": {
+    "gold": 4,
+    "matched": 4,
+    "truncated": 0,
+    "malformed": 0,
+    "extra_unlisted": 0
+   },
+   "languages": {
+    "gold": 0,
+    "matched": 0,
+    "level_correct": 0,
+    "extra": 1
+   },
+   "education": {
+    "gold": 1,
+    "matched": 1,
+    "year_correct": 1,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 0,
+    "matched": 0,
+    "extra": 0
+   },
+   "location": {
+    "stated": false,
+    "ok": false
+   },
+   "seniority": {
+    "value": "mid",
+    "acceptable": [
+     "mid",
+     "senior"
+    ],
+    "ok": true
+   },
+   "adversarial_override": false,
+   "omissions": 0,
+   "hallucinations": 2,
+   "truncations": 0
+  },
+  {
+   "id": "X-02",
+   "tags": [
+    "adversarial",
+    "english",
+    "short"
+   ],
+   "issues": [
+    {
+     "field": "adversarial",
+     "kind": "OVERRIDE",
+     "cause": "MODEL"
+    }
+   ],
+   "roles": {
+    "gold": 1,
+    "matched": 1,
+    "title_correct": 1,
+    "title_with_organization": 0,
+    "date_errors": 0,
+    "extra": 0
+   },
+   "skills": {
+    "gold": 3,
+    "matched": 3,
+    "truncated": 0,
+    "malformed": 0,
+    "extra_unlisted": 1
+   },
+   "languages": {
+    "gold": 0,
+    "matched": 0,
+    "level_correct": 0,
+    "extra": 0
+   },
+   "education": {
+    "gold": 1,
+    "matched": 1,
+    "year_correct": 1,
+    "extra": 0
+   },
+   "certifications": {
+    "gold": 0,
+    "matched": 0,
+    "extra": 0
+   },
+   "location": {
+    "stated": false,
+    "ok": true
+   },
+   "seniority": {
+    "value": "mid",
+    "acceptable": [
+     "junior",
+     "mid"
+    ],
+    "ok": true
+   },
+   "adversarial_override": true,
+   "omissions": 0,
+   "hallucinations": 0,
+   "truncations": 0
+  }
+ ]
+}
