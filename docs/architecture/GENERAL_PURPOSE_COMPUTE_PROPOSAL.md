@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | **PROPOSED — direction approved with conditions (2026-11-03, §0.1); document under review.** The maintainer's decisions are recorded in §0.1. The document decides nothing further until this PR is reviewed and merged. |
+| **Status** | **APPROVED DIRECTION (2026-11-03).** The maintainer's decisions are recorded in §0.1 and §0.2. This document sets direction and boundaries; it authorises no implementation. Each gate needs its own approval, and the protocol changes only through accepted RFCs. It describes a plan, not what runs today. |
 | **Kind** | Architecture and planning, documentation only, non-consensus. RFC 0005, the v0.4 protocol lock and every NORMATIVE document in [`INDEX.md`](../INDEX.md) win on their subjects. |
 | **Date** | 2026-11-03 |
 | **Changes nothing in** | the released `mvp-v0.1.0`, any protocol surface, any product code, any profile, any existing evidence |
@@ -24,7 +24,21 @@ The maintainer reviewed the first revision of this proposal and decided the foll
 | D6 | This PR is updated with the decisions and explicit architectural boundaries | Not merged until reviewed | §0.1, §1.3 |
 | D7 | The next three gates are prepared with acceptance criteria, dependencies, protected surfaces and rollback conditions | **No change to production protocol, consensus, runtime or SDK** without a separate approved implementation gate | §7 |
 
-### 0.2 Decision requested in the first revision
+### 0.2 Maintainer decisions of 2026-11-03, second set
+
+These followed the review of the second revision. They record the decisions; they do not extend them.
+
+| # | Decision | Condition | Where it is carried out |
+|---|---|---|---|
+| D8 | VISION_v2 (#181) **approved for formal adoption** | VISION_v1 is preserved as historical evidence | PR #181 |
+| D9 | The general-purpose compute direction in this document is **approved** | The normal review, CI and protected-surface checks apply before documentation PRs merge | This PR |
+| D10 | **`mbongo-job:v1` adopted** as the new additive generic workload profile, beside the frozen `mbongo-infer:v1` | Settles the first half of Q4 | §4.11, G2 plan |
+| D11 | On-chain principles, deterministic protocol verification, off-chain execution and RFC-based protocol change are **preserved** | **No consensus change and no on-chain scheduling** | §1.3, VISION_v2 |
+| D12 | #178 / CC-5: #182 may merge after final checks; #183 stays draft | The new rule is revised to factual output fields; the existing quoted-text rule is retained **provisionally**. Validation uses a newly frozen held-out synthetic corpus and measures attack detection **and** benign false-positive rates on the real devnet client path. CC-3 and CC-5 evidence is not rewritten. Residual risks are documented, including attacks without explicit instruction markers. A versioned CC-5 client patch release is proposed, but **not deployed or merged** without separate approval. No general immunity claim | #182, #183 |
+| D13 | G2 implementation **plan** for `mbongo-job:v1` | The first workload is the deterministic synthetic MbongoPay integer scorecard: no real financial data, no automated lending decisions. Interfaces for future runtimes are designed and tested without implementing GPU or ML execution. Kaayu's released profile is unchanged. **G2 product code needs a separate implementation approval** | G2 plan document |
+| D14 | G3 prerequisites | Host-class identity and reproducibility requirements for LLM re-execution are defined. **Metering stays in the private data plane initially.** Signed contract registries, open assignment and settlement are deferred to their own gates or RFCs | G3 prerequisites document |
+
+### 0.3 Decision requested in the first revision
 
 1. **Direction.** MbongoChain is a **general-purpose, verifiable and eventually decentralized compute infrastructure**. Kaayu CV extraction and MbongoPay synthetic loan-risk scoring are **reference workloads** that validate infrastructure capabilities; their business-specific accuracy is never on the critical path (§1).
 2. **Vision amendment.** This conflicts with the NORMATIVE [`VISION_v1.md`](../VISION_v1.md) (§1.2). Approving this proposal means authorising a separate `VISION_v2` documentation change. This document does not amend the vision by itself.
@@ -80,7 +94,7 @@ Two points hold either way:
 
 Recommendation: approve a `VISION_v2` that keeps v1's on-chain principles (deterministic verification, replayability, no on-chain execution, no VM). It would replace the "not a compute network" exclusions with "off-chain verifiable compute infrastructure, chain-anchored". Until then, VISION_v1 remains the authority.
 
-**Status (D1).** The direction is approved. `VISION_v2` is proposed separately in PR #181 as `docs/VISION_v2.md`, with principles P1–P8. It changes neither VISION_v1 nor INDEX until a visible adoption commit after review. **Until #181 is adopted, VISION_v1 remains NORMATIVE, and this document is read as an extension of it.**
+**Status (D1, D8).** The direction is approved, and `VISION_v2` is approved for formal adoption through PR #181 as `docs/VISION_v2.md`, with principles P1–P8. VISION_v1 is kept intact as a historical record.
 
 ### 1.3 Architectural boundaries
 
@@ -533,7 +547,9 @@ Both PRs are open. Both runs went through the real devnet client path, on the sa
 **Consequences:**
 - **#182** (docs) is ready for review.
 - **#183** stays a draft, with no merge approval requested.
-- A revised candidate (slot-field restriction) needs a **fresh** held-out corpus. The maintainer must also decide the B03-class trade-off (Q11).
+- A revised candidate (factual-field restriction) needs a **fresh** held-out corpus.
+
+This status is the record of the first candidate. D12 set the revision; its results are in #183.
 
 **Acceptance criteria for the hardening PR**, fixed before the real-path runs:
 
@@ -675,20 +691,21 @@ It does not depend on G1, and it can run in parallel once approved.
 
 ## 10. Questions: resolved and open
 
-**Resolved on 2026-11-03 (§0.1):**
-- Q1 (direction and vision): D1.
-- Q2 (MbongoPay scorecard sufficient for G2): D3. An ML runtime is deferred, and the interfaces must admit it (§4.11.4).
+**Resolved on 2026-11-03 (§0.1, §0.2):**
+- Q1 (direction and vision): D1, D8.
+- Q2 (MbongoPay scorecard sufficient for G2): D3, D13. An ML runtime is deferred, and the interfaces must admit it (§4.11.4).
 - Q3 (G1 ordering): D4. The docs PR and the hardening PR are separate, and the docs PR merges first (§7 G1).
+- Q4, first half (generic contract): D10. A new tag, `mbongo-job:v1`.
+- Q7 (metering): D14. The private data plane initially.
+- Q8 (signed registries) and Q9 (open assignment): D14. Deferred to their own gates or RFCs.
+- Q11 (#178 screen trade-off): D12. The word rule moves to factual fields, and the quoted-text rule is retained provisionally.
 
-**Unresolved architecture decisions.** None of them blocks review of this document. Each must be decided before the gate named.
+**Unresolved architecture decisions.** None of them blocks this document. Each must be decided before the gate named.
 
 | # | Question | Recommendation | Needed before |
 |---|---|---|---|
-| Q4 | Generic contract: a new tag `mbongo-job:v1`, or version `mbongo-infer` to v2? And does Kaayu stay on `mbongo-infer:v1` permanently, or move to `mbongo-job` in a later named gate (which would also need a llama.cpp `RuntimeAdapter`)? | A new tag. Kaayu stays on `mbongo-infer:v1` until a gate that needs the move, such as a CC-4 successor or M7, names it | G2 |
-| Q5 | #178 deployment: does the hardened screen reach operators as a patch release (`mvp-v0.1.1`) of the client, or only at the next release? | A patch release of the client only, under CC-5, after the hardening PR merges. The release is a separate gate | After G1 |
-| Q6 | For `BIT_EXACT_PINNED` T2, what identifies a "host class"? Self-declared identity is untrusted | Runtime build hash, CPU model and instruction-set flags, and thread count, recorded as **untrusted** in the T2 report. T2 across classes is never claimed | G3 (Kaayu T2 only) |
-| Q7 | Where does untrusted metering live: receipt metadata (public, ≤ 4,096 B) or the private data plane? | The data plane by default. Receipt metadata only for content-free counters, decided in M6 | M6 |
-| Q8 | Contract registry: repository-local (A27), or signed, content-addressed manifests? | Repository-local until a third-party provider runs a contract the repository does not ship | M4 |
-| Q9 | Open assignment (RFC 0005 "model C") versus a directory that names executors off-chain | An off-chain directory until M9's RFC. The RFC is written only after M4 shows a concrete limit | M9 |
+| Q4b | Does Kaayu stay on `mbongo-infer:v1` permanently, or move to `mbongo-job` in a later named gate (which would also need a llama.cpp `RuntimeAdapter`)? | It stays until a gate that needs the move, such as a CC-4 successor or M7, names it | That gate |
+| Q5 | #178 deployment: how the hardened screen reaches operators | A client patch release under CC-5, as proposed on #183. The release is a separate approval | After G1 |
+| Q6 | For `BIT_EXACT_PINNED` T2, what identifies a "host class"? | Requirements are defined in the G3 prerequisites document (D14). Self-declared identity stays untrusted, and T2 across classes is never claimed | G3 (Kaayu T2 only) |
 | Q10 | Content-safety screens per contract (S2): one generic untrusted-input policy interface, or a screen per workload? | One `validate_input` and one output-screen hook per `WorkloadContract` (§4.11.2); the Kaayu screen becomes one implementation | After G1, before a second free-text workload |
-| Q11 | #178 screen trade-off. The candidate's word rule flags benign experience lines that read as instructions (B01, B02). The echo rule flags a benign quoted motto (B03; released code too). Options: (a) restrict the word rule to slot fields and accept B03-class fail-closed false positives; (b) also narrow the echo rule, which weakens E-P01-type detection; (c) keep released behaviour and rely on human review | (a), validated on a **fresh** held-out corpus written before any run | Next #178 revision |
+| Q12 | Provisional quoted-text rule: keep it, or narrow it once its false-positive rate is measured? | Decide on the measured rate in #183 | CC-5 approval |
