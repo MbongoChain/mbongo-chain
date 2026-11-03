@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "kaayu-cv-profile:v4-lab-c1",
+  "title": "kaayu-cv-profile:v4-lab-c1 (LAB — approach C prototype for #175; not an output contract)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "seniority", "location", "skills", "experience", "education", "languages", "certifications"],
+  "properties": {
+    "summary": { "type": "string", "maxLength": 200 },
+    "seniority": { "type": "string", "enum": ["unknown", "junior", "mid", "senior", "lead", "executive"] },
+    "location": { "type": "string", "maxLength": 80 },
+    "skills": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 40 } },
+    "experience": {
+      "type": "array", "maxItems": 12,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["title", "organization", "start", "end"],
+        "properties": {
+          "title": { "type": "string", "maxLength": 100 },
+          "organization": { "type": "string", "maxLength": 80 },
+          "start": { "type": "string", "maxLength": 7 },
+          "end": { "type": "string", "maxLength": 7 }
+        }
+      }
+    },
+    "education": {
+      "type": "array", "maxItems": 4,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["degree", "institution", "year"],
+        "properties": {
+          "degree": { "type": "string", "maxLength": 100 },
+          "institution": { "type": "string", "maxLength": 100 },
+          "year": { "type": "string", "maxLength": 4 }
+        }
+      }
+    },
+    "languages": {
+      "type": "array", "maxItems": 6,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["language", "level"],
+        "properties": {
+          "language": { "type": "string", "maxLength": 24 },
+          "level": { "type": "string", "enum": ["unknown", "basic", "intermediate", "fluent", "native"] }
+        }
+      }
+    },
+    "certifications": { "type": "array", "maxItems": 6, "items": { "type": "string", "maxLength": 80 } }
+  }
+}

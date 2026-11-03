@@ -8,6 +8,7 @@
 //       [--schema <output schema>]   bounds for schema attribution
 //                                    (default: kaayu-cv-extract-v2 output schema, used by v2 and v3)
 //       [--label <text>]             e.g. "kaayu-cv-extract:v3"
+//       [--missing-as-failed]        score a case without output as an empty, failed profile
 //       [--out <report.json>]
 //
 // The gold profiles are agent-authored reference labels for invented CVs:
@@ -117,8 +118,10 @@ export function scoreCase(goldCase, output, bounds) {
   const outSkills = [...(o.skills || [])];
   const usedSkill = new Set();
   let sm = 0, st = 0, sv = 0;
-  for (const gs of g.skills) {
-    const i = outSkills.findIndex((s, k) => !usedSkill.has(k) && same(s, gs));
+  // a gold skill is a string, or { name, aliases } (kaayu-gold:v2 onwards)
+  for (const gItem of g.skills) {
+    const gs = typeof gItem === "string" ? gItem : gItem.name;
+    const i = outSkills.findIndex((s, k) => !usedSkill.has(k) && same(s, gs, typeof gItem === "string" ? [] : gItem.aliases));
     if (i >= 0) { usedSkill.add(i); sm++; continue; }
     const t = outSkills.findIndex((s, k) => !usedSkill.has(k) && truncatedAt(s, gs, bounds.skill));
     if (t >= 0) { usedSkill.add(t); st++; issue("skills", "TRUNCATED", "SCHEMA_LENGTH_BOUND"); continue; }
@@ -139,7 +142,8 @@ export function scoreCase(goldCase, output, bounds) {
     if (i < 0) { issue("languages", "OMITTED", count(g.languages.length, "languages", outLangs)); continue; }
     usedLang.add(i);
     lm++;
-    if (norm(outLangs[i].level) === norm(gl.level)) lv++;
+    // level_accept (kaayu-gold:v2 onwards) lists every level a genuinely ambiguous wording allows
+    if (keys(gl.level, gl.level_accept).includes(norm(outLangs[i].level))) lv++;
     else issue("language_level", "INCORRECT", "MODEL", `${gl.level} expected`);
   }
   const extraLangs = outLangs.length - usedLang.size;
@@ -231,11 +235,19 @@ export function aggregate(cases) {
     issue_counts: Object.fromEntries(Object.entries(kinds).sort()),
   };
 }
-export function evaluate(gold, outputs, schema, label = null) {
+// `missingAsFailed`: a case with no output (inference, JSON or schema failure)
+// is scored as an empty profile and listed in `failed_outputs`, so failures
+// lower the metrics instead of leaving the report. Without it, fail closed.
+export function evaluate(gold, outputs, schema, label = null, { missingAsFailed = false } = {}) {
   const bounds = boundsOf(schema);
   const missing = gold.cases.filter((c) => !(c.id in outputs)).map((c) => c.id);
-  if (missing.length) throw new Error(`no output for: ${missing.join(", ")}`);
-  const cases = gold.cases.map((c) => scoreCase(c, outputs[c.id], bounds));
+  if (missing.length && !missingAsFailed) throw new Error(`no output for: ${missing.join(", ")}`);
+  const cases = gold.cases.map((c) => {
+    if (c.id in outputs) return scoreCase(c, outputs[c.id], bounds);
+    const r = scoreCase(c, { experience: [], skills: [], languages: [], education: [], certifications: [], location: "unknown", seniority: null }, bounds);
+    r.issues.unshift({ field: "output", kind: "FAILED", cause: "NO_OUTPUT" });
+    return { ...r, output_failed: true };
+  });
   const tags = [...new Set(gold.cases.flatMap((c) => c.tags))].sort();
   return {
     scorer: SCORER_VERSION,
@@ -244,6 +256,7 @@ export function evaluate(gold, outputs, schema, label = null) {
     outputs_sha256: crypto.createHash("sha256").update(JSON.stringify(gold.cases.map((c) => [c.id, outputs[c.id]]))).digest("hex"),
     bounds,
     note: "synthetic field-level extraction metrics against agent-authored gold labels; not human review; BUSINESS_EXTRACTION_ACCURACY=NOT_ASSESSED",
+    ...(missingAsFailed ? { failed_outputs: missing } : {}),
     aggregate: aggregate(cases),
     by_tag: Object.fromEntries(tags.map((t) => [t, aggregate(cases.filter((c) => c.tags.includes(t)))])),
     cases,
@@ -264,7 +277,7 @@ function main(argv) {
     console.error("kaayu-eval: --gold <file> and --outputs <dir|file> are required");
     return 2;
   }
-  const report = evaluate(JSON.parse(fs.readFileSync(goldFile, "utf8")), loadOutputs(outputsPath), JSON.parse(fs.readFileSync(one("--schema") || DEFAULT_SCHEMA, "utf8")), one("--label") || null);
+  const report = evaluate(JSON.parse(fs.readFileSync(goldFile, "utf8")), loadOutputs(outputsPath), JSON.parse(fs.readFileSync(one("--schema") || DEFAULT_SCHEMA, "utf8")), one("--label") || null, { missingAsFailed: argv.includes("--missing-as-failed") });
   const text = JSON.stringify(report, null, 1) + "\n";
   if (one("--out")) fs.writeFileSync(one("--out"), text);
   const a = report.aggregate;

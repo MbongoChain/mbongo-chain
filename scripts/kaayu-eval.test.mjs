@@ -164,3 +164,93 @@ test("v3 baseline: the committed outputs reproduce the committed report", () => 
   const again = evaluate(GOLD, outputs.outputs, SCHEMA, report.label);
   assert.deepEqual(again, report);
 });
+
+// ── V4-G1: kaayu-gold:v2 and the lab candidate (lab/v4-g1) ──────────────────
+const GOLD2 = read("test-vectors/mvp/kaayu-gold-v2.json");
+const LAB_SCHEMA = read("lab/v4-g1/output-schema.json");
+
+test("gold v2 features: skill aliases and level_accept", () => {
+  const g = base();
+  g.expected.skills = [{ name: "widget design", aliases: ["widget design ✓"] }, "Rust"];
+  g.expected.languages[1] = { language: "French", level: "native", level_accept: ["fluent"], aliases: [] };
+  const out = perfect();
+  out.skills = ["widget design ✓", "Rust"];
+  out.languages[1].level = "fluent";
+  assert.deepEqual(scoreCase(g, out, B).issues, []);
+  out.languages[1].level = "basic";
+  assert.deepEqual(kinds(scoreCase(g, out, B)), ["language_level:INCORRECT:MODEL"]);
+});
+
+test("missing outputs: fail closed by default, scored as failed profiles on request", () => {
+  const gold = { version: "test", cases: [base(), { ...base(), id: "T2" }] };
+  assert.throws(() => evaluate(gold, { T1: perfect() }, SCHEMA), /no output for: T2/);
+  const r = evaluate(gold, { T1: perfect() }, SCHEMA, "x", { missingAsFailed: true });
+  assert.deepEqual(r.failed_outputs, ["T2"]);
+  const t2 = r.cases.find((c) => c.id === "T2");
+  assert.ok(t2.output_failed && !t2.seniority.ok);
+  assert.equal(t2.roles.matched, 0);
+  assert.equal(r.aggregate.role_recall, 0.5);
+});
+
+test("gold v2: v1 unchanged, every audit decision logged, expansion CVs identical to their source", () => {
+  assert.equal(GOLD2.version, "kaayu-gold:v2");
+  assert.equal(GOLD2.derived_from.sha256, crypto.createHash("sha256").update(fs.readFileSync(path.join(ROOT, "test-vectors/mvp/kaayu-gold-v1.json"), "utf8")).digest("hex"), "kaayu-gold-v1.json changed");
+  assert.equal(GOLD2.cases.length, 42);
+  assert.equal(GOLD2.audit.length, 16);
+  assert.deepEqual(GOLD2.audit.map((a) => a.finding), Array.from({ length: 16 }, (_, i) => i + 1));
+  for (const a of GOLD2.audit) assert.ok(["ACCEPTED", "KEPT"].includes(a.decision) && a.rationale, `audit ${a.finding}`);
+  const orig = GOLD2.cases.filter((c) => c.tags.includes("original_23"));
+  const added = GOLD2.cases.filter((c) => c.tags.includes("expansion"));
+  assert.equal(orig.length, 23);
+  assert.equal(added.length, 19);
+  // the original CV texts are unchanged; only labels may differ, and only where the audit says so
+  const v1 = Object.fromEntries(GOLD.cases.map((c) => [c.id, c]));
+  const changed = new Set(GOLD2.audit.filter((a) => a.decision === "ACCEPTED" && a.case !== "ALL").map((a) => a.case));
+  for (const c of orig) {
+    assert.equal(c.cv_text, v1[c.id].cv_text);
+    const strip = (e) => JSON.stringify({ ...e, languages: e.languages.map(({ language, level }) => ({ language, level })) });
+    if (!changed.has(c.id)) assert.equal(strip(c.expected), strip(v1[c.id].expected), `${c.id} relabelled without an audit entry`);
+  }
+  const src = read("test-vectors/mvp/kaayu-synthetic-cv-v4g1.json");
+  for (const c of added) {
+    const s = src.cases.find((x) => x.id === c.source.split("#")[1]);
+    assert.equal(c.cv_text, s.cv_text);
+    assert.equal(crypto.createHash("sha256").update(c.cv_text).digest("hex"), c.source_sha256);
+    // every expected string is written in the CV (labels are extraction targets, not inferences)
+    const has = (x) => c.cv_text.toLowerCase().includes(String(x).toLowerCase());
+    for (const r of c.expected.roles) for (const v of [r.title, r.organization]) assert.ok(has(v), `${c.id}: ${v}`);
+    for (const k of c.expected.skills) assert.ok(has(typeof k === "string" ? k : k.name), `${c.id}: ${k}`);
+    if (c.expected.location) assert.ok(has(c.expected.location), `${c.id}: location`);
+  }
+  for (const c of GOLD2.cases) {
+    for (const s of c.expected.seniority) assert.ok(LAB_SCHEMA.properties.seniority.enum.includes(s), `${c.id}: ${s}`);
+    assert.equal(c.benign, !c.tags.includes("adversarial"));
+  }
+  for (const t of ["long", "stated_location", "unstated_location", "proficiency", "executive", "principal", "adversarial"]) assert.ok(GOLD2.cases.some((c) => c.tags.includes(t)), `coverage: ${t}`);
+});
+
+test("V4-G1 evidence: committed outputs match their hashes and reproduce the committed reports", () => {
+  const sha = (x) => crypto.createHash("sha256").update(x).digest("hex");
+  const runs = [
+    ["kaayu-gold-v2-v3-outputs", GOLD2, SCHEMA, "v3-on-gold-v2-report"],
+    ["kaayu-gold-v2-lab-c1-outputs", GOLD2, LAB_SCHEMA, "lab-c1-on-gold-v2-report"],
+    ["kaayu-gold-v2-lab-c1-outputs", GOLD, LAB_SCHEMA, "lab-c1-on-gold-v1-report"],
+  ];
+  for (const [vec, gold, schema, rep] of runs) {
+    const v = read(`test-vectors/mvp/${vec}.json`);
+    assert.equal(Object.keys(v.outputs).length, 42, vec);
+    for (const [id, o] of Object.entries(v.outputs)) assert.equal(sha(JSON.stringify(o)), v.canonical_sha256[id], `${vec} ${id}`);
+    const report = read(`docs/product/evidence/v4-g1/${rep}.json`);
+    assert.deepEqual(evaluate(gold, v.outputs, schema, report.label, { missingAsFailed: true }), report, rep);
+    assert.deepEqual(report.failed_outputs, [], `${rep}: failed outputs are part of the result`);
+  }
+  // the v3 outputs of the original 23 cases are the V4-G0 baseline, unchanged
+  const base = read("test-vectors/mvp/kaayu-gold-v1-baseline-v3-outputs.json");
+  const v3 = read("test-vectors/mvp/kaayu-gold-v2-v3-outputs.json");
+  for (const id of Object.keys(base.outputs)) assert.equal(v3.canonical_sha256[id], base.canonical_sha256[id], id);
+  // the lab outputs belong to the committed lab prompt and schema
+  const lab = read("test-vectors/mvp/kaayu-gold-v2-lab-c1-outputs.json");
+  assert.equal(lab.lab_prompt_sha256, sha(fs.readFileSync(path.join(ROOT, "lab/v4-g1/prompt.txt"))));
+  assert.equal(lab.lab_schema_sha256, sha(fs.readFileSync(path.join(ROOT, "lab/v4-g1/output-schema.json"))));
+  for (const o of Object.values(lab.outputs)) assert.ok(!o.experience.some((e) => "description" in e), "lab-c1 has no per-role description");
+});
