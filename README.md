@@ -53,7 +53,7 @@ Mbongo Chain verifies cryptographic receipts from off-chain AI inference. It doe
 - Smart contracts, gas metering
 - REST compute job submission
 
-See [VISION_v1.md](./docs/VISION_v1.md) and [tokenomics.md](./docs/tokenomics.md).
+See [VISION_v2.md](./docs/VISION_v2.md) and [tokenomics.md](./docs/tokenomics.md).
 
 ---
 
@@ -255,7 +255,7 @@ the `ping` method.
 | [PROTOCOL_LOCK_v0.3.md](./docs/specs/PROTOCOL_LOCK_v0.3.md) | Superseded v0.3 lock (historical) |
 | [PROTOCOL_LOCK_v0.2.md](./docs/specs/PROTOCOL_LOCK_v0.2.md) | Superseded v0.2 lock (historical) |
 | [COMPUTE_INTERFACE_v0.1.md](./docs/specs/COMPUTE_INTERFACE_v0.1.md) | Future receipt spec (no implementation in v0.2) |
-| [VISION_v1.md](./docs/VISION_v1.md) | Verification layer scope |
+| [VISION_v2.md](./docs/VISION_v2.md) | Vision and scope: verifiable off-chain compute, anchored on-chain |
 | [tokenomics.md](./docs/tokenomics.md) | v1 vs v2+ economics |
 | [CONTRIBUTION_TIERS.md](./docs/CONTRIBUTION_TIERS.md) | Tier 0/1/2 change rules |
 | [RFC_PROCESS.md](./docs/RFC_PROCESS.md) | How to propose changes to locked surfaces |

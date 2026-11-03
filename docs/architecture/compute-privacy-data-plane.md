@@ -10,7 +10,7 @@
 > [`PROTOCOL_LOCK_v0.3.md`](../specs/PROTOCOL_LOCK_v0.3.md) (FROZEN),
 > [`RECEIPT_SPEC_v0.1.md`](../specs/RECEIPT_SPEC_v0.1.md),
 > [`rpc_v0.2.md`](../specs/rpc_v0.2.md) (FROZEN),
-> [`VISION_v1.md`](../VISION_v1.md)
+> [`VISION_v2.md`](../VISION_v2.md)
 > **Descriptive companion:** [`compute-receipts.md`](compute-receipts.md) —
 > what the chain does today with receipts
 
@@ -40,7 +40,7 @@ constraints that any implementation of them must satisfy.
   the provider's memory. Confidentiality *from the provider* is a separate,
   stronger property that requires confidential execution (§10).
 - The chain is not a GPU scheduler and not a marketplace
-  ([`VISION_v1.md`](../VISION_v1.md) §2). Everything that discovers, matches,
+  ([`VISION_v2.md`](../VISION_v2.md) P7). Everything that discovers, matches,
   negotiates or transfers lives off-chain.
 - A receipt proves who claimed what, over which committed input, with whose
   authority. It does not prove the output is correct. Nothing in this document
@@ -239,8 +239,8 @@ and then gets out of the way. Its conceptual responsibilities:
 | job negotiation | agreeing terms for a specific task before or after it is committed |
 | private endpoint discovery | where the encrypted workload is to be sent |
 
-The blockchain does none of this. `VISION_v1.md` §2 rules it out
-("not a cloud GPU network", "not an AI marketplace"), and RFC 0005 §6 keeps
+The blockchain does none of this. `VISION_v2.md` P7 rules it out
+("the chain does not schedule"), and RFC 0005 §6 keeps
 assignment and discovery off-protocol. Transient scheduling state does not
 belong in consensus merely because Compute settles on a blockchain.
 
@@ -493,7 +493,7 @@ nothing yet provides it.
 | P11 | Jurisdiction and residency are control-plane policy, unless future protocol authority explicitly changes that. | COMPATIBLE_BUT_UNIMPLEMENTED |
 | P12 | Public metadata is itself a privacy surface. | ALREADY_TRUE (unacknowledged until now) |
 | P13 | Confidential-compute integration is vendor-neutral at protocol level. | ALREADY_TRUE (nothing vendor-specific exists) |
-| P14 | The blockchain does not schedule or route GPU workloads. | ALREADY_TRUE (`VISION_v1.md` §2, RFC 0005 §6) |
+| P14 | The blockchain does not schedule or route GPU workloads. | ALREADY_TRUE (`VISION_v2.md` P7, RFC 0005 §6) |
 | P15 | Worker input is never sourced from public blockchain payload fields. | COMPATIBLE_BUT_UNIMPLEMENTED (no worker exists) |
 | P16 | Receipt binding does not prove output correctness. | ALREADY_TRUE (RFC 0005 §9.2) |
 | P17 | Private payment activity is a separate problem from private workload content. | ALREADY_TRUE |
@@ -754,7 +754,7 @@ file.
 - [`compute-receipts.md`](compute-receipts.md) — what the chain does with receipts today
 - [`PROTOCOL_LOCK_v0.3.md`](../specs/PROTOCOL_LOCK_v0.3.md) — frozen surfaces
 - [`rpc_v0.2.md`](../specs/rpc_v0.2.md) — the RPC surface (FROZEN)
-- [`VISION_v1.md`](../VISION_v1.md) — what Mbongo is and is not
+- [`VISION_v2.md`](../VISION_v2.md) — what Mbongo is and is not
 - [`ENGINEERING_EVIDENCE.md`](../ENGINEERING_EVIDENCE.md) — what counts as proof
 - [#52](https://github.com/MbongoChain/mbongo-chain/issues/52) — verification research (future)
 - [#50](https://github.com/MbongoChain/mbongo-chain/issues/50) — developer tooling

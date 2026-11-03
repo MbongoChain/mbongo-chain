@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| **Status** | **PROPOSED governance amendment.** It decides nothing until it is adopted (§9). Until then [`VISION_v1.md`](VISION_v1.md) is the NORMATIVE vision and this document is not an authority on any subject. |
-| **Amends** | [`VISION_v1.md`](VISION_v1.md) (NORMATIVE, 2026-02-16). VISION_v1 is not edited by this amendment; on adoption it is marked SUPERSEDED and kept intact as a historical record. |
+| **Status** | **NORMATIVE.** Approved for formal adoption by the maintainer on 2026-11-03 and adopted through PR #181 (§9). |
+| **Supersedes** | [`VISION_v1.md`](VISION_v1.md) (2026-02-16), which is kept intact as a historical record under a SUPERSEDED banner. |
 | **Date** | 2026-11-03 |
-| **Origin** | Maintainer direction of 2026-11-03: approve the general-purpose compute direction and prepare `VISION_v2` as a separate, explicitly reviewed amendment. Architecture and roadmap: [`architecture/GENERAL_PURPOSE_COMPUTE_PROPOSAL.md`](architecture/GENERAL_PURPOSE_COMPUTE_PROPOSAL.md) (PR #180, under review). |
+| **Origin** | Maintainer direction of 2026-11-03: approve the general-purpose compute direction and prepare `VISION_v2` as a separate, explicitly reviewed amendment. Architecture and roadmap: [`architecture/GENERAL_PURPOSE_COMPUTE_PROPOSAL.md`](architecture/GENERAL_PURPOSE_COMPUTE_PROPOSAL.md) (PR #180). |
 | **Kind** | Vision and scope. Non-consensus. It authorises no implementation: protocol changes still need an accepted RFC ([`RFC_PROCESS.md`](RFC_PROCESS.md)), and every implementation step needs its own approved gate. |
 
 This document states **what Mbongo is for and what it will never be**. It does
@@ -166,23 +166,18 @@ decide them.
 
 ## 8. What this amendment does not do
 
-- It does not edit VISION_v1, the protocol lock, any RFC, any spec or any code.
+- It does not change the text of VISION_v1, the protocol lock, any RFC, any spec or any code. VISION_v1 gains only a SUPERSEDED banner.
 - It does not authorise any implementation gate, GPU work, an ML backend, real-data processing or a protocol change.
 - It does not alter the released `mvp-v0.1.0`, its evidence or its documented limitations.
 
 ---
 
-## 9. Adoption
+## 9. Adoption record
 
-Adoption happens only through explicit maintainer review of the pull request
-that carries this document. The steps are:
-
-1. **Review.** The maintainer reviews this text. It stays PROPOSED while review is open.
-2. **Adoption commit.** After approval, and before the merge, one visible commit:
-   - sets this document's status to NORMATIVE, with the approval date;
-   - changes the "Project vision and scope" row of [`INDEX.md`](INDEX.md) from VISION_v1 to VISION_v2;
-   - adds a SUPERSEDED banner at the top of VISION_v1, leaving its text unchanged;
-   - repoints the "chain is not a scheduler or marketplace" citations in `architecture/compute-privacy-data-plane.md` (P14) and `architecture/compute-control-plane-worker-interface.md` (E25) to P7 here. Their meaning does not change.
-
-   The merge gate runs on that exact commit.
-3. **If not approved.** VISION_v1 remains NORMATIVE and this document is not merged.
+- **Approval.** The maintainer approved this amendment for formal adoption on 2026-11-03, preserving VISION_v1 as historical evidence.
+- **Adoption commit.** One visible commit in PR #181 made these changes:
+  - this document's status became NORMATIVE;
+  - the "Project vision and scope" row and reading path of [`INDEX.md`](INDEX.md) now name VISION_v2;
+  - VISION_v1 gained a SUPERSEDED banner, and its existing text did not change;
+  - the entry points (`README.md`, `CONTRIBUTING.md`) and the live architecture documents now cite VISION_v2. The citations of the rule that the chain does not schedule (P14, E25) point to P7, and their meaning did not change.
+- **Citations left as they were.** Accepted RFCs, frozen specs, the frozen MVP scope (`product/MVP_v0.1.md`), `tokenomics.md` and dated audits still cite VISION_v1. They record the vision as it stood when they were written.

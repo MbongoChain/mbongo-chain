@@ -13,7 +13,7 @@
 > [`RECEIPT_SPEC_v0.1.md`](../specs/RECEIPT_SPEC_v0.1.md),
 > [`PROTOCOL_LOCK_v0.4.md`](../specs/PROTOCOL_LOCK_v0.4.md) (FROZEN),
 > [`rpc_v0.3.md`](../specs/rpc_v0.3.md) (FROZEN),
-> [`VISION_v1.md`](../VISION_v1.md)
+> [`VISION_v2.md`](../VISION_v2.md)
 > **Parent architecture:** [`compute-privacy-data-plane.md`](compute-privacy-data-plane.md)
 > (the four-plane model; §8, §17 and §19 are the dimensions this document
 > gives semantics to),

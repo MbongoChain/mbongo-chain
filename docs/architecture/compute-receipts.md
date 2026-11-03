@@ -360,7 +360,7 @@ That is the whole of it today. Worker assignment, marketplaces, payment,
 rewards, redundancy, fraud proofs, TEE attestation and ZK verification are
 **not implemented** and are not designed by this document. Where the repository
 discusses them, it does so as forward-looking material — see
-[`VISION_v1.md`](../VISION_v1.md) and
+[`VISION_v2.md`](../VISION_v2.md) and
 [`COMPUTE_INTERFACE_v0.1.md`](../specs/COMPUTE_INTERFACE_v0.1.md) — and none of
 it is protocol.
 
