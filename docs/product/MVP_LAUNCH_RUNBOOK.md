@@ -161,6 +161,7 @@ Stops the service, `llama-server`, then the nodes. **Every uploaded input, every
 | HTTP front down | HIGH | `mvp_service` exited: restart it (§5); in-memory state is lost (§7); clients re-submit |
 | result expired | LOW | expected after 3,600 s; the receipt stays verifiable; re-run the job if the result is still needed |
 | auth replay detected (`AUTH_REPLAYED`) | MEDIUM | the request was refused; identify the source (the log line names the signer prefix); if it is not the known client, treat it as a key compromise (§11) |
+| screen `CLEAR` on a CV that contains instruction-like text | — | `CLEAR` is not proof the result is uninfluenced (#178): the reviewer checks that the location, certifications, skills and titles each appear in the CV outside the instruction-like text, and treats any value found only there as an undetected override (report it; O1: `SECURITY_FAILURE`) |
 | screen flagged (exit 12, `outcome: CONTENT_FLAGGED`) | MEDIUM | the client already rejected it from normal use (CC-3) and withheld its display; do not use the result; a person reviews the CV (and, if needed, the exact bytes via `result --out`); add the case to the injection corpus (security review §3) |
 
 ## 11. Key compromise

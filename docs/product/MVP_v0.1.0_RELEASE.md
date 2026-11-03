@@ -63,7 +63,7 @@ CLI_VERIFY_AFTER_RESTART=NOT_SUPPORTED_WITHOUT_RESULT
 ```
 
 - Human review of every extracted profile is mandatory; no consequential recruiting decision may rest on extraction output alone.
-- Model resistance to prompt injection is best effort; the release property is that detected adversarial overrides are never delivered as success (CC-3). The screen sees only the artifacts it can see.
+- Model resistance to prompt injection is best effort; the release property is that detected adversarial overrides are never delivered as success (CC-3). The screen sees only the artifacts it can see: a quoted value echoed, or prompt text copied. Overrides through unquoted or punctuated values are **not** detected (#178); `CLEAR` never means uninfluenced, and human review of every profile stays mandatory.
 - The output contract bounds string lengths; values longer than a bound are cut (observed: a 43-character degree title cut at 40 — [#167](https://github.com/MbongoChain/mbongo-chain/issues/167)).
 - Accepted risks and pre-public-launch work are listed in the security review §11.
 
