@@ -315,7 +315,7 @@ The report always names the highest level reached, and never states a higher one
 - **Metrics.** A content-free metrics surface: per-contract jobs, latency percentiles, failures by code, queue depth, memory and CPU-seconds.
 - **Service-level objectives.** Defined per contract and measured by campaigns, as MVP-D did.
 - **Reliability.** Idempotent resubmission and durable state (§4.8).
-- **Metering.** A per-task metering record (wall time, CPU-seconds, peak memory, tokens or rows) in receipt metadata or the data plane. It is labelled **untrusted operational metering**. Trusted metering requires T3 or T4 and comes later.
+- **Metering.** A per-task metering record (wall time, CPU-seconds, peak memory, tokens or rows), kept in the private data plane initially (D14). It is labelled **untrusted operational metering**. Trusted metering requires T3 or T4 and comes later.
 
 ### 4.10 Future pricing and settlement
 
@@ -381,7 +381,7 @@ pub trait WorkloadContract: Send + Sync {
 }
 ```
 
-`InferenceBackend` and `BackendIdentity` stay as they are. G2 does **not** wrap llama.cpp. A llama.cpp `RuntimeAdapter` is deferred to the gate that moves Kaayu onto `mbongo-job` (open question Q4). The released path therefore carries no refactor risk in G2.
+`ContractError` here stands for a new, generic error type in the new module, because `inference/` is a protected path. `InferenceBackend` and `BackendIdentity` stay as they are. G2 does **not** wrap llama.cpp. A llama.cpp `RuntimeAdapter` is deferred to the gate that moves Kaayu onto `mbongo-job` (open question Q4). The released path therefore carries no refactor risk in G2.
 
 #### 4.11.3 Job spec for `mbongo-job:v1`
 
@@ -424,7 +424,7 @@ pub trait WorkloadContract: Send + Sync {
 - An ONNX, ML or GPU adapter.
 - A llama.cpp adapter, or moving Kaayu onto `mbongo-job`.
 - Changes to the MVP front, the CLI, the SDK or the chain.
-- Placing metering in receipts. Metering is logged locally only; where it goes is decided in M6.
+- Placing metering in receipts or on chain. Metering stays in the private data plane initially (D14).
 - A remote contract registry. Registries stay repository-local (A27).
 
 ---
