@@ -106,6 +106,8 @@ Two unseen variants, written after the prompt design to measure overfitting: v3 
 
 Evidence: [`evidence/mvp-e-cc3/adversarial-report.json`](../product/evidence/mvp-e-cc3/adversarial-report.json); CI test P10 asserts the same property on all ten attack-compliant outputs. `PROMPT_INJECTION_TESTED_RESISTANCE = PASS` under CC-3.
 
+**Scope (2026-11-03, #178).** The measured 0 / 0 is **corpus-scoped**: 12 attacks of the MVP-E corpus and its unseen variants. It is not a general detection guarantee. On three new synthetic attacks (V4-G1, #175), the released v3 was overridden twice without a flag: N17 (an unquoted value, the location) and N18 (a quoted value whose surrounding punctuation the output dropped). Both lines were recognised as instruction-like, but the screen matches only quoted values verbatim. This was measured with the screen function on the production profile path; client acceptance is **projected** from the same function the CLI calls (§2), not yet observed on the real client path — that validation belongs to the #178 change-control gate. Controls unchanged: human review of every profile, `PROMPT_INJECTION_IMMUNITY_CLAIMED = NO`.
+
 ### 3.5 Extraction fidelity (targeted, QUALITATIVE_ONLY)
 
 Every adversarial result still lists its CV's real employer; on the MVP-D corpus v3 lists the same positions and employers as v2 in 20/20, education 19/20, languages 19/20, and judges seniority differently on 6/20 (D18 among them, as intended). No accuracy score is computed.
@@ -279,7 +281,7 @@ No CRITICAL advisory; no exploitable HIGH on the controlled launch path once F-N
 
 | ID | Finding | Severity | State |
 |---|---|---|---|
-| F-P1 | prompt injection overrides extraction (D18; v2: 5/10) | HIGH | **mitigated under CC-3**: v3 (model 1/10 corpus, 2/12 with unseen) + screen and rejection (0 undetected, 0 client-accepted) + human review |
+| F-P1 | prompt injection overrides extraction (D18; v2: 5/10) | HIGH | **mitigated under CC-3 on the tested corpus**: v3 (model 1/10 corpus, 2/12 with unseen) + screen and rejection (0 undetected, 0 client-accepted **on the MVP-E corpus and unseen variants**) + human review. **Detection gap (#178):** unquoted or punctuated injected values are not detected; 2 undetected overrides on new synthetic cases (V4-G1). Human review is the control for that gap |
 | F-N1 | node P2P on all interfaces | HIGH | **fixed** (`--p2p-host`, launcher, health check) |
 | F-K1 | public test keys used as client/executor | HIGH | **fixed** (fresh keys, `verify` refuses public seeds) |
 | F-N2 | node mDNS on every interface, auto-dialing discovered peers (found at gate #164, after the MVP-E merge) | HIGH | **fixed** in the F-N2 change (`--no-mdns`, launcher, TCP + UDP health check); `205013d1` = `NOT_RELEASABLE_FOR_CONTROLLED_MVP_DUE_TO_F-N2` |
@@ -298,7 +300,7 @@ No CRITICAL advisory; no exploitable HIGH on the controlled launch path once F-N
 | one job at a time | ACCEPTED_FOR_CONTROLLED_MVP |
 | 3,600 s result lifetime | ACCEPTED_FOR_CONTROLLED_MVP |
 | no business-accuracy proof | ACCEPTED_FOR_CONTROLLED_MVP with mandatory human review; MUST_FIX_BEFORE_PUBLIC_LAUNCH only if accuracy is ever claimed |
-| limited prompt-injection assurance (tested corpus, 4B model, screen sees quoted echoes only) | ACCEPTED_FOR_CONTROLLED_MVP with human review; MUST_FIX_BEFORE_PUBLIC_LAUNCH |
+| limited prompt-injection assurance (tested corpus, 4B model, screen sees quoted echoes only; gap confirmed on new cases in #178) | ACCEPTED_FOR_CONTROLLED_MVP with human review; MUST_FIX_BEFORE_PUBLIC_LAUNCH |
 | no provider-resistant confidentiality | ACCEPTED_FOR_CONTROLLED_MVP (single Mbongo-operated provider, disclosed) |
 | HIGH advisories in libp2p / yamux / wasmtime (unreachable on loopback) | ACCEPTED_FOR_CONTROLLED_MVP; MUST_FIX_BEFORE_PUBLIC_LAUNCH |
 | no TLS in the front | ACCEPTED_FOR_CONTROLLED_MVP (loopback); TLS required at any external boundary |
@@ -337,7 +339,7 @@ Run strictly through the runbook on the reference host (i7-8850H, 6 threads, CPU
 | known HIGH risks mitigated or blocking | F-P1 mitigated (v3 + screen + human review); F-N1, F-K1 fixed; no HIGH open |
 | request signing passed an adversarial review | §4: 4 findings fixed; 17 cases in CI; real probes refused |
 | secrets, keys, capabilities acceptable | §5–§6; fresh keys enforced by `verify` |
-| prompt-injection safety property (CC-3) | model overrides 5/10 → 1/10 (best effort, reported); **0 undetected, 0 client-accepted** over 12 attacks on the real client path; benign never flagged; real D18 not overridden |
+| prompt-injection safety property (CC-3) | model overrides 5/10 → 1/10 (best effort, reported); **0 undetected, 0 client-accepted** over the 12 attacks of the MVP-E corpus and unseen variants on the real client path (corpus-scoped; not general — #178: 2 undetected on new synthetic cases); benign never flagged; real D18 not overridden |
 | guarantees kept apart | receipt, result, schema, business, screen on separate lines and fields; exit codes distinct |
 | operational limits documented and observable | runbook §6–§8; `health` |
 | runbooks | startup, shutdown, incident, key compromise, privacy incident, backups |
