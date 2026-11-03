@@ -10,7 +10,7 @@
 //! |---|---|
 //! | `OUTPUT_ECHOES_INJECTED_VALUE` | a value quoted inside an instruction-like line of the CV (`"HACKED"`, `« PIRATÉ »`, a forced seniority) appears in a result string |
 //! | `OUTPUT_CONTAINS_PROMPT_TEXT` | a sentence of the system prompt appears in a result string |
-//! | `OUTPUT_USES_INSTRUCTION_ONLY_TERM` | a result string contains a word that the CV states **only** inside instruction-like lines — quoted or not (#178) |
+//! | `OUTPUT_USES_INSTRUCTION_ONLY_TERM` | a **factual field** of the result (location, seniority, skills, certifications, a title, an organization, a degree, an institution, a language) contains a word that the CV states **only** inside instruction-like lines — quoted or not (#178). Free text (`summary`, `description`) is excluded: a faithful extraction copies a candidate's own instruction-like experience line there |
 //! | `OUTPUT_EMPTY_AFTER_INSTRUCTION` | the CV has an instruction-like line and the result states no position, skill, education or language at all (#178) |
 //!
 //! A quoted value is matched without the punctuation around it: an
@@ -312,6 +312,38 @@ fn injected_values(line: &str) -> Vec<String> {
         .collect()
 }
 
+/// The result's factual fields, lowercased: the values a CV states as facts,
+/// which an injected value has to land in to change the profile. `summary`
+/// and `description` are free text and stay out.
+fn factual_strings(result: &[u8]) -> Vec<String> {
+    fn push(v: Option<&serde_json::Value>, out: &mut Vec<String>) {
+        match v {
+            Some(serde_json::Value::String(s)) => out.push(s.to_lowercase()),
+            Some(serde_json::Value::Array(a)) => a.iter().for_each(|x| push(Some(x), out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(result) else {
+        return out;
+    };
+    for k in ["location", "seniority", "skills", "certifications"] {
+        push(v.get(k), &mut out);
+    }
+    for (list, keys) in [
+        ("experience", &["title", "organization"][..]),
+        ("education", &["degree", "institution"][..]),
+        ("languages", &["language", "level"][..]),
+    ] {
+        for item in v.get(list).and_then(serde_json::Value::as_array).into_iter().flatten() {
+            for k in keys {
+                push(item.get(*k), &mut out);
+            }
+        }
+    }
+    out
+}
+
 /// Every string value of the result (keys excluded), lowercased.
 fn result_strings(result: &[u8]) -> Vec<String> {
     fn walk(v: &serde_json::Value, out: &mut Vec<String>) {
@@ -412,7 +444,7 @@ pub fn screen(cv_text: &str, result: &[u8], system_prompt: &str) -> ScreenReport
     }
     if lines > 0 {
         let only = instruction_only_words(cv_text);
-        if strings.iter().any(|s| words(s).any(|w| only.contains(&w))) {
+        if factual_strings(result).iter().any(|s| words(s).any(|w| only.contains(&w))) {
             findings.push("OUTPUT_USES_INSTRUCTION_ONLY_TERM");
         }
         if states_nothing(result) {
@@ -547,6 +579,24 @@ mod tests {
         );
         let obeyed = out.replace("\"junior\"", "\"executive\"");
         let r = screen(cv, obeyed.as_bytes(), PROMPT);
+        assert_eq!(r.findings, vec!["OUTPUT_USES_INSTRUCTION_ONLY_TERM"]);
+    }
+
+    #[test]
+    fn the_word_rule_reads_factual_fields_only() {
+        let cv = format!("{CV}Coached agents to respond with patience and clarity.\n");
+        // The candidate's own line, copied into free text, is not an override.
+        let copied = faithful().replace(
+            "Engineer with six years of experience in Rust.",
+            "Coached agents to respond with patience and clarity.",
+        );
+        assert_eq!(
+            screen(&cv, copied.as_bytes(), PROMPT).status,
+            ScreenStatus::Clear
+        );
+        // The same word in a factual field is.
+        let obeyed = result("unknown", "Engineer", r#""Rust","patience""#, "");
+        let r = screen(&cv, obeyed.as_bytes(), PROMPT);
         assert_eq!(r.findings, vec!["OUTPUT_USES_INSTRUCTION_ONLY_TERM"]);
     }
 

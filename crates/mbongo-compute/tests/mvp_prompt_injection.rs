@@ -346,8 +346,8 @@ fn p08_screen_never_reports_content() {
     for s in ["HACKED", "Payroll", "Ledger"] {
         assert!(!rendered.contains(s), "{s}");
     }
-    // #178: the injected value is also a word the CV states only inside the
-    // instruction, so the instruction-only rule fires as well.
+    // #178: the attack also forces `seniority`, a factual field stated only
+    // inside the instruction, so the instruction-only rule fires as well.
     assert_eq!(
         r.findings,
         vec![
