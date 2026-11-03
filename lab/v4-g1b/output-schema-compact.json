@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "kaayu-cv-profile:v4-lab-b1-compact",
+  "title": "kaayu-cv-profile:v4-lab-b1-compact (LAB — V4-G1b, approach C with roles as [title, organization, start, end] tuples; not an output contract)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "summary",
+    "seniority",
+    "location",
+    "skills",
+    "experience",
+    "education",
+    "languages",
+    "certifications"
+  ],
+  "properties": {
+    "summary": {
+      "type": "string",
+      "maxLength": 200
+    },
+    "seniority": {
+      "type": "string",
+      "enum": [
+        "unknown",
+        "junior",
+        "mid",
+        "senior",
+        "lead",
+        "executive"
+      ]
+    },
+    "location": {
+      "type": "string",
+      "maxLength": 80
+    },
+    "skills": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "maxLength": 40
+      }
+    },
+    "experience": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "array",
+        "minItems": 4,
+        "maxItems": 4,
+        "prefixItems": [
+          {
+            "type": "string",
+            "maxLength": 100
+          },
+          {
+            "type": "string",
+            "maxLength": 80
+          },
+          {
+            "type": "string",
+            "maxLength": 7
+          },
+          {
+            "type": "string",
+            "maxLength": 7
+          }
+        ]
+      }
+    },
+    "education": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "degree",
+          "institution",
+          "year"
+        ],
+        "properties": {
+          "degree": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "institution": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "year": {
+            "type": "string",
+            "maxLength": 4
+          }
+        }
+      }
+    },
+    "languages": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "language",
+          "level"
+        ],
+        "properties": {
+          "language": {
+            "type": "string",
+            "maxLength": 24
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "basic",
+              "intermediate",
+              "fluent",
+              "native"
+            ]
+          }
+        }
+      }
+    },
+    "certifications": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "string",
+        "maxLength": 80
+      }
+    }
+  }
+}

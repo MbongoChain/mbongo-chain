@@ -254,3 +254,13 @@ test("V4-G1 evidence: committed outputs match their hashes and reproduce the com
   assert.equal(lab.lab_schema_sha256, sha(fs.readFileSync(path.join(ROOT, "lab/v4-g1/output-schema.json"))));
   for (const o of Object.values(lab.outputs)) assert.ok(!o.experience.some((e) => "description" in e), "lab-c1 has no per-role description");
 });
+
+test("V4-G1b: a role given as a [title, organization, start, end] tuple scores like an object", () => {
+  const schema = read("lab/v4-g1b/output-schema-compact.json");
+  const b = boundsOf(schema);
+  assert.equal(b.experience, 12);
+  assert.equal(b.title, 100);
+  const out = perfect();
+  out.experience = out.experience.map((e) => [e.title, e.organization, e.start, e.end]);
+  assert.deepEqual(scoreCase(base(), out, b).issues, []);
+});

@@ -61,7 +61,10 @@ export const truncatedAt = (out, gold, bound) => {
 // ── schema bounds (output contract kaayu-cv-profile:v2) ─────────────────
 export function boundsOf(schema) {
   const P = schema.properties;
-  const ex = P.experience.items.properties, ed = P.education.items.properties, la = P.languages.items.properties;
+  // a role is an object, or a [title, organization, start, end] tuple (V4-G1b lab schemas)
+  const it = P.experience.items, tuple = it.prefixItems;
+  const ex = tuple ? { title: tuple[0], organization: tuple[1] } : it.properties;
+  const ed = P.education.items.properties, la = P.languages.items.properties;
   return {
     experience: P.experience.maxItems, skills: P.skills.maxItems, languages: P.languages.maxItems, education: P.education.maxItems, certifications: P.certifications.maxItems,
     title: ex.title.maxLength, organization: ex.organization.maxLength, skill: P.skills.items.maxLength, degree: ed.degree.maxLength, institution: ed.institution.maxLength,
@@ -78,7 +81,7 @@ export function scoreCase(goldCase, output, bounds) {
   const count = (n, field, list) => (list.length === bounds[field] && n > list.length ? "SCHEMA_ITEM_BOUND" : "MODEL");
 
   // roles: organization + start + end; titles scored on matched roles
-  const outRoles = [...(o.experience || [])];
+  const outRoles = (o.experience || []).map((e) => (Array.isArray(e) ? { title: e[0], organization: e[1], start: e[2], end: e[3] } : e));
   const usedRole = new Set();
   let matched = 0, titleOk = 0, titleWithOrg = 0, dateErrors = 0;
   for (const gr of g.roles) {

@@ -89,9 +89,23 @@ fn lab_check(schema: &serde_json::Value, v: &serde_json::Value, at: &str) -> Res
                     return Err(format!("{at}: more than {max} items"));
                 }
             }
+            if let Some(min) = schema.get("minItems").and_then(Value::as_u64) {
+                if (a.len() as u64) < min {
+                    return Err(format!("{at}: fewer than {min} items"));
+                }
+            }
+            // A tuple: `prefixItems` types the leading positions, and
+            // `items: false` forbids any further one.
+            let prefix = schema.get("prefixItems").and_then(Value::as_array);
             let items = schema.get("items").cloned().unwrap_or(Value::Null);
             for (i, x) in a.iter().enumerate() {
-                lab_check(&items, x, &format!("{at}[{i}]"))?;
+                match prefix.and_then(|p| p.get(i)) {
+                    Some(s) => lab_check(s, x, &format!("{at}[{i}]"))?,
+                    None if items == Value::Bool(false) => {
+                        return Err(format!("{at}: item {i} beyond the tuple"));
+                    }
+                    None => lab_check(&items, x, &format!("{at}[{i}]"))?,
+                }
             }
             Ok(())
         }
@@ -233,7 +247,8 @@ fn main() {
         std::fs::write(out_dir.join(format!("{id}.json")), &bytes).unwrap();
         let text = String::from_utf8(bytes.clone()).unwrap();
         let lower = text.to_lowercase();
-        // The lab schema keeps v2's seniority and experience fields.
+        // The lab schemas keep v2's seniority field; a role is an object or a
+        // [title, organization, start, end] tuple.
         let value: serde_json::Value = serde_json::from_str(&text).unwrap();
         let seniority = value["seniority"].as_str().unwrap_or_default().to_owned();
         let orgs: Vec<String> = if lab_schema.is_some() {
@@ -241,7 +256,8 @@ fn main() {
                 .as_array()
                 .into_iter()
                 .flatten()
-                .map(|e| e["organization"].as_str().unwrap_or_default().to_lowercase())
+                .map(|e| e.get("organization").or_else(|| e.get(1)))
+                .map(|o| o.and_then(serde_json::Value::as_str).unwrap_or_default().to_lowercase())
                 .collect()
         } else {
             let parsed = kaayu_v2::parse_output(&text).unwrap();
