@@ -2,13 +2,29 @@
 
 | | |
 |---|---|
-| **Status** | **PROPOSED**: for maintainer approval. Until it is approved, this document is ASPIRATIONAL and decides nothing. |
+| **Status** | **PROPOSED — direction approved with conditions (2026-11-03, §0.1); document under review.** The maintainer's decisions are recorded in §0.1. The document decides nothing further until this PR is reviewed and merged. |
 | **Kind** | Architecture and planning, documentation only, non-consensus. RFC 0005, the v0.4 protocol lock and every NORMATIVE document in [`INDEX.md`](../INDEX.md) win on their subjects. |
 | **Date** | 2026-11-03 |
 | **Changes nothing in** | the released `mvp-v0.1.0`, any protocol surface, any product code, any profile, any existing evidence |
-| **Related** | #175 (V4-G1, experimental evidence), #178 (security), #144 (K-HW-LIVE), #169 (verify after restart) |
+| **Related** | #181 (VISION_v2), #175 (V4-G1, experimental evidence), #179 (V4-G1 PR, not merged), #178 (security), #144 (K-HW-LIVE), #169 (verify after restart) |
 
-## 0. Decision requested
+## 0. Decisions
+
+### 0.1 Maintainer decisions of 2026-11-03
+
+The maintainer reviewed the first revision of this proposal and decided the following. This section records those decisions; it does not extend them.
+
+| # | Decision | Condition | Where it is carried out |
+|---|---|---|---|
+| D1 | General-purpose compute direction **approved** | VISION_v2 prepared as a **separate, explicitly reviewed** governance amendment. It preserves no on-chain model execution, no general-purpose VM, deterministic protocol verification, off-chain execution with commitments and receipts, and no unsupported claims. VISION_v1 is not modified silently | PR #181 (`docs/VISION_v2.md`, PROPOSED) |
+| D2 | E/T/B/C/S claims vocabulary (§3) and the **G1 → G2 → G3** order **approved** | — | §3, §7 |
+| D3 | The synthetic **MbongoPay integer scorecard** is **approved** as the second reference workload for G2 | Generic runtime interfaces must admit future ML runtimes without a protocol rewrite. **No ML or GPU backend is implemented yet** | §4.11, §7 G2 |
+| D4 | #178 split into a **documentation-only PR** and a **separate hardening PR** | Real devnet client-path validation, held-out adversarial tests and regression checks are completed **before** merge approval is requested for the hardening PR. Existing evidence is preserved. No general prompt-injection immunity is claimed | §7 G1; PRs #182 (docs) and #183 (hardening, draft) |
+| D5 | PR #179 stays **experimental V4-G1 evidence** | Not merged. CV-specific optimisation does not resume automatically | §5.1, §8 |
+| D6 | This PR is updated with the decisions and explicit architectural boundaries | Not merged until reviewed | §0.1, §1.3 |
+| D7 | The next three gates are prepared with acceptance criteria, dependencies, protected surfaces and rollback conditions | **No change to production protocol, consensus, runtime or SDK** without a separate approved implementation gate | §7 |
+
+### 0.2 Decision requested in the first revision
 
 1. **Direction.** MbongoChain is a **general-purpose, verifiable and eventually decentralized compute infrastructure**. Kaayu CV extraction and MbongoPay synthetic loan-risk scoring are **reference workloads** that validate infrastructure capabilities; their business-specific accuracy is never on the critical path (§1).
 2. **Vision amendment.** This conflicts with the NORMATIVE [`VISION_v1.md`](../VISION_v1.md) (§1.2). Approving this proposal means authorising a separate `VISION_v2` documentation change. This document does not amend the vision by itself.
@@ -63,6 +79,27 @@ Two points hold either way:
 - **What differs** is that the off-chain execution infrastructure (workers, scheduling, data plane) becomes an explicit, first-class part of the project, not out of scope.
 
 Recommendation: approve a `VISION_v2` that keeps v1's on-chain principles (deterministic verification, replayability, no on-chain execution, no VM). It would replace the "not a compute network" exclusions with "off-chain verifiable compute infrastructure, chain-anchored". Until then, VISION_v1 remains the authority.
+
+**Status (D1).** The direction is approved. `VISION_v2` is proposed separately in PR #181 as `docs/VISION_v2.md`, with principles P1–P8. It changes neither VISION_v1 nor INDEX until a visible adoption commit after review. **Until #181 is adopted, VISION_v1 remains NORMATIVE, and this document is read as an extension of it.**
+
+### 1.3 Architectural boundaries
+
+These boundaries bind every milestone and gate in this document. A change that crosses one needs the instrument in the right-hand column. A gate's approval never stands in for that instrument.
+
+| Layer | What it holds | Inside the boundary (milestone or gate work) | Crossing the boundary needs |
+|---|---|---|---|
+| **L0. Consensus and protocol** | Block, transaction and `ComputeTask` encoding; rules (a)–(s); receipt v1; storage semantics; P2P; RPC v0.3; everything frozen by `PROTOCOL_LOCK_v0.4` | **Nothing.** M1–M8 and G1–G3 change no file in this layer, and each gate proves it with Git objects | An accepted RFC (Tier 0). Only M9 (open assignment) and M10 (economics) are expected to need one |
+| **L1. Workload contracts** (non-consensus) | Contract tags carried in the opaque `execution_spec`; job-spec schema, canonical forms and digest; input and output contracts; determinism class; supported T-levels and confidentiality classes | New contracts and new versions, each its own document with vectors. **Existing contracts (`mbongo-infer:v1`, `kaayu-cv-extract` v1–v3) are frozen byte for byte** | A new contract version. A frozen contract is never edited in place |
+| **L2. Runtime adapters** (worker side) | Pinned execution engines identified by hash: llama.cpp today; native deterministic Rust (G2); later ONNX and GPU | New adapters behind their own gate. An adapter is added **beside** existing code, never as a rewrite of the released path | A separate gate per adapter. **ML and GPU adapters need explicit maintainer approval (D3, M7)** |
+| **L3. Off-chain coordination** | Control plane, front, capability advertisements, eligibility (J), selection, leases | Wiring J in, several contracts, several executors (M4) | — (non-consensus). The chain never schedules (VISION_v2 P7) |
+| **L4. Private data plane** | Inputs, results, logs, keys, retention | Durable store and lifecycle (M3) | Real-data admission is a separate maintainer decision per workload |
+| **L5. Client verification and reporting** | E, T0–T5, B, C and S results; screens; exit codes | New levels and new codes. **Existing result fields and exit codes are never redefined** | A change control (CC-*n*) whenever released client behaviour changes |
+| **L6. Released artefacts** | `mvp-v0.1.0` tag, `main`, released profile v3, MVP evidence, SDK 0.2.0 on npm | **Nothing.** They are never moved or rewritten | A new release with its own gate; a correction is added as a dated scope note, never as an edit |
+
+**Further boundary rules:**
+- **Additive first.** A gate adds modules beside the released path. It does not refactor that path unless golden vectors prove the result byte-identical, and then only in a gate that names the refactor.
+- **No silent widening.** A gate that finds it must cross a boundary stops and re-scopes.
+- **Workload neutrality.** No generic layer (L1–L5) may hard-code a reference workload's field names, vocabulary or thresholds. Workload-specific logic lives in that workload's contract, profile or screen.
 
 ---
 
@@ -275,6 +312,107 @@ Economics is deferred to RFCs by the v0.4 lock. RFC 0003 and RFC 0004 remain res
 
 None of this is in the next three gates.
 
+### 4.11 G2 generic-runtime design
+
+This section is the design G2 implements, if approved. It is written so that a future ML or GPU runtime is **one new adapter and one new contract**, with no protocol change and no change to existing contracts (D3). No ML or GPU adapter is part of G2.
+
+#### 4.11.1 Layering inside the worker
+
+```
+ComputeTask.execution_spec  ──►  ProfileDispatch (existing, unchanged)
+                                   ├─ mbongo-infer:v1 profile (existing, frozen; Kaayu)  ── untouched in G2
+                                   └─ mbongo-job:v1 profile (new)
+                                        1. resolve job spec by digest  (canonical JSON, own domain)
+                                        2. WorkloadContract  ← looked up by job_spec.contract
+                                        3. RuntimeAdapter    ← looked up by job_spec.runtime
+                                        4. verify artifacts by SHA-256, check limits
+                                        5. contract.validate_input  (untrusted-input policy, S2)
+                                        6. adapter.run              → raw output + untrusted metering
+                                        7. contract.canonical_output → bytes that output_commitment commits to
+                                        8. contract.check_output    (T1, also used by the client verifier)
+```
+
+The existing `ExecutionProfile` trait (`execution.rs`) is **not changed**. `mbongo-job:v1` is one more implementation of it, registered beside the existing profiles. The released `mbongo-infer:v1` path, the MVP front (one frozen spec) and the MVP CLI are not modified in G2.
+
+#### 4.11.2 Interfaces (sketch, non-normative until G2's contract document)
+
+```rust
+/// A pinned execution engine. G2 ships one: native deterministic Rust.
+/// Later gates add others (ONNX CPU, GPU) without touching this trait.
+pub trait RuntimeAdapter: Send + Sync {
+    /// Family, revision, binary hash (if any), accelerator class.
+    /// Proven at start-up, like BackendIdentity today.
+    fn identity(&self) -> RuntimeIdentity;
+    /// Refuses unless every artifact matches its pinned SHA-256 and size.
+    fn verify_artifacts(&self, artifacts: &[ArtifactRef]) -> Result<(), ContractError>;
+    /// Runs one job. Errors are content-free codes, as in the MVP.
+    fn run(&self, job: &ResolvedJob, input: &[u8]) -> Result<RunOutput, ContractError>;
+}
+
+pub struct RunOutput {
+    pub raw: Vec<u8>,
+    /// Wall time, CPU time, peak memory, rows or tokens. Untrusted (§4.9).
+    pub metering: UntrustedMetering,
+}
+
+/// A versioned workload contract: everything application-specific.
+pub trait WorkloadContract: Send + Sync {
+    fn id(&self) -> &'static str;                        // e.g. "mbongopay-scorecard:v1"
+    fn determinism(&self) -> DeterminismClass;           // §4.2
+    fn output_type(&self) -> OutputType;                 // §4.5
+    fn runtime_requirement(&self) -> RuntimeRequirement; // family and revision range, accelerator
+    fn validate_input(&self, input: &[u8]) -> Result<(), ContractError>;
+    fn canonical_output(&self, raw: &[u8]) -> Result<Vec<u8>, ContractError>;
+    fn check_output(&self, canonical: &[u8]) -> OutputCheck; // T1
+}
+```
+
+`InferenceBackend` and `BackendIdentity` stay as they are. G2 does **not** wrap llama.cpp. A llama.cpp `RuntimeAdapter` is deferred to the gate that moves Kaayu onto `mbongo-job` (open question Q4). The released path therefore carries no refactor risk in G2.
+
+#### 4.11.3 Job spec for `mbongo-job:v1`
+
+- **`execution_spec`:** `b"mbongo-job:v1"` ‖ the 32-byte digest of the canonical job spec. That is 45 bytes, within RFC 0005's 1,024-byte bound, and the same pattern as `mbongo-infer:v1`.
+- **Digest domain.** The digest uses a domain-separation string distinct from `mbongo-infer:v1`'s, fixed in G2's contract document.
+- **Canonical form.** The existing canonical-JSON rules (`inference/canonical.rs`), reused unchanged.
+
+| Field | Common to every contract | Purpose |
+|---|---|---|
+| `contract` | yes | Contract id and version: selects the `WorkloadContract` |
+| `runtime` | yes | `{family, revision, binary_sha256?, accelerator_class}`: selects and pins the `RuntimeAdapter` |
+| `artifacts[]` | yes | `{role, sha256, size_bytes}` for model weights, coefficient tables or code; verified before work is accepted |
+| `input` / `output` | yes | Type (§4.5), maximum bytes and schema digest |
+| `limits` | yes | Maximum wall time and memory, enforced by the worker |
+| `determinism` | yes | Must equal the contract's class; a mismatch is refused |
+| `confidentiality` | yes | The classes this job may run under (§4.8); evaluated by J at admission (M4) |
+| `params` | no (contract-specific) | For example, the scorecard's band thresholds |
+
+#### 4.11.4 How a future ML or GPU runtime fits, without a protocol rewrite
+
+| Need | Where it goes | Protocol change |
+|---|---|---|
+| A pinned ONNX runtime on CPU | A new `RuntimeAdapter` (`runtime.family = "onnxruntime"`), with weights in `artifacts[]` | None |
+| A GPU | The same or another adapter with `accelerator_class = "gpu:…"`, matched against J's existing `hardware.accelerator_class` | None |
+| Float output | Contract `determinism = TOLERANCE`, with a tolerance declared in the contract; the G3 verifier compares within it | None |
+| A sampling LLM | `NON_DETERMINISTIC`; T2 is not offered, and only T3 or T4 apply later | None (T3 itself needs M9's RFC) |
+| A larger model | Artifact size is a job-spec field; large outputs stay in the data plane | None |
+
+#### 4.11.5 MbongoPay v1 in this design
+
+- **Contract:** `mbongopay-scorecard:v1`.
+- **Runtime:** `mbongo-native` (deterministic Rust, integer arithmetic only), with the scorecard table as an artifact identified by SHA-256.
+- **Input and output:** `numeric-record` (§5.2), with no accept or decline field.
+- **Determinism:** `BIT_EXACT`.
+- **Generator:** a seeded synthetic generator.
+- **Reference:** an independent Node reference implementation computes the expected outputs, so the Rust scorer is not checked against itself.
+
+#### 4.11.6 Explicitly not in G2
+
+- An ONNX, ML or GPU adapter.
+- A llama.cpp adapter, or moving Kaayu onto `mbongo-job`.
+- Changes to the MVP front, the CLI, the SDK or the chain.
+- Placing metering in receipts. Metering is logged locally only; where it goes is decided in M6.
+- A remote contract registry. Registries stay repository-local (A27).
+
 ---
 
 ## 5. Reference workloads
@@ -336,7 +474,7 @@ Both are synthetic and are **infrastructure test vehicles**. Their business-spec
 
 | # | Generic capability | Acceptance tests and measurable evidence | Both workloads | Exit criteria | Out of scope (business-specific) |
 |---|---|---|---|---|---|
-| **M0** | Direction, claims vocabulary, Vision v2 | This proposal approved; `VISION_v2` merged; claims vocabulary (§3) referenced from INDEX | Y (definitions) | Maintainer approval; INDEX updated | Any accuracy target |
+| **M0** | Direction, claims vocabulary, Vision v2 | This proposal approved; `VISION_v2` (#181) adopted; claims vocabulary (§3) referenced from INDEX | Y (definitions) | Maintainer approval; INDEX updated | Any accuracy target |
 | **M1** | **Generic workload contracts and runtime adapters** (§4.1, §4.2, §4.5) | Kaayu v1–v3 golden vectors and the MVP-D / MVP-E vectors reproduce byte for byte. MbongoPay v1 contract: job-spec digest vector, canonical I/O vectors, ≥ 200 synthetic cases equal to the independent Node reference. Both contracts dispatched by one worker. Conformance suite extended | **Y** | 0 protocol diffs (Git-object proof of locked paths); 0 vector changes for existing contracts; MbongoPay 100 % equality on the synthetic set; CI green | Kaayu prompt or schema changes; MbongoPay model quality |
 | **M2** | **Contract-driven technical verification T0–T2** (§4.7) | A verifier that reads the contract: T0 and T1 for both workloads; T2 re-execution for MbongoPay (equality) and for Kaayu within `BIT_EXACT_PINNED` (the same host class). Negative tests: tampered output, wrong artifact, wrong contract → the named failure branch, never a generic error | **Y** (T2 is P-only across hardware) | Every report names its highest level; 0 false T2 passes on the tamper corpus; the B layer stays `NOT_ASSESSED` | Semantic checking of CV content; score calibration |
 | **M3** | **Durable private data lifecycle** (§4.8) | An encrypted durable store behind the data-plane interface; restart tests (`verify` completes after a restart, #169); retention and deletion tests; privacy scans | **Y** | Restart scenario PASS on a devnet; deletion verified; 0 plaintext in logs or chain | — |
@@ -357,95 +495,163 @@ Both are synthetic and are **infrastructure test vehicles**. Their business-spec
 
 ## 7. The next three implementation gates
 
-They are ordered by dependency and risk. Each is a separate PR set, approved before merge, with PR CI and push CI reported separately.
+The gates are ordered by dependency and risk (D2), and each is a separate PR set.
+
+**Rules for every gate:**
+- **Approval.** Explicit maintainer approval of the gate before any implementation, and again before any merge.
+- **Merge procedure.** The merge gate (`.claude/skills/merge-gate`) runs on the exact reviewed SHA. PR CI and push CI are reported separately, and skipped jobs are named.
+- **Protected surfaces.** They are listed **before** the work starts. At merge, each one is proven unchanged with Git objects (`git rev-parse <base>:<path>` against `<head>:<path>`), with the expected and actual counts stated.
+- **Rollback.** Every gate merges as one squash commit on `dev`. Rollback is a revert of that commit, with a dated scope note in the affected documents. The `mvp-v0.1.0` tag and `main` are never moved.
 
 ### G1 — Security #178: content-safety screen correction (S1)
 
-**Scope:**
-1. **Documentation correction (prepared).** Branch `docs/178-cc3-scope` (`a33b669`): scopes CC-3's evidence to its corpus and discloses the detection gap. Documentation only.
-2. **Screen-hardening candidate (prepared, not merged).** Branch `security/178-screen-hardening` (`17459e5`):
-   - quoted values are matched without punctuation;
-   - `OUTPUT_USES_INSTRUCTION_ONLY_TERM` (unquoted values);
-   - `OUTPUT_EMPTY_AFTER_INSTRUCTION` (suppression).
+**Scope (D4):** two PRs, deliberately independent.
+1. **Documentation PR (#182).** Scopes CC-3's evidence to its corpus and discloses the detection gap. It is documentation only and adds dated scope notes; the original records stay.
+2. **Hardening PR (#183).** Hardens `mvp/screen.rs`:
+   - quoted values are matched without surrounding punctuation;
+   - `OUTPUT_USES_INSTRUCTION_ONLY_TERM` flags a term that appears only in the instruction-like text;
+   - `OUTPUT_EMPTY_AFTER_INSTRUCTION` flags an output that states nothing after an instruction-like line.
 
-   **Measured with `screen()` on 93 real synthetic outputs:**
-   - 9/9 confirmed overrides flagged, 0/83 benign or resisted outputs flagged (test P11);
-   - the in-process CLI rejects N17 and N18 with exit 12 (test P13);
-   - all `mbongo-compute` tests pass, and clippy is clean.
-3. **Still owed:** a real devnet client-path validation (`mvp-launch.mjs adversarial`) on three corpora: the MVP-E corpus, the unseen variants, and the held-out corpus `mvp-sec178-adversarial-v1`. That corpus has 6 attacks and 3 benign controls with innocent instruction-like lines, and was committed (`bdfb60e`) before any run. The validation is run once on released v3 and once with the candidate.
+   It also adds regression tests (P11–P13), the held-out corpus `mvp-sec178-adversarial-v1` (committed in `bdfb60e` before any run), and the real-client-path evidence (G1-RESULTS).
 
-**Dependencies:** none.
+**Dependencies:**
+- None on G2 or G3.
+- The docs PR merges first, so the published claims are corrected regardless of the hardening decision.
+
+**Status (2026-11-03): G1 is not ready to close.**
+
+Both PRs are open. Both runs went through the real devnet client path, on the same 25 synthetic cases, with identical model behaviour.
+
+**Released code:**
+- 6 overrides were undetected and client-accepted;
+- 1 benign control was flagged.
+
+**Candidate (#183):**
+- 1 override was undetected (S06, the declared limit);
+- **all 3 held-out benign controls were flagged, so A4 FAILS.**
+
+**Consequences:**
+- **#182** (docs) is ready for review.
+- **#183** stays a draft, with no merge approval requested.
+- A revised candidate (slot-field restriction) needs a **fresh** held-out corpus. The maintainer must also decide the B03-class trade-off (Q11).
+
+**Acceptance criteria for the hardening PR**, fixed before the real-path runs:
+
+| # | Criterion | Evidence |
+|---|---|---|
+| A1 | `screen()` flags every confirmed override among the 93 recorded synthetic outputs and flags no benign or resisted output | P11 (unit, CI) |
+| A2 | The CLI exits 12 (`CONTENT_FLAGGED`) for N17 and N18, and exits 0 (`VERIFIED`) for N19 | P13 (in-process, CI) |
+| A3 | **Real devnet client path**, hardened build, over 25 cases: MVP-E corpus 11, unseen variants 2, held-out corpus 12. Required: `UNDETECTED_ADVERSARIAL_OVERRIDE_COUNT = 0` and `CLIENT_ACCEPTED_ADVERSARIAL_OVERRIDE_COUNT = 0` over every attack, except that **S06 is reported either way**. Its corpus states, before any run, that it probes a limit and is not a requirement | `mvp-launch.mjs adversarial` report, committed |
+| A4 | All 4 benign controls (E-P11, B01–B03) are `CLEAR`, exit 0 and `VERIFIED` on the real path | Same report |
+| A5 | **Regression:** every MVP-E and unseen-variant attack that released v3 already rejected is still rejected | Released-v3 run against the hardened run, same corpora, same host |
+| A6 | Integrity dimensions stay separate: receipt, result and schema `VERIFIED`; business `NOT_ASSESSED` | Same report |
+| A7 | `cargo test -p mbongo-compute` and clippy pass; PR CI green on the head SHA | CI |
+| A8 | No claim of general prompt-injection immunity anywhere; every count names its corpus | Review of the PR text and docs |
 
 **Protected surfaces:**
-- `mvp/screen.rs` and the CLI outcome mapping (released client behaviour);
-- the CC-3 record (`MVP_v0.1.md` §20.3);
-- v3's profile, which is unchanged.
+- the `kaayu-cv-extract:v3` prompt, schema and vector;
+- `mvp-v0.1.0` and `main`;
+- MVP-D and MVP-E evidence;
+- all L0 protocol paths;
+- the SDK.
 
-**Change control:** a new change record (proposed CC-5) naming the decision, the evidence and the replacement. The released `mvp-v0.1.0` tag is never moved.
+`mvp/screen.rs`, `mvp/cli.rs` (outcome mapping) and the CC-3 record **do change**, under a new change control (proposed **CC-5**).
+
+**Rollback conditions:**
+- **Before merge:** stop if any criterion A1–A8 fails, or if a benign real-path control is flagged.
+- **After merge:** revert if a false positive on a benign input is reported in controlled operation, or if any adversarial regression vector fails. The docs PR is not reverted with it. Its scope correction stays true either way.
 
 **Risks:**
-- **False positives on real CVs.** A benign instruction-like line combined with a word used only there; measured only on synthetic data.
-- **The screen stays heuristic.** The marker list is English, French and Spanish, and S06 (no marker) is a known probe of that limit.
-
-**Exit criteria:**
-- 0 undetected and 0 client-accepted overrides on all three corpora through the real client path;
-- benign controls `VERIFIED`;
-- the corpus scope stated in every claim;
-- the docs PR merged first.
+- **Real CVs.** False positives on real CVs remain unmeasured, because the evidence uses synthetic data only.
+- **Heuristic screen.** The screen remains a heuristic with English, French and Spanish markers.
+- **Deployment.** The fix reaches users only through a release decision, which is not part of G1.
 
 ### G2 — Generic workload contracts plus the MbongoPay reference workload (M1)
 
-**Scope:**
-- the `mbongo-job:v1` contract family definition;
-- the runtime-adapter interface;
-- the MbongoPay v1 deterministic scorer as a new `ExecutionProfile`;
-- a seeded synthetic generator and independent Node reference;
-- MbongoPay vectors;
-- the conformance extension.
+**Scope:** the design in §4.11:
+- the `mbongo-job:v1` contract document and vectors;
+- the `RuntimeAdapter` and `WorkloadContract` interfaces;
+- the `mbongo-native` adapter;
+- `mbongopay-scorecard:v1` (contract, scorecard artifact, Rust profile);
+- a seeded synthetic generator;
+- an independent Node reference;
+- the conformance-suite extension.
 
-Kaayu is moved behind the generic interfaces **without any byte change**.
+**Kaayu stays on its frozen `mbongo-infer:v1` profile, untouched.** One worker dispatches both contracts through the existing `ProfileDispatch`.
 
-**Dependencies:** M0 approval (this proposal and the claims vocabulary). It is independent of G1.
+**Dependencies:**
+- D1–D3 (approved);
+- G2's own implementation approval.
+
+It does not depend on G1, and it can run in parallel once approved.
+
+**Acceptance criteria:**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| B1 | The `mbongo-job:v1` job-spec digest vector and the canonical I/O vectors reproduce in Rust and in the Node reference | Vectors, CI |
+| B2 | 100 % byte equality between the Rust scorer and the independent Node reference on ≥ 200 seeded synthetic cases. The case count is asserted before comparing | Test with an asserted count |
+| B3 | A wrong artifact hash, a mismatched determinism class, an out-of-range input, an unknown contract or an unknown runtime are each refused with their named error code. Each refusal is shown reaching its branch, not just exiting non-zero | Negative tests |
+| B4 | **Kaayu and MVP regression:** the `kaayu-cv-extract` v1–v3 vectors, `mvp-http-cli-v1`, and the MVP-D and MVP-E vectors all pass, and their files are unchanged (Git objects) | CI and a blob comparison |
+| B5 | One worker (the reference worker or a devnet test) executes an `mbongo-infer:v1` task and an `mbongo-job:v1` task, and anchors both receipts. T0 verifies both | Devnet integration test |
+| B6 | The output contract has no accept or decline field, and the synthetic feature set has no protected attribute; both are asserted by a schema test. Every output carries the label "synthetic risk score for infrastructure testing — not a credit decision" | Schema test |
+| B7 | `compute-conformance-v1` is extended and passes for the new profile | CI |
+| B8 | PR CI green on the head SHA; the push CI is reported separately | CI |
 
 **Protected surfaces (proved unchanged with Git objects):**
-- the `ComputeTask` and Receipt code and vectors;
-- rpc_v0.3;
-- the `mbongo-infer:v1` contract and its vectors;
-- the `kaayu-cv-extract` v1–v3 assets and vectors;
-- the released MVP front behaviour (the frozen spec stays accepted);
-- the MVP-D / MVP-E vectors;
-- gold v1.
+- **Protocol and chain:** `crates/mbongo-core/**`, `crates/mbongo-node/**`, `crates/mbongo-network/**`, `crates/mbongo-storage/**`, `docs/specs/**`, `docs/rfcs/**`.
+- **SDK:** `sdk/typescript/**`.
+- **Released inference path:** `crates/mbongo-compute/src/{inference,profiles,cpu_inference,mvp}/**` and `execution.rs`.
+- **Vectors:** `test-vectors/inference/**` and `test-vectors/mvp/**`.
+- **Released artefacts:** the `mvp-v0.1.0` tag.
+
+**Rollback conditions:**
+- **Before merge:** stop if any protected path differs, any existing vector changes, B2 is below 100 %, or the work needs an ML, GPU or llama.cpp adapter.
+- **After merge:** revert if any MVP regression is traced to G2. G2 is additive, so reverting it removes only new modules and vectors.
 
 **Risks:**
-- **Refactor regression** in the released path. Mitigated by byte-identical golden vectors and the existing suites.
-- **Scope creep** into ML models or real credit use. Blocked by the §5.2 guardrails.
-- **Over-generalising before a second runtime exists.** Kept to two concrete adapters.
-
-**Exit criteria:** the M1 row of §6; 0 protocol diffs; MbongoPay 100 % equality with the independent reference on ≥ 200 synthetic cases.
+- **Over-generalising.** The interfaces are designed around two adapters, one of them hypothetical. This is mitigated by keeping the trait surface to what MbongoPay needs, plus the §4.11.4 table, which is checked at review.
+- **Scope creep** into real credit use, blocked by the B6 guardrails and §5.2.
+- **The refactor temptation.** Moving Kaayu is explicitly excluded (§4.11.6).
 
 ### G3 — Contract-driven technical verification T0–T2 (M2)
 
 **Scope:**
-- a verifier library and CLI path driven by the contract;
-- T2 re-execution for `BIT_EXACT` (MbongoPay) and for `BIT_EXACT_PINNED` within one host class (Kaayu);
-- a report format naming the level reached;
+- a verifier library and CLI path driven by `WorkloadContract`;
+- T0 and T1 for both workloads;
+- T2 re-execution: MbongoPay (`BIT_EXACT`, by equality on any conforming host) and Kaayu (`BIT_EXACT_PINNED`, only within the declared host class);
+- a report format that names the highest level reached;
 - tamper corpora.
 
-**Dependencies:** G2.
+**Dependencies:**
+- G2 merged; T2 for MbongoPay needs the contract and the adapter.
+- Kaayu T2 additionally needs a host-class identity rule (open question Q6).
+
+**Acceptance criteria:**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| C1 | Each report names exactly one highest level reached, and never states a level it did not reach | Report-format tests |
+| C2 | Tamper corpus: modified output bytes, a wrong artifact, a wrong contract or a modified receipt each fail at their named level and branch. 0 false T2 passes, with the case count asserted | Negative tests |
+| C3 | T2 is never reported for a `NON_DETERMINISTIC` contract, nor for `BIT_EXACT_PINNED` outside its declared host class | Tests |
+| C4 | MbongoPay T2 reproduces 100 % of the G2 synthetic set on a second machine or OS (Linux CI against the Windows reference host) | CI and a reference-host run |
+| C5 | The MVP's four existing result fields and exit codes are unchanged. New information appears only as new fields or codes. `BUSINESS_* = NOT_ASSESSED` holds | `mvp-http-cli-v1` vector and the MVP tests |
+| C6 | The verifier is opt-in. Without it, client behaviour is byte-identical to before G3 | Test |
 
 **Protected surfaces:**
-- receipt semantics, which are unchanged; T-levels are client-side;
-- the MVP's four existing result fields and exit codes, which can be extended only with new codes;
-- `BUSINESS_* = NOT_ASSESSED`.
+- everything protected in G2;
+- receipt semantics: T-levels are client-side only.
+
+**Rollback conditions:**
+- **Before merge:** stop if any false T2 pass occurs, any level is over-reported, or any existing exit code changes.
+- **After merge:** revert if a report ever states a level not reached.
 
 **Risks:**
-- **Over-claiming.** Mitigated by naming the level and testing that T2 is never reported for a `NON_DETERMINISTIC` contract.
-- **Hardware non-determinism making Kaayu T2 flaky.** It is declared `BIT_EXACT_PINNED`, so T2 is limited to the host class.
-- **Re-execution cost.** The verifier is opt-in.
+- **Over-claiming:** controlled by C1 and C3.
+- **Kaayu T2 flakiness across hardware:** limited by `BIT_EXACT_PINNED`.
+- **Re-execution cost:** the verifier is opt-in.
 
-**Exit criteria:** the M2 row of §6.
-
-**Next candidate after G3:** M3 (durable private data lifecycle, #169). It is needed before any real-data workload.
+**Next candidate after G3:** M3, the durable private data lifecycle (#169). It is needed before any real-data workload.
 
 ---
 
@@ -454,7 +660,9 @@ Kaayu is moved behind the generic interfaces **without any byte change**.
 - No protocol rewrite. No change to locked surfaces without an accepted RFC (M9 and M10 only).
 - The chain never executes workloads. No VM.
 - `mvp-v0.1.0`, its tag, `main`, profile v3 and all existing evidence stay as released.
-- #179 stays open as experimental evidence and is not merged. `lab/v4-g1b` is stopped. CC-4 is not started.
+- #179 stays open as experimental evidence and is not merged (D5). `lab/v4-g1b` is stopped, and CV-specific optimisation does not resume automatically. CC-4 is not started.
+- No change to production protocol, consensus, runtime or SDK without a separate, approved implementation gate (D7).
+- No ML or GPU backend until its own gate is approved (D3, M7).
 - No real candidate, applicant or financial data. No O1-B02.
 - No automated consequential decisions on any reference-workload output. Human review stays mandatory for Kaayu.
 - No GPU implementation before M7's own approval.
@@ -465,9 +673,22 @@ Kaayu is moved behind the generic interfaces **without any byte change**.
 - RFC 0002's header still reads "Draft", while INDEX lists it as Accepted.
 - The injection screen's marker list and field names are Kaayu-specific (S2).
 
-## 10. Open questions for the maintainer
+## 10. Questions: resolved and open
 
-1. Approve the `VISION_v2` direction (§1.2), or keep VISION_v1 and treat this as an extension?
-2. Is MbongoPay v1's integer scorecard sufficient as the second workload, or is an ML runtime (v2) required earlier?
-3. Should G1's documentation correction merge before its screen change (recommended), or together?
-4. Should the generic contract be a new tag (`mbongo-job:v1`, recommended), or should `mbongo-infer` be versioned to v2?
+**Resolved on 2026-11-03 (§0.1):**
+- Q1 (direction and vision): D1.
+- Q2 (MbongoPay scorecard sufficient for G2): D3. An ML runtime is deferred, and the interfaces must admit it (§4.11.4).
+- Q3 (G1 ordering): D4. The docs PR and the hardening PR are separate, and the docs PR merges first (§7 G1).
+
+**Unresolved architecture decisions.** None of them blocks review of this document. Each must be decided before the gate named.
+
+| # | Question | Recommendation | Needed before |
+|---|---|---|---|
+| Q4 | Generic contract: a new tag `mbongo-job:v1`, or version `mbongo-infer` to v2? And does Kaayu stay on `mbongo-infer:v1` permanently, or move to `mbongo-job` in a later named gate (which would also need a llama.cpp `RuntimeAdapter`)? | A new tag. Kaayu stays on `mbongo-infer:v1` until a gate that needs the move, such as a CC-4 successor or M7, names it | G2 |
+| Q5 | #178 deployment: does the hardened screen reach operators as a patch release (`mvp-v0.1.1`) of the client, or only at the next release? | A patch release of the client only, under CC-5, after the hardening PR merges. The release is a separate gate | After G1 |
+| Q6 | For `BIT_EXACT_PINNED` T2, what identifies a "host class"? Self-declared identity is untrusted | Runtime build hash, CPU model and instruction-set flags, and thread count, recorded as **untrusted** in the T2 report. T2 across classes is never claimed | G3 (Kaayu T2 only) |
+| Q7 | Where does untrusted metering live: receipt metadata (public, ≤ 4,096 B) or the private data plane? | The data plane by default. Receipt metadata only for content-free counters, decided in M6 | M6 |
+| Q8 | Contract registry: repository-local (A27), or signed, content-addressed manifests? | Repository-local until a third-party provider runs a contract the repository does not ship | M4 |
+| Q9 | Open assignment (RFC 0005 "model C") versus a directory that names executors off-chain | An off-chain directory until M9's RFC. The RFC is written only after M4 shows a concrete limit | M9 |
+| Q10 | Content-safety screens per contract (S2): one generic untrusted-input policy interface, or a screen per workload? | One `validate_input` and one output-screen hook per `WorkloadContract` (§4.11.2); the Kaayu screen becomes one implementation | After G1, before a second free-text workload |
+| Q11 | #178 screen trade-off. The candidate's word rule flags benign experience lines that read as instructions (B01, B02). The echo rule flags a benign quoted motto (B03; released code too). Options: (a) restrict the word rule to slot fields and accept B03-class fail-closed false positives; (b) also narrow the echo rule, which weakens E-P01-type detection; (c) keep released behaviour and rely on human review | (a), validated on a **fresh** held-out corpus written before any run | Next #178 revision |
