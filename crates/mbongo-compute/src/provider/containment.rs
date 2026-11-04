@@ -129,7 +129,8 @@ mod linux {
     use std::os::unix::process::{CommandExt, ExitStatusExt};
     use std::path::{Path, PathBuf};
     use std::process::{Command, Output, Stdio};
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     use super::{ContainmentConfig, ContainmentError, ContainmentProof};
@@ -168,6 +169,8 @@ mod linux {
         fn getgid() -> u32;
         fn write(fd: c_int, buffer: *const u8, count: usize) -> isize;
         fn setgroups(size: usize, list: *const u32) -> c_int;
+        fn setsid() -> c_int;
+        fn umask(mask: u32) -> u32;
         fn prctl(option: c_int, ...) -> c_int;
         fn capset(header: *mut CapHeader, data: *const CapData) -> c_int;
         fn fcntl(fd: c_int, command: c_int, ...) -> c_int;
@@ -201,6 +204,8 @@ mod linux {
         // permitted and inheritable sets clears the ambient set too.
         unsafe {
             checked(write(cgroup_procs, b"0".as_ptr(), 1) == 1)?;
+            // Out of the service's session, and away from its terminal.
+            checked(setsid() != -1)?;
             checked(setgroups(0, std::ptr::null()) == 0)?;
             checked(
                 prctl(
@@ -258,6 +263,7 @@ mod linux {
         procs: File,
         uid: u32,
         gid: u32,
+        survivors: Arc<AtomicBool>,
     }
 
     impl JobCgroup {
@@ -283,7 +289,9 @@ mod linux {
 
     impl Drop for JobCgroup {
         fn drop(&mut self) {
-            reap(&self.path);
+            if !reap(&self.path) {
+                self.survivors.store(true, Ordering::SeqCst);
+            }
         }
     }
 
@@ -295,6 +303,8 @@ mod linux {
         swept: usize,
         probed_paths: usize,
         proof: ContainmentProof,
+        /// A job's processes could not be killed. Nothing else runs beside them.
+        survivors: Arc<AtomicBool>,
     }
 
     fn check_identity(
@@ -354,12 +364,38 @@ mod linux {
         Ok(())
     }
 
+    /// Whoever can write to a parent can replace what sits under it, whatever
+    /// its own mode. A sticky directory only lets owners do that.
+    fn check_parents(path: &Path, uid: u32) -> Result<(), ContainmentError> {
+        let wrong = |detail: String| refuse("PROTECTED_PATH", detail);
+        let real = fs::canonicalize(path)
+            .map_err(|e| wrong(format!("{}: {:?}", path.display(), e.kind())))?;
+        for parent in real.ancestors().skip(1) {
+            let meta = fs::metadata(parent)
+                .map_err(|e| wrong(format!("{}: {:?}", parent.display(), e.kind())))?;
+            let open = meta.mode() & 0o022 != 0 && meta.mode() & 0o1000 == 0;
+            if open || (meta.uid() != uid && meta.uid() != 0) {
+                return Err(wrong(format!(
+                    "{}: owner {} mode {:o}",
+                    parent.display(),
+                    meta.uid(),
+                    meta.mode() & 0o7777
+                )));
+            }
+        }
+        Ok(())
+    }
+
     fn check_paths(config: &ContainmentConfig, uid: u32) -> Result<(), ContainmentError> {
         let private = |path: &Path, directory: bool| {
             let shown = path.display();
-            let meta = fs::metadata(path)
+            let meta = fs::symlink_metadata(path)
                 .map_err(|e| refuse("PROTECTED_PATH", format!("{shown}: {:?}", e.kind())))?;
-            if meta.is_dir() != directory || meta.uid() != uid || meta.mode() & 0o077 != 0 {
+            if meta.is_dir() != directory
+                || (!directory && !meta.is_file())
+                || meta.uid() != uid
+                || meta.mode() & 0o077 != 0
+            {
                 return Err(refuse(
                     "PROTECTED_PATH",
                     format!(
@@ -369,7 +405,7 @@ mod linux {
                     ),
                 ));
             }
-            Ok(())
+            check_parents(path, uid)
         };
         for file in &config.secret_files {
             private(file, false)?;
@@ -389,22 +425,24 @@ mod linux {
                 format!("group {} mode {:o}", meta.gid(), meta.mode() & 0o7777),
             ));
         }
-        Ok(())
+        check_parents(&config.work_dir, uid)
     }
 
-    /// What a crash left: orphaned runners, and their job directories. Called
-    /// with the state lock held, so these are never another service's.
-    fn sweep(config: &ContainmentConfig) -> Result<usize, ContainmentError> {
-        let jobs = |dir: &Path| -> Result<Vec<PathBuf>, ContainmentError> {
-            let entries = fs::read_dir(dir)
-                .map_err(|e| refuse("CGROUP_UNAVAILABLE", format!("{:?}", e.kind())))?;
-            Ok(entries
-                .filter_map(Result::ok)
-                .filter(|e| e.file_name().to_string_lossy().starts_with(JOB_PREFIX))
-                .map(|e| e.path())
-                .collect())
-        };
-        let groups = jobs(&config.cgroup_root)?;
+    fn job_entries(dir: &Path) -> Result<Vec<PathBuf>, ContainmentError> {
+        let entries = fs::read_dir(dir)
+            .map_err(|e| refuse("CGROUP_UNAVAILABLE", format!("{:?}", e.kind())))?;
+        Ok(entries
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with(JOB_PREFIX))
+            .map(|e| e.path())
+            .collect())
+    }
+
+    /// Kills what a crash left. Called with the state lock held, so these jobs
+    /// are never another service's, and before the path checks, so a start
+    /// refused for its paths leaves no runner alive.
+    fn sweep_jobs(config: &ContainmentConfig) -> Result<usize, ContainmentError> {
+        let groups = job_entries(&config.cgroup_root)?;
         for group in &groups {
             if !reap(group) {
                 return Err(refuse(
@@ -413,10 +451,14 @@ mod linux {
                 ));
             }
         }
-        for dir in jobs(&config.work_dir)? {
+        Ok(groups.len())
+    }
+
+    fn sweep_job_dirs(config: &ContainmentConfig) -> Result<(), ContainmentError> {
+        for dir in job_entries(&config.work_dir)? {
             fs::remove_dir_all(dir).map_err(|e| refuse("WORK_DIR", format!("{:?}", e.kind())))?;
         }
-        Ok(groups.len())
+        Ok(())
     }
 
     fn field<'a>(status: &'a str, name: &str) -> Option<&'a str> {
@@ -434,14 +476,22 @@ mod linux {
             let (uid, gid) = unsafe { (getuid(), getgid()) };
             check_identity(&config, uid, gid)?;
             check_cgroup(&config, uid)?;
+            let swept = sweep_jobs(&config)?;
             check_paths(&config, uid)?;
-            let swept = sweep(&config)?;
+            sweep_job_dirs(&config)?;
+            // Job directories: read-only for the runner's group, whatever
+            // umask the service was started with.
+            // SAFETY: touches no memory and cannot fail.
+            unsafe {
+                umask(0o027);
+            }
             let mut containment = Self {
                 config,
                 next_job: AtomicU64::new(0),
                 swept,
                 probed_paths: 0,
                 proof: ContainmentProof(()),
+                survivors: Arc::new(AtomicBool::new(false)),
             };
             containment.probe_identity()?;
             containment.probe_descriptors()?;
@@ -468,6 +518,9 @@ mod linux {
         /// A cgroup for one job, with its limits in place. `max_memory_mib`
         /// comes from the job spec, so the provider's ceiling caps it.
         pub fn job(&self, max_memory_mib: u64) -> io::Result<JobCgroup> {
+            if self.survivors.load(Ordering::SeqCst) {
+                return Err(io::Error::from(io::ErrorKind::ResourceBusy));
+            }
             let n = self.next_job.fetch_add(1, Ordering::SeqCst);
             let path = self.config.cgroup_root.join(format!("{JOB_PREFIX}{n}"));
             fs::create_dir(&path)?;
@@ -478,6 +531,7 @@ mod linux {
                     procs,
                     uid: self.config.runner_uid,
                     gid: self.config.runner_gid,
+                    survivors: Arc::clone(&self.survivors),
                 },
                 Err(e) => {
                     reap(&path);

@@ -91,6 +91,7 @@ function attack({ targets, service_pid: pid, cgroup_root: root }) {
       cap_inh: line("CapInh"),
       cap_amb: line("CapAmb"),
       no_new_privs: line("NoNewPrivs"),
+      session_leader: session(process.pid) === String(process.pid) ? "YES" : "NO",
       cgroup: own,
     },
     descriptors: fs.readdirSync("/proc/self/fd").flatMap((fd) => {

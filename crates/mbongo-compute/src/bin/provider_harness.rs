@@ -30,7 +30,7 @@ const EXECUTOR_SEED: [u8; 32] = [0xE1; 32];
 /// The provider's ceiling on a job's memory, in the contained run.
 const MEMORY_CEILING_MIB: u64 = 512;
 /// Every way a contained start must be refused.
-const REFUSALS: usize = 13;
+const REFUSALS: usize = 14;
 /// Two key files, two directories, the journal, the lock, two `/proc` entries.
 const PROBED_PATHS: u64 = 8;
 const NO_CAPABILITIES: &str = "0000000000000000";
@@ -574,6 +574,14 @@ fn prove_refusals(c: &Contained, config: &Value) -> Result<(), String> {
             Start::Launcher,
         ),
         (
+            "key under a directory others can write",
+            "PROTECTED_PATH",
+            format!("chmod 0777 {base}/keys"),
+            format!("chmod 0700 {base}/keys"),
+            json!({}),
+            Start::Launcher,
+        ),
+        (
             "state directory open",
             "PROTECTED_PATH",
             format!("chmod 0755 {base}/state"),
@@ -816,6 +824,7 @@ fn prove_attack(c: &Contained, stack: &Stack, service_pid: u32) -> Result<(), St
         || identity["gid"] != ids(c.runner_gid).as_str()
         || identity["groups"] != ""
         || identity["no_new_privs"] != "1"
+        || identity["session_leader"] != "YES"
     {
         return Err(format!("runner identity: {identity}"));
     }
