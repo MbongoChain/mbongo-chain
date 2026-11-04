@@ -1,9 +1,10 @@
 # P3: Provider Network Security and Interoperability
 
-**Status: PROPOSED. Not approved, and nothing here is implemented.** The service
-stays loopback-only and no provider is deployed until this is approved, and then
-only as approved. It replaces the P3 row of
-[`G2_MBONGO_JOB_V1_PLAN.md`](G2_MBONGO_JOB_V1_PLAN.md) §10 if adopted.
+**Status: architecture approved in principle (2026-11-04).** P3-A is authorized.
+P3-B, P3-C and P3-D each need separate authorization after the stage before them.
+The service stays loopback-only: no infrastructure is purchased, and no provider
+is exposed publicly. This replaces the P3 row of
+[`G2_MBONGO_JOB_V1_PLAN.md`](G2_MBONGO_JOB_V1_PLAN.md) §10.
 
 **Goal:** a provider on another host can be reached securely, can hold a runner
 without network access, and can show that it conforms. No new workload.
@@ -79,9 +80,9 @@ survives a terminator unchanged, and the service gains no TLS dependency.
 | **Terminator run by the provider (recommended)** | Matches the existing boundary; no new dependency in the service | One more component for the provider |
 | TLS inside the service | One process | A new dependency, and certificate handling in the process that holds the key |
 
-**TLS proves a host name, not an executor.** The binding between them needs a
-decision, question 3 below. P4 (signed capability declarations) is its natural
-home.
+**TLS proves a host name, not an executor.** P3 binds them by configuration, out
+of band (decision 3). P4 (signed capability declarations) is the natural home
+for anything stronger. The terminator's trust boundary needs explicit checks.
 
 ### P3-D: Independent providers on separate hosts
 
@@ -94,26 +95,33 @@ home.
 | Excluded | Discovery, failover (P5), a hosted test network, certification |
 
 Containers on one machine do not prove this. It needs two real hosts, and it
-depends on P3-B and P3-C.
+depends on P3-B and P3-C. No infrastructure is purchased for it (decision 6), so
+P3-D waits until suitable private hosts exist.
 
-## 3. What P3 will not claim
+## 3. Security position
 
-- Provider honesty: evidence still stops at T1. That needs G3 and later T2 or T3.
-- Full filesystem isolation, or safety for arbitrary untrusted workloads.
-- Network isolation or containment on Windows.
-- Protection against a compromised provider service.
-- Public deployment readiness: P4 and P5 stay open.
+Evidence for P2 stays in [`PROVIDER_CONTAINMENT_LINUX.md`](../runbooks/PROVIDER_CONTAINMENT_LINUX.md). P3 does not change these limits:
 
-## 4. Approval required
+| Subject | Position |
+|---|---|
+| Isolation | **Linux only.** Windows is a functional testing target, with no isolation guarantee from P2 or P3 |
+| Filesystem | No full isolation: a runner reads what is world-readable and writes where its account can |
+| Unix sockets and IPC | Enforced by file permissions only. Abstract Unix sockets stay reachable, and `nftables` will not cover them. Shared memory and other IPC of the runner's account are not isolated |
+| Provider service | Inside the trust boundary, holding `CAP_SETUID` and `CAP_SETGID`. No protection against a compromised service |
+| Provider honesty | Evidence stops at T1. No guarantee beyond it: that needs G3 and later T2 or T3 |
+| Untrusted workloads | Not supported. Network isolation is a prerequisite, not sufficient by itself |
+| Public deployment | Not ready: P4 and P5 stay open |
 
-| # | Decision | Recommendation |
-|---|---|---|
-| 1 | Approve the scope and order: P3-A, B, C, D | Yes |
-| 2 | Runner network: `nftables` on the uid, with abstract Unix sockets as a stated limitation | Yes |
-| 3 | How a client binds a host to an executor: out-of-band configuration now, or pull the signed declaration forward from P4 | Out-of-band now |
-| 4 | TLS: a terminator run by the provider, not TLS inside the service | Yes |
-| 5 | P3-D hosts: which two, who pays, and that they stay private and hold synthetic data only | Your decision. No cost is committed |
-| 6 | Whether Windows stays a functional target only | Yes |
+## 4. Decisions (2026-11-04)
 
-Each task then needs its own implementation approval. Public deployment needs a
-separate one.
+| # | Decision |
+|---|---|
+| 1 | The order is P3-A, P3-B, P3-C, P3-D |
+| 2 | Runner network: `nftables` rules on the Linux uid, subject to demonstrated enforcement and documented Unix-socket limitations |
+| 3 | Host-to-executor identity: out-of-band configuration for P3 |
+| 4 | TLS: a terminator run by the provider, a loopback-only backend, and explicit trust-boundary checks |
+| 5 | Windows stays a functional testing target, with no isolation claim |
+| 6 | No infrastructure is purchased and no provider is exposed publicly |
+
+Only P3-A is authorized. Each later stage needs its own authorization after the
+one before it, and public deployment needs a separate one.

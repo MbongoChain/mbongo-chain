@@ -327,6 +327,8 @@ The code reaches the client through `GET /v1/tasks/{id}`, content-free. It is ca
 
 ### 9.6 Timeouts and resource limits
 
+This table describes the runner without containment. With `isolation.mode = required`, on Linux only, P2 enforces `max_memory_mib` and descendant termination: [`PROVIDER_CONTAINMENT_LINUX.md`](../runbooks/PROVIDER_CONTAINMENT_LINUX.md).
+
 | Limit | Enforced by | Strength |
 |---|---|---|
 | `max_wall_ms` | Worker kills the direct child, on Linux and Windows | The direct child only. **Termination of its process tree is not guaranteed**, unless the provider's launcher contains it |
@@ -336,6 +338,8 @@ The code reaches the client through `GET /v1/tasks/{id}`, content-free. It is ca
 | Lease | `max_wall_ms` above the provider's ceiling is refused at step 2 | The worker sends no heartbeat while running, so the ceiling stays below `lease_secs` |
 
 ### 9.7 Interoperability is not isolation
+
+This section describes the runner without containment. P2 adds a Linux boundary with its own limits: [`PROVIDER_CONTAINMENT_LINUX.md`](../runbooks/PROVIDER_CONTAINMENT_LINUX.md).
 
 | | Interoperability (this design) | Isolation (not this design) |
 |---|---|---|

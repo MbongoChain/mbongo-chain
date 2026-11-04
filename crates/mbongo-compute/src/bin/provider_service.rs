@@ -5,8 +5,11 @@
 //! ```
 //!
 //! The configuration names the node, the executor key file, the artifact
-//! directory and the runtimes. Remote exposure, TLS and OS isolation of the
-//! runner are the provider's responsibility and are not provided here.
+//! directory, the runtimes and the isolation mode, which has no default.
+//! `required` is Linux only and refuses to start unless containment is proven
+//! (`docs/runbooks/PROVIDER_CONTAINMENT_LINUX.md`). `none` isolates nothing,
+//! and is for controlled local testing only.
+//! Remote exposure and TLS are the provider's responsibility.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -19,11 +22,11 @@ use mbongo_compute::chain::RpcChainClient;
 use mbongo_compute::clock::SystemClock;
 use mbongo_compute::job::{JobSource, MeteringSink, RuntimeAdapter, RuntimeIdentity};
 use mbongo_compute::mvp::client::{load_key_file, parse_hex32, random_bytes};
+use mbongo_compute::provider::containment::{Containment, ContainmentConfig};
 use mbongo_compute::provider::durable::DurableStore;
 use mbongo_compute::provider::runner::{RunnerConfig, SubprocessRuntime, RUNNER_CONTRACT};
 use mbongo_compute::provider::service::{
     MeteringLog, ProviderConfig, ProviderParts, ProviderService, ProviderStore,
-    KEY_ISOLATION_ENFORCED,
 };
 use serde::Deserialize;
 
@@ -50,6 +53,27 @@ struct RuntimeEntry {
     pass_env: Vec<String>,
 }
 
+/// Stated explicitly: a configuration that omits it does not load.
+#[derive(Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+enum Isolation {
+    /// Nothing is isolated, and nothing is claimed. For controlled local
+    /// testing only.
+    None,
+    /// Proven at startup, or the service does not start.
+    Required {
+        runner_uid: u32,
+        runner_gid: u32,
+        cgroup_root: PathBuf,
+        /// Ceiling on a job's memory, whatever its spec declares.
+        max_memory_mib: u64,
+        max_pids: u64,
+        /// Further paths a runner must not read.
+        #[serde(default)]
+        denied_paths: Vec<PathBuf>,
+    },
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Config {
@@ -63,7 +87,45 @@ struct Config {
     state_key_file: PathBuf,
     artifact_dir: PathBuf,
     work_dir: PathBuf,
+    isolation: Isolation,
     runtimes: Vec<RuntimeEntry>,
+}
+
+/// Runs after the state is open: the lock is held, so the jobs a crash left
+/// behind are this service's own.
+fn contain(config: &Config) -> Result<Option<Arc<Containment>>, String> {
+    let Isolation::Required {
+        runner_uid,
+        runner_gid,
+        cgroup_root,
+        max_memory_mib,
+        max_pids,
+        denied_paths,
+    } = &config.isolation
+    else {
+        return Ok(None);
+    };
+    let mut denied = denied_paths.clone();
+    let state = std::fs::read_dir(&config.state_dir).map_err(|e| format!("state: {}", e.kind()))?;
+    denied.extend(state.filter_map(Result::ok).map(|e| e.path()));
+    let containment = Containment::establish(ContainmentConfig {
+        runner_uid: *runner_uid,
+        runner_gid: *runner_gid,
+        cgroup_root: cgroup_root.clone(),
+        max_memory_mib: *max_memory_mib,
+        max_pids: *max_pids,
+        secret_files: vec![
+            config.executor_key_file.clone(),
+            config.state_key_file.clone(),
+        ],
+        private_dirs: vec![config.state_dir.clone(), config.artifact_dir.clone()],
+        work_dir: config.work_dir.clone(),
+        denied_paths: denied,
+    })
+    .map_err(|e| e.to_string())?;
+    println!("ISOLATION_PROBE_PATHS={}", containment.probed_paths());
+    println!("CONTAINMENT_SWEPT={}", containment.swept());
+    Ok(Some(Arc::new(containment)))
 }
 
 /// Binds through `std`, whose sockets are never inherited: a runner must not
@@ -91,6 +153,22 @@ async fn bind(address: SocketAddr) -> Result<tokio::net::TcpListener, String> {
     }
 }
 
+/// Ctrl-C, or `SIGTERM` where there is one.
+async fn stop_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        if let Ok(mut terminate) = signal(SignalKind::terminate()) {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = terminate.recv() => {}
+            }
+            return;
+        }
+    }
+    let _ = tokio::signal::ctrl_c().await;
+}
+
 async fn serve(config: Config) -> Result<(), String> {
     if !config.bind.ip().is_loopback() {
         return Err(format!(
@@ -103,9 +181,11 @@ async fn serve(config: Config) -> Result<(), String> {
         .ok()
         .and_then(|k| parse_hex32(k.trim()))
         .ok_or("state key: expected 64 hex characters")?;
-    let provider_config = ProviderConfig::default();
+    let mut provider_config = ProviderConfig::default();
     let durable = DurableStore::open(&config.state_dir, &state_key, provider_config.retention)
         .map_err(|e| e.to_string())?;
+    let containment = contain(&config)?;
+    provider_config.contained = containment.as_ref().map(|c| c.proof());
     let store = Arc::new(ProviderStore::new(config.artifact_dir));
     let mut runtimes: Vec<Arc<dyn RuntimeAdapter>> = Vec::new();
     for r in config.runtimes {
@@ -123,6 +203,10 @@ async fn serve(config: Config) -> Result<(), String> {
             },
             Arc::clone(&store) as Arc<dyn JobSource>,
         );
+        let runtime = match &containment {
+            Some(c) => runtime.contained(Arc::clone(c)),
+            None => runtime,
+        };
         runtime.verify_binary()?;
         runtimes.push(Arc::new(runtime));
     }
@@ -148,10 +232,12 @@ async fn serve(config: Config) -> Result<(), String> {
     );
     println!("EXECUTOR={}", hex::encode(service.executor().0));
     println!("RUNNER_CONTRACT={RUNNER_CONTRACT}");
-    println!(
-        "KEY_ISOLATION_ENFORCED={}",
-        if KEY_ISOLATION_ENFORCED { "YES" } else { "NO" }
-    );
+    let enforced = if containment.is_some() { "YES" } else { "NO" };
+    if containment.is_none() {
+        log::warn!("provider: isolation is off: for controlled local testing only");
+    }
+    println!("KEY_ISOLATION_ENFORCED={enforced}");
+    println!("MEMORY_LIMIT_ENFORCED={enforced}");
     println!("STATE=DURABLE");
     println!("EXECUTION=AT_LEAST_ONCE (one receipt per task; a runner may run twice)");
     let ticker = {
@@ -165,9 +251,16 @@ async fn serve(config: Config) -> Result<(), String> {
             }
         })
     };
+    let stop_ticking = ticker.abort_handle();
     let result = axum::serve(listener, service.router())
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+        .with_graceful_shutdown(async move {
+            stop_signal().await;
+            stop_ticking.abort();
+            // A job must not outlive the service that bounds it. It stays
+            // unfinished in the journal, and the next start runs it again.
+            if let Some(containment) = containment {
+                println!("SHUTDOWN_JOBS_KILLED={}", containment.stop());
+            }
         })
         .await
         .map_err(|e| format!("serve: {}", e.kind()));
