@@ -886,10 +886,13 @@ async fn prove_descendants(c: &Contained, stack: &Stack) -> Result<(), String> {
         if count < 3 {
             return Err(format!("{name}: {count} heartbeats"));
         }
+        // At the deadline the failure is reported up to `KILL_GRACE` before the
+        // kill, so the count only settles once the process is gone.
         gone(&pid).await?;
+        let settled = std::fs::read_to_string(&heartbeat).map_err(|e| e.to_string())?;
         tokio::time::sleep(Duration::from_millis(300)).await;
         let after = std::fs::read_to_string(&heartbeat).map_err(|e| e.to_string())?;
-        if after.lines().count() != count {
+        if after != settled {
             return Err(format!("{name}: the heartbeat continued"));
         }
         println!("  {name}: descendant alive for {count} heartbeats, then dead");
