@@ -892,7 +892,7 @@ async fn prove_descendants(c: &Contained, stack: &Stack) -> Result<(), String> {
         if after.lines().count() != count {
             return Err(format!("{name}: the heartbeat continued"));
         }
-        println!("  {name}: descendant in its own session, {count} heartbeats, then dead");
+        println!("  {name}: descendant alive for {count} heartbeats, then dead");
     }
     Ok(())
 }
