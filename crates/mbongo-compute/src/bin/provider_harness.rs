@@ -161,6 +161,21 @@ impl Contained {
             .ok_or_else(|| "no oom_kill counter".to_owned())
     }
 
+    /// A file of the one running job's cgroup.
+    fn job_file(&self, name: &str) -> Result<String, String> {
+        let mut jobs: Vec<PathBuf> = std::fs::read_dir(&self.cgroup)
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with("job-"))
+            .map(|e| e.path())
+            .collect();
+        let job = jobs.pop().ok_or("no running job")?;
+        if !jobs.is_empty() {
+            return Err("more than one running job".to_owned());
+        }
+        std::fs::read_to_string(job.join(name)).map_err(|e| e.to_string())
+    }
+
     /// Every process in the job cgroups, and how many cgroups there are.
     fn job_processes(&self) -> Result<(usize, Vec<String>), String> {
         let mut groups = 0;
@@ -951,30 +966,58 @@ async fn prove_descendants(c: &Contained, stack: &Stack) -> Result<(), String> {
 }
 
 /// A job that forks without end stops at the limit, and takes nothing with it.
+/// A runner cannot read its own cgroup, so the counters are read from outside.
 async fn prove_process_limit(c: &Contained, stack: &Stack) -> Result<(), String> {
     let attempts = MAX_PIDS * 3;
+    let marker = c.scratch.join("forks.done");
     let spec = fixture_spec(
         json!({
             "mode": "fork",
             "attempts": attempts,
             "counter": c.scratch.join("forks"),
+            "marker": marker,
+            "hold_ms": 2_000,
         }),
         1_024,
         json!({"max_wall_ms": 20_000, "max_memory_mib": 256}),
     )?;
-    let output = verified_output(stack, "fork", &spec)?;
-    let r: Value = serde_json::from_slice(&output).map_err(|e| e.to_string())?;
-    let number = |key: &str| r[key].as_str().and_then(|v| v.parse::<u64>().ok());
-    let limit = number("limit").ok_or(format!("limit: {r}"))?;
-    let current = number("current").ok_or(format!("current: {r}"))?;
-    let denied = r["denied"]
-        .as_str()
-        .and_then(|e| e.strip_prefix("max "))
-        .and_then(|n| n.split(' ').next())
+    let mut client = stack.client_command("fork", &spec, b"[1]")?;
+    let client = client
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let waiting = Instant::now();
+    while !marker.exists() {
+        if waiting.elapsed() > Duration::from_secs(60) {
+            return Err("the forking job never finished forking".to_owned());
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let (limit, current, events) = (
+        c.job_file("pids.max")?,
+        c.job_file("pids.current")?,
+        c.job_file("pids.events")?,
+    );
+    let limit: u64 = limit.trim().parse().map_err(|_| format!("pids.max: {limit}"))?;
+    let current: u64 = current.trim().parse().map_err(|_| format!("pids.current: {current}"))?;
+    let denied = events
+        .lines()
+        .find_map(|l| l.strip_prefix("max "))
         .and_then(|n| n.parse::<u64>().ok())
-        .ok_or(format!("denied: {r}"))?;
+        .ok_or(format!("pids.events: {events}"))?;
     if limit != MAX_PIDS || current > limit || current * 2 < limit || denied == 0 {
-        return Err(format!("the process limit did not hold: {r}"));
+        return Err(format!("limit {limit}, current {current}, denied {denied}"));
+    }
+    let run = client.wait_with_output().map_err(|e| e.to_string())?;
+    let report: Value = serde_json::from_slice(&run.stdout)
+        .map_err(|_| format!("fork: {}", String::from_utf8_lossy(&run.stderr).trim()))?;
+    let output =
+        hex::decode(report["output"].as_str().ok_or("output")?).map_err(|e| e.to_string())?;
+    let result: Value = serde_json::from_slice(&output).map_err(|e| e.to_string())?;
+    let forked = result["started"].as_u64().ok_or(format!("fork: {result}"))?;
+    if !run.status.success() || report["technical_level"] != "T1" || forked >= attempts {
+        return Err(format!("fork: {report}"));
     }
     let started = Instant::now();
     loop {
@@ -988,7 +1031,8 @@ async fn prove_process_limit(c: &Contained, stack: &Stack) -> Result<(), String>
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     println!(
-        "  {attempts} forks under pids.max {limit}: {current} running, {denied} denied, none left"
+        "  {attempts} attempts under pids.max {limit}: {forked} forked, {current} running, \
+         {denied} denied, none left"
     );
     Ok(())
 }

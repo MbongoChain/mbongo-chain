@@ -167,9 +167,9 @@ switch (params.mode) {
   case "fork": {
     const script = `n=0; while [ $n -lt ${params.attempts} ]; do /bin/sleep 60 & n=$((n+1)); echo $n > ${params.counter}; done`;
     spawnSync("/bin/sh", ["-c", script], { stdio: "ignore" });
-    const own = fs.readFileSync("/proc/self/cgroup", "utf8").trim().replace(/^0::/, "");
-    const read = (name) => fs.readFileSync(`/sys/fs/cgroup${own}/${name}`, "utf8").trim().replace(/\s+/g, " ");
-    respond(Buffer.from(JSON.stringify({ current: read("pids.current"), denied: read("pids.events"), limit: read("pids.max") })));
+    fs.writeFileSync(params.marker, "ready\n");
+    pause(params.hold_ms);
+    respond(Buffer.from(JSON.stringify({ started: Number(fs.readFileSync(params.counter, "utf8")) })));
     break;
   }
   case "alloc": {
