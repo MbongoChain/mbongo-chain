@@ -867,7 +867,7 @@ async fn prove_descendants(c: &Contained, stack: &Stack) -> Result<(), String> {
         };
         let heartbeat = c.scratch.join(format!("{name}.heartbeat"));
         let spec = fixture_spec(
-            json!({"mode": "daemon", "heartbeat": heartbeat, "hang": hang}),
+            json!({"mode": "daemon", "heartbeat": heartbeat, "hang": u8::from(hang)}),
             1_024,
             json!({"max_wall_ms": if hang { 4_000 } else { 20_000 }, "max_memory_mib": 256}),
         )?;

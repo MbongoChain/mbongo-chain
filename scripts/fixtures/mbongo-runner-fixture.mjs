@@ -63,7 +63,7 @@ function sorted(value) {
 function attack({ targets, service_pid: pid, cgroup_root: root }) {
   const own = fs.readFileSync("/proc/self/cgroup", "utf8").trim().replace(/^0::/, "");
   const status = fs.readFileSync("/proc/self/status", "utf8");
-  const line = (name) => status.split("\n").find((l) => l.startsWith(`${name}:`)).slice(name.length + 1).trim();
+  const line = (name) => status.split("\n").find((l) => l.startsWith(`${name}:`)).slice(name.length + 1).trim().replace(/s+/g, " ");
   return {
     read: targets.map((t) => attempt(() => fs.readFileSync(t))),
     write: targets.map((t) => attempt(() => fs.closeSync(fs.openSync(t, "a")))),
