@@ -117,9 +117,7 @@ fn read_node_output(producer: &mut Child) -> NodeLog {
 }
 
 /// Waits for the RPC to answer. A node that exits fails at once: its status
-/// is the finding, and no amount of waiting brings it back. A node that lives
-/// without an RPC is possible too — it reports a failed bind on stderr and
-/// keeps running — and ends in the timeout.
+/// is the finding, and no amount of waiting brings it back.
 async fn wait_for_rpc(chain: &RpcChainClient, producer: &mut Child) -> Result<(), String> {
     sleep(Duration::from_secs(2)).await;
     for _ in 0..50 {
