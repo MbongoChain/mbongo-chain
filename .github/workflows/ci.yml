@@ -26,6 +26,14 @@ jobs:
     timeout-minutes: 20
 
     steps:
+      # Some runners have far less free disk than others, and this job has run
+      # out of it. Nothing here uses the preinstalled Android SDK.
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android
+          df -h /
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
