@@ -384,7 +384,7 @@ This section describes the runner without containment. P2 adds a Linux boundary 
 | S2-7 | Unsigned, **wrong-recipient**, replayed, tampered, expired and wrong-submitter requests are refused, each by its named code |
 | S2-8 | Canary values in input and runner stderr: 0 occurrences in logs, status, receipts, chain or metering (PE-1, PE-3) |
 | S2-9 | Evidence states T1 at most, with `BUSINESS_CORRECTNESS = NOT_ASSESSED` and no isolation claim (TV-3) |
-| S2-10 | `compute-conformance-v1` passes against the bundle through its `Subject` adapter. All existing MVP vectors and suites pass unchanged. **Deferred and not satisfied (#191):** the suites pass unchanged, but no `Subject` adapter exists for the service |
+| S2-10 | `compute-conformance-v1` passes against the bundle through its `Subject` adapter. All existing MVP vectors and suites pass unchanged. **Met by P3-A (#191):** 38 of 38, see [`compute-conformance.md`](../development/compute-conformance.md) |
 
 Fixtures stay the three of §3.5. No benchmarks.
 
@@ -408,7 +408,7 @@ All five are approved:
 
 ## 10. Next stage: provider readiness (PROPOSED)
 
-**Scope not approved. Nothing here is implemented, and no provider is opened.** Slice 2 is merged (#190), loopback only and not deployed. Its status against §9.10: S2-1 to S2-9 met; **S2-10 deferred and not satisfied** (#191).
+**Scope not approved. Nothing here is implemented, and no provider is opened.** Slice 2 is merged (#190), loopback only and not deployed. Its status against §9.10: S2-1 to S2-9 met; S2-10 met later by P3-A (#191).
 
 **Goal:** the minimum infrastructure for a provider that MbongoChain does not operate. No new workload.
 
@@ -433,7 +433,7 @@ All five are approved:
 | Signing key readable by the runner | P2 |
 | No process-tree or memory enforcement | P2 |
 | Loopback only, no TLS guidance proven | P3 |
-| S2-10 deferred | P3 (#191) |
+| S2-10 deferred | Closed by P3-A (#191) |
 | Capability declarations unsigned | P4 |
 | Provider honesty unverified: evidence stops at T1 | **Stays open.** Needs G3 and later T2 or T3. Operators and clients must accept it explicitly |
 | Prompt-injection screen is best effort (CC-5) | **Stays open** for the released MVP. Not a provider gate |

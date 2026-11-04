@@ -76,8 +76,12 @@ pub fn install_log_capture() -> bool {
     log::max_level() == log::LevelFilter::Trace
 }
 
-fn take_captured() -> Vec<String> {
+pub(crate) fn take_captured() -> Vec<String> {
     CAPTURED.lock().map(|mut b| std::mem::take(&mut *b)).unwrap_or_default()
+}
+
+pub(crate) fn captured_lines() -> Vec<String> {
+    CAPTURED.lock().map(|b| b.clone()).unwrap_or_default()
 }
 
 // ── the subject ──────────────────────────────────────────────────────────
@@ -765,7 +769,7 @@ impl Subject for ReferenceSubject {
         } else {
             "# log capture: inactive (another logger owns this process)\n"
         });
-        for line in CAPTURED.lock().map(|b| b.clone()).unwrap_or_default() {
+        for line in captured_lines() {
             out.push_str(&line);
             out.push('\n');
         }
