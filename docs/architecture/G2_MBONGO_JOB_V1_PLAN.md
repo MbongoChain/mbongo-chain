@@ -249,3 +249,145 @@ Each test states its expected count and asserts it first. A negative test passes
 | A fixture growing into a workload | §3.5 rule: test-only, no business logic |
 | Evidence read as more than it is | TV-3: never above T1, never business correctness |
 | A runaway in-process adapter outliving its deadline | RL-3 proves the worker recovers. A hard kill needs the process boundary of decision 1 |
+
+## 9. Slice 2 design (PROPOSED, for approval)
+
+**No Slice 2 code exists, and none may be written until this design is approved.** It replaces Task 5 of §5 and settles §7 decision 1.
+
+### 9.1 Shape
+
+A provider operates **one service bundle**: front, control plane, data plane and worker in one process, as `mvp_service` does today. Independence comes from each provider running its own bundle with its own executor key. The E and F contracts stay in-process, so **no new network protocol is needed**.
+
+| Boundary | Between | Mechanism | New? |
+|---|---|---|---|
+| Chain | Client and provider | `ComputeTask`, `AnchorReceipt`, `rpc_v0.3` | No |
+| Client to provider | Client and bundle | Signed HTTP, the same routes as the MVP, plus two | Same pattern |
+| Inside the bundle | Control plane, data plane, worker | In-process calls | No |
+| **Worker to runtime** | Worker and the provider's runtime | **OS process: stdin, stdout, exit code** | **Yes: the only new contract** |
+
+### 9.2 Flow
+
+1. `GET /v1/capabilities`: the provider's declaration.
+2. `PUT /v1/job-specs`: the client sends its canonical job spec. The provider validates it, selects a runtime and verifies artifacts, and refuses **before anything reaches the chain**. It answers with the `execution_spec`.
+3. `PUT /v1/inputs`, then the client commits a `ComputeTask` naming the provider's executor, then `POST /v1/tasks/{id}/register`.
+4. The unchanged `Worker` takes the lease, fetches, runs `JobProfile`, persists, and anchors the receipt.
+5. `GET /v1/tasks/{id}`, then `GET /v1/tasks/{id}/result`.
+6. The client finds the receipt on-chain (`find_receipt`), checks its signature (`verify_receipt_signature`), and runs `verify_result`.
+
+### 9.3 Reused and new
+
+| Need | Reused as it is | New |
+|---|---|---|
+| Job submission | `ComputeTask`, `rpc_v0.3`, `JobSpec`, `JobProfile` | `provider/` module with the routes above |
+| Capability declaration | `capability-advertisement-v1` claims, `Session.spec_tags` | One read-only route. Claims are **declared**, and `eligible()` stays for M4 |
+| Runtime invocation | `RuntimeAdapter`, `ResolvedJob` | `SubprocessRuntime` adapter (§9.4) |
+| Result commitments | `reference_output_commitment`, private data plane | — |
+| Execution receipts | `Worker::bound_receipt`, `anchor_transaction`, Receipt v1 | — |
+| Technical verification | `find_receipt`, `verify_receipt_signature`, `verify_result` | Small generic client path. `mvp/verify.rs` is Kaayu-specific and is not used |
+| Failure handling | `JobError`, `AttemptEvent::Failed`, leases | Task loop that parks by failure class (§9.5) |
+| Request auth | `verify_signature`, `ReplayGuard`, the header names | A signing message with an audience (§9.8, decision 2) |
+
+`mvp/front.rs` cannot be reused directly: it hard-codes the frozen task, the Kaayu input and one executor, and it is protected. Its task loop is about 100 lines; re-writing them in `provider/` is cheaper than risking the released path.
+
+### 9.4 Runner contract (`mbongo-runner:v1`)
+
+The provider's configuration maps `{family, revision, accelerator_class}` to a command and an optional binary hash, verified at start-up.
+
+| Item | Rule |
+|---|---|
+| Input | Bytes on **stdin**. Never written to disk by the worker |
+| Output | Bytes on **stdout**, read up to `output.max_bytes + 1` |
+| Job | A fresh directory holding `job.json` (the canonical job spec) and `artifacts/<sha256>`, named by `MBONGO_JOB_DIR` |
+| Environment | **Cleared**, except `MBONGO_JOB_DIR` and what the provider's configuration lists. The executor key is never passed |
+| stderr | Read, counted and **dropped**: it may hold job content |
+| Exit | `0` is success; anything else is `JOB_RUNTIME_FAILED` |
+| After | The job directory is deleted |
+
+A runner can be in any language, and can itself launch a container. **Providers never recompile MbongoChain for a workload.** The in-process trait stays as the seam, and `SubprocessRuntime` is one generic implementation of it.
+
+### 9.5 Errors and retry
+
+`ControlPlane` has no terminal failure: a failed task is simply offered again. The MVP front parks a task after 3 attempts. `provider/` does the same, by class:
+
+| Failure | Behaviour |
+|---|---|
+| `JOB_RUNTIME_FAILED` | Retried, then parked after 3 attempts |
+| Any other `JobError` | **Parked at once**; the runner is not called again |
+| Lost lease, crash | Existing E rules: a new attempt, a fresh capability |
+
+The code reaches the client through `GET /v1/tasks/{id}`, content-free. It is captured by a profile wrapper, the pattern the front already uses, so `Worker` does not change. A failed task has no receipt.
+
+### 9.6 Timeouts and resource limits
+
+| Limit | Enforced by | Strength |
+|---|---|---|
+| `max_wall_ms` | Worker kills the child | **Hard** for the direct child. Its own children may survive unless the provider's launcher contains them |
+| `output.max_bytes` | Worker stops reading and kills | **Hard** |
+| `input.max_bytes` | Before the runner starts | **Hard** |
+| `max_memory_mib`, CPU, disk | Nothing | **Not enforced.** Provider responsibility |
+| Lease | `max_wall_ms` above the provider's ceiling is refused at step 2 | The worker sends no heartbeat while running, so the ceiling stays below `lease_secs` |
+
+### 9.7 Interoperability is not isolation
+
+| | Interoperability (this design) | Isolation (not this design) |
+|---|---|---|
+| **Means** | Any runtime plugs in, with no rebuild and no customer code in the core | The runtime cannot reach what it should not |
+| **Gives** | Language independence, crash containment, killable jobs, bounded output | Protection of the host, the executor key, other jobs and other clients' data |
+| **Provided by** | MbongoChain | **The provider's OS**: a separate account, a container or a VM |
+
+**A runner under the worker's account can read the executor key file and use the network.** Clearing the environment prevents accidents, not attacks. The conformance suite cannot prove isolation, and no report may claim it.
+
+### 9.8 Trust assumptions and limits
+
+- **Provider sees plaintext** (PUBLIC). Provider-resistant confidentiality is not proven (#144).
+- **A provider can lie.** It can anchor a wrong output, declare a runtime it does not run, or misreport metering. A receipt proves E only. Evidence stops at T1, and detection needs T2 or T3.
+- **Capability claims are declared**, never verified.
+- **Clients cannot upload code.** Artifacts are provisioned by the provider, so a client names only what the provider chose to hold. This removes remote code execution from Slice 2.
+- **Request signatures have no audience today.** `mvp/auth.rs` signs method, path, timestamp, nonce and body, but not the recipient. That was harmless with one front. With independent providers, a malicious provider could replay a client's signed request to another provider within the 120 s window. `provider/` must bind the provider's executor address and use its own domain.
+- **State is in memory** (#169): results are lost on a restart.
+- **Transport:** loopback by default. Remote use needs the provider's own TLS boundary. Slice 2 is tested on loopback only and deploys nowhere.
+- **No discovery:** a client learns a provider's URL out of band.
+
+### 9.9 Task card
+
+| | |
+|---|---|
+| Capability | A client gets a verifiable result from a runtime that an independent provider operates, with no MbongoChain rebuild |
+| MbongoChain owns | `SubprocessRuntime`, `mbongo-runner:v1`, `provider/` (routes, audience-bound auth, task loop), a `provider_service` binary, the generic client path |
+| Clients or providers own | Clients: job specs, inputs, whether a result is right. Providers: runtimes, artifacts, OS isolation, TLS, operating the bundle |
+| Excluded | Discovery, registries, `eligible()` wiring, durable state, payment, model adapters, GPU or ML, a shared control plane, client-uploaded code, SDK changes, deployment |
+
+### 9.10 Acceptance criteria
+
+| ID | Criterion |
+|---|---|
+| S2-1 | A runner written in another language reproduces the `test-vectors/job` outputs byte for byte, with no rebuild of MbongoChain |
+| S2-2 | **End to end, on a devnet:** separate client and provider processes, a job reaches an anchored receipt, and the client verifies T0 and T1 |
+| S2-3 | `JOB_RUNTIME_FAILED` is retried then parked after 3 attempts; every other class parks at once, with a runner call count of 0 or 1 as expected; the code reaches the client |
+| S2-4 | A runner ignoring its deadline is killed (`JOB_LIMIT_WALL_TIME`, process proven gone). A stdout flood is cut at `max_bytes + 1`. Both on Linux CI and Windows |
+| S2-5 | A fixture runner reports its environment: no key, seed or unlisted variable. The input is not on disk. The job directory is gone afterwards |
+| S2-6 | A job needing an absent runtime or artifact is refused at `PUT /v1/job-specs`, with no chain transaction |
+| S2-7 | Unsigned, replayed, wrong-submitter and **wrong-audience** requests are refused, each by its named code |
+| S2-8 | Canary values in input and runner stderr: 0 occurrences in logs, status, receipts, chain or metering (PE-1, PE-3) |
+| S2-9 | Evidence states T1 at most, with `BUSINESS_CORRECTNESS = NOT_ASSESSED` and no isolation claim (TV-3) |
+| S2-10 | `compute-conformance-v1` passes against the bundle through its `Subject` adapter. All existing MVP vectors and suites pass unchanged |
+
+Fixtures stay the three of §3.5. No benchmarks.
+
+### 9.11 Protected surfaces
+
+The paths of §4, plus `worker.rs`, `control_plane.rs`, `data_plane.rs`, `policy.rs`, `mvp/**` and `job/profile.rs`, are proved unchanged with Git objects.
+
+**Existing files touched:** `lib.rs` (one line), the crate's `Cargo.toml` (one `[[bin]]`), `ci.yml` (one step), and `job/mod.rs` (one line). **No protocol, consensus, RPC or SDK change, so no RFC is needed.**
+
+**Rollback:** additive, so revert the squash commit. Stop before merge if a protected path differs, or if the work needs a new network protocol, a chain change or customer logic.
+
+### 9.12 Decisions needed
+
+| # | Decision | Recommendation |
+|---|---|---|
+| 1 | Provider topology: one bundle per provider, or a shared control plane with remote workers | **Bundle.** A shared control plane needs a new protocol and a central operator |
+| 2 | Request auth: a new audience-bound signing message in `provider/`, or the existing one | **New message**, with domain `mbongo-provider-http:v1`. The MVP stays as it is |
+| 3 | Artifacts: provider-provisioned only, or client-supplied | **Provider-provisioned.** Client-supplied code needs real isolation first |
+| 4 | Isolation: a documented provider duty, or a startup refusal when the runner shares the worker's account | **Documented duty** in Slice 2. A refusal is not portable and proves little |
+| 5 | Runner contract: stdin, stdout and exit code, as in §9.4 | **Approve**, as `mbongo-runner:v1` |
