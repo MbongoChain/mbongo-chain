@@ -9,8 +9,6 @@
 //! Who may act on a task is still decided by the chain: only the committed
 //! task's `submitter` may register it, read its status or fetch its result.
 
-use std::collections::HashMap;
-
 use mbongo_core::Address;
 
 use crate::data_plane::LocalKey;
@@ -35,7 +33,8 @@ pub const MAX_WINDOW_SECS: u64 = 120;
 /// Clock difference tolerated at the start of the window.
 pub const MAX_CLOCK_SKEW_SECS: u64 = 30;
 /// Most request identifiers held at once. Only requests whose signature
-/// verified are recorded, so an unauthenticated flood cannot fill it.
+/// verified are recorded, so an unauthenticated flood cannot fill it; when it
+/// is full, requests are refused, not let through.
 pub const MAX_REPLAY_ENTRIES: usize = 100_000;
 
 /// What a signature covers.
@@ -108,42 +107,6 @@ pub enum AuthError {
     /// The signature does not verify: a wrong key or a changed request.
     #[error("AUTH_BAD_SIGNATURE")]
     BadSignature,
-    /// This request identifier was already accepted.
-    #[error("AUTH_REPLAYED")]
-    Replayed,
-    /// The replay store is full; the request is refused, not let through.
-    #[error("AUTH_REPLAY_STORE_FULL")]
-    Busy,
-}
-
-/// Remembers accepted `(signer, request id)` pairs until their window ends.
-///
-/// **Durability: process lifetime only.** After a restart, a request captured
-/// earlier can be replayed to the same provider until its window ends, at
-/// most [`MAX_WINDOW_SECS`].
-#[derive(Debug, Default)]
-pub struct ReplayGuard {
-    seen: HashMap<(Address, [u8; 16]), u64>,
-}
-
-impl ReplayGuard {
-    fn check_and_record(
-        &mut self,
-        signer: Address,
-        request_id: [u8; 16],
-        expires_at: u64,
-        now: u64,
-    ) -> Result<(), AuthError> {
-        self.seen.retain(|_, end| *end >= now);
-        if self.seen.contains_key(&(signer, request_id)) {
-            return Err(AuthError::Replayed);
-        }
-        if self.seen.len() >= MAX_REPLAY_ENTRIES {
-            return Err(AuthError::Busy);
-        }
-        self.seen.insert((signer, request_id), expires_at);
-        Ok(())
-    }
 }
 
 /// The authentication header values as received.
@@ -183,12 +146,24 @@ pub struct Received<'a> {
     pub now: u64,
 }
 
-/// Verifies a request and returns the authenticated address.
+/// A request whose signature, recipient and window verified. It is not
+/// accepted yet: replay protection is durable, and belongs to
+/// [`super::durable::DurableStore::accept_request`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Verified {
+    /// The authenticated address.
+    pub signer: Address,
+    /// The unique request identifier.
+    pub request_id: [u8; 16],
+    /// End of the validity window.
+    pub expires_at: u64,
+}
+
+/// Verifies a request.
 pub fn verify_request(
     headers: AuthHeaders<'_>,
     request: Received<'_>,
-    replay: &mut ReplayGuard,
-) -> Result<Address, AuthError> {
+) -> Result<Verified, AuthError> {
     let (Some(address), Some(to), Some(from_time), Some(to_time), Some(id), Some(sig)) = (
         headers.address,
         headers.recipient,
@@ -229,6 +204,9 @@ pub fn verify_request(
     if !verify_signature(&signer, &message, &signature) {
         return Err(AuthError::BadSignature);
     }
-    replay.check_and_record(signer, request_id, expires_at, request.now)?;
-    Ok(signer)
+    Ok(Verified {
+        signer,
+        request_id,
+        expires_at,
+    })
 }

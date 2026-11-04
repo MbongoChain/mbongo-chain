@@ -270,7 +270,15 @@ async fn wait_completed(
     started: Instant,
 ) -> Result<JobStatus, JobClientError> {
     loop {
-        let status = client.status(task_id).await?;
+        let status = match client.status(task_id).await {
+            Ok(status) => status,
+            // A provider restarting is not a failed job.
+            Err(JobClientError::Unavailable(_)) if started.elapsed() < wait.timeout => {
+                tokio::time::sleep(wait.poll).await;
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
         if status.state == "completed" {
             return Ok(status);
         }

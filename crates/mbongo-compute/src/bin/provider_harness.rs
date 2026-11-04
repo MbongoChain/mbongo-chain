@@ -108,11 +108,18 @@ impl Stack {
         spec: &[u8],
         input: &[u8],
     ) -> Result<std::process::Output, String> {
+        self.client_command(name, spec, input)?
+            .output()
+            .map_err(|e| format!("job_client: {e}"))
+    }
+
+    fn client_command(&self, name: &str, spec: &[u8], input: &[u8]) -> Result<Command, String> {
         let spec_file = self.base.join(format!("{name}.job.json"));
         let input_file = self.base.join(format!("{name}.input"));
         std::fs::write(&spec_file, spec).map_err(|e| e.to_string())?;
         std::fs::write(&input_file, input).map_err(|e| e.to_string())?;
-        Command::new(sibling("job_client"))
+        let mut command = Command::new(sibling("job_client"));
+        command
             .args(["--provider", &self.provider, "--executor", &self.executor])
             .arg("--job-spec")
             .arg(&spec_file)
@@ -122,9 +129,8 @@ impl Stack {
             .arg(self.base.join("client.key"))
             .args(["--rpc-url", &format!("http://127.0.0.1:{RPC_PORT}/rpc")])
             .args(["--rest-url", &format!("http://127.0.0.1:{REST_PORT}")])
-            .args(["--timeout-secs", "90"])
-            .output()
-            .map_err(|e| format!("job_client: {e}"))
+            .args(["--timeout-secs", "90"]);
+        Ok(command)
     }
 }
 
@@ -205,6 +211,94 @@ fn prove_failure(stack: &Stack) -> Result<(), String> {
     Ok(())
 }
 
+/// A real crash: the provider process is killed while a runner works, then
+/// restarted on the same state. The client keeps waiting and gets a verified
+/// result. The runner ran twice: at-least-once, with one receipt.
+async fn prove_crash_recovery(
+    stack: &Stack,
+    provider: &mut Process,
+    log: &Path,
+    config_file: &Path,
+    mut config: Value,
+) -> Result<(), String> {
+    let vectors: Value = serde_json::from_slice(
+        &std::fs::read(repo_root().join("test-vectors/job/job-contract-v1.json"))
+            .map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let marker = stack.base.join("runner-starts");
+    let mut spec = vectors["specs"][1]["spec"].clone();
+    spec["params"] = json!({
+        "mode": "slow",
+        "delay_ms": 3000,
+        "marker": marker.display().to_string(),
+    });
+    spec["limits"]["max_wall_ms"] = json!(30_000);
+    let canonical = mbongo_compute::inference::canonical::canonicalize(&spec.to_string(), 1 << 16)
+        .map_err(|e| e.to_string())?;
+    let mut client = stack.client_command("crash", &canonical, b"[4,5]")?;
+    let client = client
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    let started = Instant::now();
+    while !marker.exists() {
+        if started.elapsed() > Duration::from_secs(60) {
+            return Err("the runner never started".to_owned());
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    provider.0.kill().map_err(|e| e.to_string())?;
+    let _ = provider.0.wait();
+    println!("  provider killed while the runner was working");
+
+    config["bind"] = json!(stack.provider.trim_start_matches("http://"));
+    std::fs::write(config_file, config.to_string()).map_err(|e| e.to_string())?;
+    let mut command = Command::new(sibling("provider_service"));
+    command.arg("--config").arg(config_file);
+    *provider = spawn_logged(command, log)?;
+    wait_for_bind(log, provider).await?;
+    // The orphaned runner is still alive: if it had inherited the listening
+    // socket, this wait would last as long as it does.
+    let text = std::fs::read_to_string(log).unwrap_or_default();
+    let wait: u64 = text
+        .lines()
+        .find_map(|l| l.strip_prefix("BIND_WAIT_MS="))
+        .and_then(|ms| ms.parse().ok())
+        .ok_or("no BIND_WAIT_MS line")?;
+    if wait > 1_500 {
+        return Err(format!(
+            "the port stayed held for {wait} ms: a runner kept it"
+        ));
+    }
+    println!("  provider restarted on its durable state, port free after {wait} ms");
+
+    let run = client.wait_with_output().map_err(|e| e.to_string())?;
+    if !run.status.success() {
+        return Err(format!(
+            "after the crash: {}",
+            String::from_utf8_lossy(&run.stderr).trim()
+        ));
+    }
+    let report: Value = serde_json::from_slice(&run.stdout).map_err(|e| e.to_string())?;
+    if report["technical_level"] != "T1"
+        || report["output"] != hex::encode("{\"count\":2,\"sum\":9}")
+    {
+        return Err(format!("after the crash: {report}"));
+    }
+    let starts = std::fs::read_to_string(&marker).map_err(|e| e.to_string())?.lines().count();
+    if starts != 2 {
+        return Err(format!("expected 2 runner starts, found {starts}"));
+    }
+    println!(
+        "  after the crash: receipt at height {}, verified at T1; runner started {starts} times",
+        report["receipt_height"]
+    );
+    Ok(())
+}
+
 async fn wait_for_node(chain: &RpcChainClient) -> Result<(), String> {
     for _ in 0..100 {
         if chain.latest_height().await.is_ok() {
@@ -257,6 +351,8 @@ async fn run(base: &Path) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         std::fs::write(base.join("executor.key"), hex::encode(EXECUTOR_SEED))
             .map_err(|e| e.to_string())?;
+        std::fs::write(base.join("state.key"), hex::encode([0x57u8; 32]))
+            .map_err(|e| e.to_string())?;
         let vectors: Value = serde_json::from_slice(
             &std::fs::read(repo_root().join("test-vectors/job/job-contract-v1.json"))
                 .map_err(|e| e.to_string())?,
@@ -273,6 +369,8 @@ async fn run(base: &Path) -> Result<(), String> {
             "rpc_url": format!("http://127.0.0.1:{RPC_PORT}/rpc"),
             "rest_url": format!("http://127.0.0.1:{REST_PORT}"),
             "executor_key_file": base.join("executor.key"),
+            "state_dir": base.join("state"),
+            "state_key_file": base.join("state.key"),
             "artifact_dir": base.join("artifacts"),
             "work_dir": base.join("work"),
             "runtimes": [{
@@ -297,7 +395,8 @@ async fn run(base: &Path) -> Result<(), String> {
             executor: hex::encode(executor.address().0),
         };
         prove_vectors(&stack, &chain).await?;
-        prove_failure(&stack)
+        prove_failure(&stack)?;
+        prove_crash_recovery(&stack, &mut provider, &provider_log, &config_file, config).await
     }
     .await;
     result.map_err(|e| {

@@ -25,6 +25,7 @@ use mbongo_compute::provider::auth::{sign_request, SignedRequest, HEADER_RECIPIE
 use mbongo_compute::provider::client::{
     run_job, JobClientError, JobReport, ProviderClient, WaitPolicy,
 };
+use mbongo_compute::provider::durable::{DurableStore, RetentionPolicy};
 use mbongo_compute::provider::runner::{RunnerConfig, SubprocessRuntime};
 use mbongo_compute::provider::service::{
     MeteringLog, ProviderConfig, ProviderParts, ProviderService, ProviderStore,
@@ -68,9 +69,12 @@ fn node() -> String {
 }
 
 fn scratch() -> PathBuf {
+    // Unique per run, not only per process: state is durable here, and a
+    // reused process id must not reopen an earlier run's journal.
     static NEXT: AtomicU32 = AtomicU32::new(0);
     let n = NEXT.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!("mbongo-provider-test-{}-{n}", std::process::id()));
+    let run = hex::encode(mbongo_compute::mvp::client::random_bytes::<8>());
+    let dir = std::env::temp_dir().join(format!("mbongo-provider-test-{run}-{n}"));
     std::fs::create_dir_all(dir.join("artifacts")).unwrap();
     std::fs::create_dir_all(dir.join("work")).unwrap();
     dir
@@ -288,7 +292,9 @@ async fn start(seed: u8, chain: FakeChain) -> Stack {
         Arc::clone(&store) as Arc<dyn JobSource>,
     );
     let metering = Arc::new(MeteringLog::default());
-    let service = ProviderService::new(
+    let durable =
+        DurableStore::open(&dir.join("state"), &[7u8; 32], RetentionPolicy::default()).unwrap();
+    let service = ProviderService::open(
         chain.clone(),
         Arc::new(SystemClock),
         [seed; 32],
@@ -298,8 +304,11 @@ async fn start(seed: u8, chain: FakeChain) -> Stack {
             runtimes: vec![Arc::new(runtime) as Arc<dyn RuntimeAdapter>],
             metering: Arc::clone(&metering) as Arc<dyn MeteringSink>,
         },
+        Arc::new(durable),
         ProviderConfig::default(),
-    );
+    )
+    .await
+    .unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let router = service.router();
@@ -575,5 +584,5 @@ fn no_workload_is_compiled_into_the_provider_or_job_modules() {
             files += 1;
         }
     }
-    assert_eq!(files, 11);
+    assert_eq!(files, 13);
 }
