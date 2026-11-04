@@ -519,7 +519,7 @@ mod linux {
         /// comes from the job spec, so the provider's ceiling caps it.
         pub fn job(&self, max_memory_mib: u64) -> io::Result<JobCgroup> {
             if self.survivors.load(Ordering::SeqCst) {
-                return Err(io::Error::from(io::ErrorKind::ResourceBusy));
+                return Err(io::Error::from(io::ErrorKind::Other));
             }
             let n = self.next_job.fetch_add(1, Ordering::SeqCst);
             let path = self.config.cgroup_root.join(format!("{JOB_PREFIX}{n}"));
