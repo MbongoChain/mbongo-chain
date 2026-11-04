@@ -54,6 +54,11 @@ jobs:
       - name: Run unit tests
         run: cargo test --workspace --all-features --locked
 
+      # Fixed harness ports inside the ephemeral range collide with outbound
+      # connections in TIME_WAIT left by the steps before.
+      - name: Harness ports outside the ephemeral range
+        run: node scripts/check-harness-ports.mjs
+
       - name: Run replay harness
         run: cargo run -p mbongo-node --bin replay_harness
 

@@ -33,9 +33,9 @@ const MIN_HEIGHT: u64 = 10;
 // than one block per second).
 const PRODUCTION_POLL_INTERVAL_MS: u64 = 500;
 const PRODUCTION_TIMEOUT_SECS: u64 = 60;
-const RPC_PORT: u16 = 39944;
-const REST_PORT: u16 = 38080;
-const P2P_PORT: u16 = 50333;
+const RPC_PORT: u16 = 21944;
+const REST_PORT: u16 = 21080;
+const P2P_PORT: u16 = 21333;
 
 // RPC readiness probe: max 50 attempts × 200ms = 10s total.
 const RPC_PROBE_MAX_ATTEMPTS: u32 = 50;

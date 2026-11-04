@@ -41,9 +41,9 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::{Child, Command};
 use tokio::time::sleep;
 
-const RPC_PORT: u16 = 41944;
-const REST_PORT: u16 = 41080;
-const P2P_PORT: u16 = 51333;
+const RPC_PORT: u16 = 22944;
+const REST_PORT: u16 = 22080;
+const P2P_PORT: u16 = 22333;
 const BLOCK_TIME_SECS: u64 = 1;
 const WAIT_SECS: u64 = 90;
 /// Lines of the node's output kept for a start-up failure report.
