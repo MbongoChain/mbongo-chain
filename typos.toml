@@ -21,3 +21,6 @@ Determin = "Determin"  # Determination (abbreviated in diagrams)
 analyste = "analyste"
 # Spanish prompt-injection marker matched by the MVP injection screen (crates/mbongo-compute/src/mvp/screen.rs)
 ignora = "ignora"
+# French and Spanish words in the injection screen's generic-word list (#178, crates/mbongo-compute/src/mvp/screen.rs)
+candidat = "candidat"
+candidata = "candidata"

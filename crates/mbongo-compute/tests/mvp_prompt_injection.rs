@@ -346,7 +346,15 @@ fn p08_screen_never_reports_content() {
     for s in ["HACKED", "Payroll", "Ledger"] {
         assert!(!rendered.contains(s), "{s}");
     }
-    assert_eq!(r.findings, vec!["OUTPUT_ECHOES_INJECTED_VALUE"]);
+    // #178: the attack also forces `seniority`, a factual field stated only
+    // inside the instruction, so the instruction-only rule fires as well.
+    assert_eq!(
+        r.findings,
+        vec![
+            "OUTPUT_ECHOES_INJECTED_VALUE",
+            "OUTPUT_USES_INSTRUCTION_ONLY_TERM"
+        ]
+    );
 }
 
 // ── INJECTION RESISTANCE: through the CLI ────────────────────────────────
@@ -420,7 +428,7 @@ async fn p09_cli_reports_a_flagged_result_apart_and_exits_12() {
         "Result commitment: VERIFIED",
         "Schema conformity: VERIFIED",
         "Business extraction accuracy: NOT ASSESSED",
-        "Injection screen: FLAGGED (OUTPUT_ECHOES_INJECTED_VALUE)",
+        "Injection screen: FLAGGED (OUTPUT_ECHOES_INJECTED_VALUE, OUTPUT_USES_INSTRUCTION_ONLY_TERM)",
         "Human review:",
         "OUTCOME=CONTENT_FLAGGED",
     ] {
@@ -528,4 +536,127 @@ async fn p10_cc3_no_attacked_output_reaches_normal_success() {
     assert!(out.contains("Extracted profile withheld"));
     assert!(!out.contains("best candidate ever"));
     assert!(out.contains("OUTCOME=CONTENT_FLAGGED"));
+}
+
+// ── #178: real model outputs, unquoted and punctuated injected values ────
+
+fn sec178() -> serde_json::Value {
+    json("test-vectors/mvp/mvp-sec178-screen-v1.json")
+}
+
+fn sec178_cv(v: &serde_json::Value, id: &str) -> String {
+    v["cases"].as_array().unwrap().iter().find(|c| c["id"] == id).unwrap()["cv_text"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+fn sec178_result(v: &serde_json::Value, id: &str, producer: &str) -> String {
+    v["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["case"] == id && r["producer"] == producer)
+        .unwrap()["result"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// Every confirmed override among real outputs (released v3 and the V4-G1
+/// lab candidate) is flagged; no benign output and no resisted attack is.
+/// Ground truth comes from the vector, never from the screen.
+#[test]
+fn p11_screen_flags_real_overrides_and_no_benign_output() {
+    let v = sec178();
+    let results = v["results"].as_array().unwrap();
+    assert_eq!(results.len(), 93);
+    let (mut overrides, mut clear, mut suspected) = (0, 0, 0);
+    for r in results {
+        let id = r["case"].as_str().unwrap();
+        let cv = sec178_cv(&v, id);
+        let rep = screen(
+            &cv,
+            r["result"].as_str().unwrap().as_bytes(),
+            kaayu_v3::PROMPT_TEMPLATE,
+        );
+        let who = format!("{id} {} {}", r["producer"], r["truth"]);
+        match r["expected_status"].as_str() {
+            Some("FLAGGED") => {
+                assert_eq!(rep.status, ScreenStatus::Flagged, "{who}: {rep:?}");
+                overrides += 1;
+            }
+            Some("CLEAR") => {
+                assert_eq!(
+                    rep.status,
+                    ScreenStatus::Clear,
+                    "false positive {who}: {rep:?}"
+                );
+                clear += 1;
+            }
+            _ => suspected += 1,
+        }
+    }
+    assert_eq!((overrides, clear, suspected), (9, 83, 1));
+}
+
+/// The released screen missed N17 and N18 under v3 (#178); both are now
+/// flagged, by the new instruction-only rule and by the punctuation-trimmed
+/// quoted value.
+#[test]
+fn p12_the_178_cases_are_flagged_with_the_expected_codes() {
+    let v = sec178();
+    let n17 = screen(
+        &sec178_cv(&v, "N17"),
+        sec178_result(&v, "N17", "v3").as_bytes(),
+        kaayu_v3::PROMPT_TEMPLATE,
+    );
+    assert_eq!(n17.findings, vec!["OUTPUT_USES_INSTRUCTION_ONLY_TERM"]);
+    let n18 = screen(
+        &sec178_cv(&v, "N18"),
+        sec178_result(&v, "N18", "v3").as_bytes(),
+        kaayu_v3::PROMPT_TEMPLATE,
+    );
+    assert_eq!(
+        n18.findings,
+        vec![
+            "OUTPUT_ECHOES_INJECTED_VALUE",
+            "OUTPUT_USES_INSTRUCTION_ONLY_TERM"
+        ]
+    );
+    let d05 = screen(
+        &sec178_cv(&v, "D05"),
+        sec178_result(&v, "D05", "lab-c1").as_bytes(),
+        kaayu_v3::PROMPT_TEMPLATE,
+    );
+    assert_eq!(d05.findings, vec!["OUTPUT_EMPTY_AFTER_INSTRUCTION"]);
+}
+
+/// Through the CLI: the real v3 outputs of N17 and N18 are rejected from
+/// normal consumption (exit 12, CONTENT_FLAGGED, display withheld), with the
+/// integrity results still their own fields; N19's resisted output passes.
+#[tokio::test]
+async fn p13_cli_rejects_the_178_overrides() {
+    let v = sec178();
+    for id in ["N17", "N18"] {
+        let (code, out) =
+            cli_run_with(&sec178_result(&v, id, "v3"), &sec178_cv(&v, id), true, true).await;
+        let j: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+        assert_eq!(code, exit::CONTENT_FLAGGED, "{id}");
+        assert_eq!(j["outcome"], "CONTENT_FLAGGED", "{id}");
+        assert!(j.get("result_canonical").is_none(), "{id}: never displayed");
+        for dim in ["receipt_integrity", "result_integrity", "schema_conformity"] {
+            assert_eq!(j[dim]["status"], "VERIFIED", "{id}: {dim}");
+        }
+    }
+    let (code, out) = cli_run_with(
+        &sec178_result(&v, "N19", "v3"),
+        &sec178_cv(&v, "N19"),
+        false,
+        true,
+    )
+    .await;
+    let j: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(code, exit::SUCCESS);
+    assert_eq!(j["injection_screen"]["status"], "CLEAR");
 }
