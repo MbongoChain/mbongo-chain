@@ -4,6 +4,10 @@
 //! **before** it takes effect in memory or is acknowledged. A record that
 //! cannot be written refuses the transition: this store fails closed.
 //!
+//! **Identity.** Executions are recorded per `task_id`, which covers all six
+//! fields of the task, salt included. A stored output serves that task and no
+//! other: two tasks with the same job and input never share one.
+//!
 //! **Execution guarantee.** At most one receipt per task, because the chain
 //! refuses a second and a stored output is reused rather than recomputed.
 //! A runner may still run more than once: a crash between its start and its
@@ -28,6 +32,7 @@ use crate::mvp::client::random_bytes;
 
 use super::auth::MAX_REPLAY_ENTRIES;
 use super::journal::{Journal, JournalError};
+use super::lock::StateLock;
 
 /// How long state is kept, and how much of it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,8 +96,6 @@ pub struct HexBytes(#[serde(with = "hex_bytes")] pub Vec<u8>);
 /// A registered task.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskEntry {
-    /// The key of its execution: see [`execution_key`].
-    pub key: [u8; 32],
     /// The input, until a terminal state.
     pub input: Option<HexBytes>,
     /// The input commitment.
@@ -140,14 +143,14 @@ enum Record {
         entry: TaskEntry,
     },
     Started {
-        key: [u8; 32],
+        task_id: [u8; 32],
     },
     Output {
-        key: [u8; 32],
+        task_id: [u8; 32],
         output: HexBytes,
     },
     AttemptFailed {
-        key: [u8; 32],
+        task_id: [u8; 32],
         code: String,
     },
     Terminal {
@@ -175,11 +178,11 @@ pub struct State {
     pub uploads: HashMap<([u8; 32], Address), UploadEntry>,
     /// Registered tasks.
     pub tasks: BTreeMap<[u8; 32], TaskEntry>,
-    /// Outputs produced and not yet bound to a terminal task.
+    /// Outputs produced for a task that has no outcome yet, by `task_id`.
     pub outputs: HashMap<[u8; 32], Vec<u8>>,
-    /// Attempts started with no recorded end.
+    /// Attempts started with no recorded end, by `task_id`.
     pub started: HashMap<[u8; 32], u32>,
-    /// The last failure code of an execution.
+    /// The last failure code, by `task_id`.
     pub last_failure: HashMap<[u8; 32], String>,
     /// The last control-plane snapshot.
     pub control_plane: Option<DurableState>,
@@ -207,38 +210,31 @@ impl State {
                 self.uploads.retain(|(id, _), _| *id != task_id);
                 self.tasks.insert(task_id, entry);
             }
-            Record::Started { key } => {
-                *self.started.entry(key).or_insert(0) += 1;
+            Record::Started { task_id } => {
+                *self.started.entry(task_id).or_insert(0) += 1;
             }
-            Record::Output { key, output } => {
-                self.started.remove(&key);
-                self.last_failure.remove(&key);
-                self.outputs.insert(key, output.0);
+            Record::Output { task_id, output } => {
+                self.started.remove(&task_id);
+                self.last_failure.remove(&task_id);
+                self.outputs.insert(task_id, output.0);
             }
-            Record::AttemptFailed { key, code } => {
-                self.started.remove(&key);
-                self.last_failure.insert(key, code);
+            Record::AttemptFailed { task_id, code } => {
+                self.started.remove(&task_id);
+                self.last_failure.insert(task_id, code);
             }
             Record::Terminal {
                 task_id,
                 terminal,
                 at,
             } => {
-                let mut key = None;
                 if let Some(task) = self.tasks.get_mut(&task_id) {
                     task.input = None;
                     task.terminal = Some(terminal);
                     task.terminal_at = Some(at);
-                    key = Some(task.key);
                 }
-                if let Some(key) = key {
-                    let open = self.tasks.values().any(|t| t.key == key && t.terminal.is_none());
-                    if !open {
-                        self.outputs.remove(&key);
-                        self.started.remove(&key);
-                        self.last_failure.remove(&key);
-                    }
-                }
+                self.outputs.remove(&task_id);
+                self.started.remove(&task_id);
+                self.last_failure.remove(&task_id);
             }
             Record::ControlPlane { state } => self.control_plane = Some(state),
             Record::Forget { task_id } => {
@@ -303,23 +299,23 @@ impl State {
                 });
             }
         }
-        for (key, output) in &self.outputs {
+        for (task_id, output) in &self.outputs {
             out.push(Record::Output {
-                key: *key,
+                task_id: *task_id,
                 output: HexBytes(output.clone()),
             });
         }
         // In this order: replaying a failure clears a start, and a retry that
         // crashed has both.
-        for (key, code) in &self.last_failure {
+        for (task_id, code) in &self.last_failure {
             out.push(Record::AttemptFailed {
-                key: *key,
+                task_id: *task_id,
                 code: code.clone(),
             });
         }
-        for (key, count) in &self.started {
+        for (task_id, count) in &self.started {
             for _ in 0..*count {
-                out.push(Record::Started { key: *key });
+                out.push(Record::Started { task_id: *task_id });
             }
         }
         if let Some(state) = &self.control_plane {
@@ -372,17 +368,7 @@ struct Inner {
 pub struct DurableStore {
     inner: Mutex<Inner>,
     retention: RetentionPolicy,
-}
-
-/// Identifies an execution: the same job over the same input. Two tasks that
-/// differ only by their salt share it, so after a crash a stored output can
-/// serve either. For a non-deterministic job that is one output for both.
-pub fn execution_key(execution_spec: &[u8], input_commitment: &[u8; 32]) -> [u8; 32] {
-    mbongo_core::crypto::blake3_hash_multi(&[
-        b"mbongo:provider-execution:v1",
-        execution_spec,
-        input_commitment,
-    ])
+    _lock: StateLock,
 }
 
 const JOURNAL_FILE: &str = "provider-state.journal";
@@ -402,15 +388,17 @@ impl Inner {
 }
 
 impl DurableStore {
-    /// Opens the store in `dir`. **Fails closed:** a journal that does not
-    /// verify, or a record that does not parse, is an error, and the service
-    /// must not start.
+    /// Opens the store in `dir`, taking exclusive ownership first. **Fails
+    /// closed:** a directory another process owns, a journal that does not
+    /// verify, or a record that does not parse is an error, and the service
+    /// must not start. A refused lock changes nothing in the directory.
     pub fn open(
         dir: &Path,
         key: &[u8; 32],
         retention: RetentionPolicy,
     ) -> Result<Self, JournalError> {
         std::fs::create_dir_all(dir).map_err(|e| JournalError::Io(format!("{:?}", e.kind())))?;
+        let lock = StateLock::acquire(dir)?;
         let (journal, records) = Journal::open(&dir.join(JOURNAL_FILE), key)?;
         let mut state = State::default();
         for bytes in records {
@@ -426,6 +414,7 @@ impl DurableStore {
                 compacted_at,
             }),
             retention,
+            _lock: lock,
         })
     }
 
@@ -487,22 +476,22 @@ impl DurableStore {
     }
 
     /// Records that an execution is about to start.
-    pub fn started(&self, key: [u8; 32]) -> Result<(), JournalError> {
-        self.lock()?.commit(Record::Started { key })
+    pub fn started(&self, task_id: [u8; 32]) -> Result<(), JournalError> {
+        self.lock()?.commit(Record::Started { task_id })
     }
 
     /// Records an output, before any receipt can exist for it.
-    pub fn output(&self, key: [u8; 32], output: &[u8]) -> Result<(), JournalError> {
+    pub fn output(&self, task_id: [u8; 32], output: &[u8]) -> Result<(), JournalError> {
         self.lock()?.commit(Record::Output {
-            key,
+            task_id,
             output: HexBytes(output.to_vec()),
         })
     }
 
     /// Records a failed attempt.
-    pub fn attempt_failed(&self, key: [u8; 32], code: &str) -> Result<(), JournalError> {
+    pub fn attempt_failed(&self, task_id: [u8; 32], code: &str) -> Result<(), JournalError> {
         self.lock()?.commit(Record::AttemptFailed {
-            key,
+            task_id,
             code: code.to_owned(),
         })
     }

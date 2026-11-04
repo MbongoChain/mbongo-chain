@@ -5,7 +5,7 @@
 //! scheduler and no new protocol between those parts. It knows no workload:
 //! job specs arrive as data, and runtimes are the provider's own.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -39,8 +39,8 @@ use crate::worker::{AttemptOutcome, Worker};
 
 use super::auth::{self, AuthHeaders, Received};
 use super::durable::{
-    execution_key, AcceptError, DurableStore, HexBytes, RetentionPolicy, StoreError, TaskEntry,
-    Terminal, UploadEntry,
+    AcceptError, DurableStore, HexBytes, RetentionPolicy, StoreError, TaskEntry, Terminal,
+    UploadEntry,
 };
 use super::journal::JournalError;
 use super::runner::RUNNER_CONTRACT;
@@ -61,6 +61,8 @@ const RECENT_TASK_BLOCKS: u64 = 10_000;
 pub const EXECUTION_INTERRUPTED: &str = "PROVIDER_EXECUTION_INTERRUPTED";
 /// Attempts ran out on a failure outside the job: input, persistence, receipt.
 pub const ATTEMPTS_EXHAUSTED: &str = "PROVIDER_ATTEMPTS_EXHAUSTED";
+/// An execution that is not the task the loop admitted. Never expected.
+const TASK_NOT_ADMITTED: &str = "PROVIDER_TASK_NOT_ADMITTED";
 /// A task on the journal that the chain no longer shows.
 pub const TASK_LOST: &str = "PROVIDER_TASK_LOST";
 
@@ -193,17 +195,37 @@ impl MeteringSink for MeteringLog {
     }
 }
 
-/// [`JobProfile`] with its execution made durable: the start is recorded
-/// before the runner is called, and the output before `Worker` can sign a
-/// receipt for it. A stored output is reused, never recomputed: the receipt
-/// must commit to that result (E §9.3). If a record cannot be written, the
-/// runner is not called or its output is not used: this fails closed.
+/// The one task the worker may run now. Its `task_id` covers all six fields of
+/// the task, salt included.
+#[derive(Debug, Clone)]
+struct Admitted {
+    task_id: [u8; 32],
+    execution_spec: Vec<u8>,
+    input_commitment: [u8; 32],
+}
+
+/// [`JobProfile`] with its execution made durable, per task: the start is
+/// recorded before the runner is called, and the output before `Worker` can
+/// sign a receipt for it. A stored output is reused only by the exact task it
+/// was produced for: the receipt must commit to that result (E §9.3).
+///
+/// `Worker` passes no task identity here, so the task loop admits one task at
+/// a time and this profile refuses anything else. If a record cannot be
+/// written, the runner is not called or its output is not used: this fails
+/// closed.
 struct TrackedProfile {
     job: JobProfile,
     store: Arc<DurableStore>,
+    admitted: StdMutex<Option<Admitted>>,
 }
 
 impl TrackedProfile {
+    fn admit(&self, task: Option<Admitted>) {
+        if let Ok(mut admitted) = self.admitted.lock() {
+            *admitted = task;
+        }
+    }
+
     fn run(
         &self,
         execution_spec: &[u8],
@@ -211,20 +233,26 @@ impl TrackedProfile {
         input: &[u8],
     ) -> Result<Vec<u8>, ExecutionError> {
         let state_failed = |e: &JournalError| ExecutionError::Failed(e.to_string());
-        let key = execution_key(execution_spec, input_commitment);
-        let stored = self.store.read(|s| s.outputs.get(&key).cloned());
+        let admitted = self.admitted.lock().ok().and_then(|a| a.clone());
+        let task_id = admitted
+            .filter(|a| {
+                a.execution_spec == execution_spec && a.input_commitment == *input_commitment
+            })
+            .map(|a| a.task_id)
+            .ok_or_else(|| ExecutionError::Failed(TASK_NOT_ADMITTED.to_owned()))?;
+        let stored = self.store.read(|s| s.outputs.get(&task_id).cloned());
         if let Some(output) = stored.map_err(|e| state_failed(&e))? {
             return Ok(output);
         }
-        self.store.started(key).map_err(|e| state_failed(&e))?;
+        self.store.started(task_id).map_err(|e| state_failed(&e))?;
         match self.job.run(execution_spec, input_commitment, input) {
             Ok(output) => {
-                self.store.output(key, &output).map_err(|e| state_failed(&e))?;
+                self.store.output(task_id, &output).map_err(|e| state_failed(&e))?;
                 Ok(output)
             }
             Err(e) => {
                 let code = e.to_string();
-                self.store.attempt_failed(key, &code).map_err(|e| state_failed(&e))?;
+                self.store.attempt_failed(task_id, &code).map_err(|e| state_failed(&e))?;
                 Err(ExecutionError::Failed(code))
             }
         }
@@ -372,7 +400,10 @@ struct Core {
     worker: Worker,
     /// Open registered tasks, for the task loop. The durable store decides
     /// what a task's state is.
-    open: HashMap<[u8; 32], [u8; 32]>,
+    open: BTreeSet<[u8; 32]>,
+    /// The one open task handed to the control plane. Tasks run one at a
+    /// time, so that an execution always has an exact identity.
+    current: Option<[u8; 32]>,
     /// A job spec arrived after the worker's session opened: a session
     /// advertises the `execution_spec` values known when it opened.
     session_stale: bool,
@@ -492,6 +523,7 @@ impl<C: ChainClient + Clone + 'static> ProviderService<C> {
         let profile = Arc::new(TrackedProfile {
             job,
             store: Arc::clone(&durable),
+            admitted: StdMutex::new(None),
         });
         let mut ids = IdSource::new(seed);
         let owner = LocalKey::from_seed(&ids.next("provider-owner"));
@@ -522,7 +554,8 @@ impl<C: ChainClient + Clone + 'static> ProviderService<C> {
                     cp,
                     dp,
                     worker,
-                    open: HashMap::new(),
+                    open: BTreeSet::new(),
+                    current: None,
                     session_stale: false,
                 }),
                 chain,
@@ -557,14 +590,14 @@ impl<C: ChainClient + Clone + 'static> ProviderService<C> {
         let mut guard = self.inner.core.lock().await;
         let core = &mut *guard;
         let now = self.inner.clock.now();
-        let open: Vec<([u8; 32], TaskEntry)> = self.inner.durable.read(|s| {
+        let open: Vec<[u8; 32]> = self.inner.durable.read(|s| {
             s.tasks
                 .iter()
                 .filter(|(_, t)| t.terminal.is_none())
-                .map(|(id, t)| (*id, t.clone()))
+                .map(|(id, _)| *id)
                 .collect()
         })?;
-        for (task_id, entry) in open {
+        for task_id in open {
             let Some(rec) = core.cp.task(task_id) else {
                 self.park_entry(task_id, TASK_LOST, 0, now)?;
                 continue;
@@ -573,12 +606,10 @@ impl<C: ChainClient + Clone + 'static> ProviderService<C> {
             if rec.state == TaskState::Completed {
                 continue;
             }
-            match self.recovery_of(&entry, &rec.task.execution_spec, attempts)? {
+            match self.recovery_of(task_id, &rec.task.execution_spec, attempts)? {
                 Recovery::Park(reason) => self.park_entry(task_id, &reason, attempts, now)?,
                 Recovery::Resume => {
-                    if let Err(reason) = self.admit(core, task_id, &entry) {
-                        self.park_entry(task_id, reason, attempts, now)?;
-                    }
+                    core.open.insert(task_id);
                 }
             }
         }
@@ -588,15 +619,15 @@ impl<C: ChainClient + Clone + 'static> ProviderService<C> {
 
     fn recovery_of(
         &self,
-        entry: &TaskEntry,
+        task_id: [u8; 32],
         execution_spec: &[u8],
         attempts: u32,
     ) -> Result<Recovery, JournalError> {
         let (output, started, failure) = self.inner.durable.read(|s| {
             (
-                s.outputs.contains_key(&entry.key),
-                s.started.get(&entry.key).copied().unwrap_or(0),
-                s.last_failure.get(&entry.key).cloned(),
+                s.outputs.contains_key(&task_id),
+                s.started.get(&task_id).copied().unwrap_or(0),
+                s.last_failure.get(&task_id).cloned(),
             )
         })?;
         if output {
@@ -662,7 +693,49 @@ impl<C: ChainClient + Clone + 'static> ProviderService<C> {
             .delegate_issuer(&self.inner.owner, task_id, core.cp.issuer_address())
             .map_err(|_| TASK_LOST)?;
         core.cp.register_input(task_id, object).map_err(|_| TASK_LOST)?;
-        core.open.insert(task_id, entry.key);
+        Ok(())
+    }
+
+    /// Keeps the current task until it has an outcome, then admits the oldest
+    /// open one. Only an admitted task has an input the control plane can
+    /// offer, so an execution is always the task recorded here.
+    fn admit_next(&self, core: &mut Core) -> Result<(), JournalError> {
+        if core.current.is_some_and(|id| core.open.contains(&id)) {
+            return Ok(());
+        }
+        core.current = None;
+        self.inner.profile.admit(None);
+        let oldest = |core: &Core| {
+            core.open
+                .iter()
+                .copied()
+                .min_by_key(|id| core.cp.task(*id).map_or(u64::MAX, |r| r.observed_height))
+        };
+        while let Some(task_id) = oldest(core) {
+            let entry = self.inner.durable.read(|s| s.tasks.get(&task_id).cloned())?;
+            let (execution_spec, input_commitment, attempts) = match core.cp.task(task_id) {
+                Some(r) => (
+                    r.task.execution_spec.clone(),
+                    r.task.input_commitment,
+                    r.attempt_count,
+                ),
+                None => (Vec::new(), [0u8; 32], 0),
+            };
+            let admitted =
+                entry.ok_or(TASK_LOST).and_then(|entry| self.admit(core, task_id, &entry));
+            if let Err(reason) = admitted {
+                self.park_entry(task_id, reason, attempts, self.inner.clock.now())?;
+                core.open.remove(&task_id);
+                continue;
+            }
+            self.inner.profile.admit(Some(Admitted {
+                task_id,
+                execution_spec,
+                input_commitment,
+            }));
+            core.current = Some(task_id);
+            break;
+        }
         Ok(())
     }
 
@@ -672,14 +745,14 @@ impl<C: ChainClient + Clone + 'static> ProviderService<C> {
     /// cannot be read now, the next tick tries again.
     async fn bind_completed(&self, core: &mut Core) -> Result<(), JournalError> {
         let now = self.inner.clock.now();
-        let pending: Vec<([u8; 32], TaskEntry)> = self.inner.durable.read(|s| {
+        let pending: Vec<[u8; 32]> = self.inner.durable.read(|s| {
             s.tasks
                 .iter()
                 .filter(|(_, t)| t.terminal.is_none())
-                .map(|(id, t)| (*id, t.clone()))
+                .map(|(id, _)| *id)
                 .collect()
         })?;
-        for (task_id, entry) in pending {
+        for task_id in pending {
             let height = core.cp.task(task_id).and_then(|r| {
                 (r.state == TaskState::Completed).then_some(r.completed_height).flatten()
             });
@@ -693,7 +766,7 @@ impl<C: ChainClient + Clone + 'static> ProviderService<C> {
             let output = self
                 .inner
                 .durable
-                .read(|s| s.outputs.get(&entry.key).cloned())?
+                .read(|s| s.outputs.get(&task_id).cloned())?
                 .filter(|o| reference_output_commitment(o) == receipt.output_commitment);
             self.inner.durable.terminal(
                 task_id,
@@ -784,10 +857,11 @@ impl<C: ChainClient + Clone + 'static> ProviderService<C> {
             core.worker = self.new_worker(&mut core.ids);
             core.session_stale = false;
         }
-        let open = core.open.keys().any(|id| {
-            core.cp.task(*id).is_some_and(|r| {
-                !matches!(r.state, TaskState::Completed | TaskState::ReceiptSubmitted)
-            })
+        if let Err(e) = self.admit_next(core) {
+            log::error!("provider: outcome not persisted: {e}");
+        }
+        let open = core.current.and_then(|id| core.cp.task(id)).is_some_and(|r| {
+            !matches!(r.state, TaskState::Completed | TaskState::ReceiptSubmitted)
         });
         let mut outcome = None;
         if open {
@@ -833,7 +907,7 @@ impl<C: ChainClient + Clone + 'static> ProviderService<C> {
 
     /// No task depends on a live lease.
     fn quiet(core: &Core) -> bool {
-        core.open.keys().all(|id| {
+        core.open.iter().all(|id| {
             core.cp.task(*id).map_or(true, |r| {
                 matches!(
                     r.state,
@@ -855,8 +929,8 @@ impl<C: ChainClient + Clone + 'static> ProviderService<C> {
         let done: Vec<([u8; 32], String, u32)> = core
             .open
             .iter()
-            .filter_map(|(id, key)| {
-                let failure = known.get(key);
+            .filter_map(|id| {
+                let failure = known.get(id);
                 let terminal = failure.is_some_and(|f| *f != retryable);
                 core.cp.task(*id).and_then(|r| {
                     (r.state == TaskState::Failed
@@ -1124,19 +1198,14 @@ impl<C: ChainClient + Clone + 'static> ProviderService<C> {
             return Err(unprocessable("INPUT_COMMITMENT_MISMATCH"));
         }
         let entry = TaskEntry {
-            key: execution_key(&task.execution_spec, &task.input_commitment),
             input: Some(upload.input),
             input_commitment: upload.input_commitment,
             object_ref,
             terminal: None,
             terminal_at: None,
         };
-        self.inner
-            .durable
-            .register(task_id, entry.clone())
-            .map_err(|e| state_error(&e))?;
-        self.admit(core, task_id, &entry)
-            .map_err(|_| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "REGISTRATION_FAILED"))?;
+        self.inner.durable.register(task_id, entry).map_err(|e| state_error(&e))?;
+        core.open.insert(task_id);
         self.persist_control_plane(core).map_err(|e| state_error(&e))?;
         self.view_response(core, task_id)
     }
@@ -1153,7 +1222,7 @@ impl<C: ChainClient + Clone + 'static> ProviderService<C> {
         self.inner.durable.read(|d| {
             let entry = d.tasks.get(&task_id);
             let terminal = entry.and_then(|t| t.terminal.as_ref());
-            let failure = entry.and_then(|t| d.last_failure.get(&t.key).cloned());
+            let failure = d.last_failure.get(&task_id).cloned();
             let (state, parked, failure_code, attempts) = match (entry, terminal) {
                 (None, _) => ("not_registered".to_owned(), false, None, rec.attempt_count),
                 (_, Some(Terminal::Parked { code, attempts })) => {

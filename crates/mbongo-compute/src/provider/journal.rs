@@ -16,7 +16,7 @@
 //!
 //! **Not protected:** a party with write access to the disk can roll the
 //! whole file back to an older copy. The key and the file sit on the same
-//! provider's disk. Two processes must never open one journal.
+//! provider's disk. Exclusive ownership is [`super::lock::StateLock`].
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -45,6 +45,9 @@ pub enum JournalError {
     /// An earlier write failed: nothing more is accepted until a restart.
     #[error("STATE_UNAVAILABLE")]
     Unavailable,
+    /// Another process owns this state directory.
+    #[error("STATE_LOCKED")]
+    Locked,
     /// A record is larger than [`MAX_RECORD_BYTES`].
     #[error("STATE_RECORD_TOO_LARGE")]
     TooLarge,

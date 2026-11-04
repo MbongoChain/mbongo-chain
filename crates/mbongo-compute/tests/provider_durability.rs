@@ -19,7 +19,7 @@ use mbongo_compute::mvp::client::submit_task;
 use mbongo_compute::provider::auth::{sign_request, SignedRequest};
 use mbongo_compute::provider::client::{JobClientError, ProviderClient};
 use mbongo_compute::provider::durable::{
-    execution_key, AcceptError, DurableStore, HexBytes, RetentionPolicy, StoreError, UploadEntry,
+    AcceptError, DurableStore, HexBytes, RetentionPolicy, StoreError, UploadEntry,
 };
 use mbongo_compute::provider::journal::{Journal, JournalError};
 use mbongo_compute::provider::service::{
@@ -64,6 +64,8 @@ fn spec(determinism: &str) -> Vec<u8> {
 struct MockRuntime {
     calls: AtomicUsize,
     fail: Mutex<bool>,
+    /// Each call answers differently, as a non-deterministic job does.
+    varies: Mutex<bool>,
 }
 
 impl RuntimeAdapter for MockRuntime {
@@ -76,12 +78,16 @@ impl RuntimeAdapter for MockRuntime {
         }
     }
     fn run(&self, _: &ResolvedJob, input: &[u8]) -> Result<RunOutput, RuntimeFailed> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
         if *self.fail.lock().unwrap() {
             return Err(RuntimeFailed);
         }
+        let mut raw = input.to_vec();
+        if *self.varies.lock().unwrap() {
+            raw.extend_from_slice(format!("#{call}").as_bytes());
+        }
         Ok(RunOutput {
-            raw: input.to_vec(),
+            raw,
             metering: UntrustedMetering::default(),
         })
     }
@@ -103,7 +109,16 @@ fn store(dir: &Path) -> Result<DurableStore, JournalError> {
 /// Starts or restarts a provider on `dir`: nothing survives but the journal
 /// and the chain.
 async fn start(dir: &Path, chain: FakeChain, fail: bool) -> Stack {
-    let durable = Arc::new(store(dir).unwrap());
+    // A connection task of the stopped service can hold it a moment longer.
+    let mut opened = store(dir);
+    for _ in 0..200 {
+        if !matches!(opened, Err(JournalError::Locked)) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        opened = store(dir);
+    }
+    let durable = Arc::new(opened.unwrap());
     let runtime = Arc::new(MockRuntime::default());
     *runtime.fail.lock().unwrap() = fail;
     let service = ProviderService::open(
@@ -149,19 +164,14 @@ impl Stack {
     }
 
     /// Takes a job as far as a registered task, without running it.
-    async fn register(&self, job_spec: &[u8], input: &[u8], salt: u8) -> ([u8; 32], [u8; 32]) {
-        let (task_id, key, upload) = self.commit(job_spec, input, salt).await;
+    async fn register(&self, job_spec: &[u8], input: &[u8], salt: u8) -> [u8; 32] {
+        let (task_id, upload) = self.commit(job_spec, input, salt).await;
         self.client().register(task_id, &upload).await.unwrap();
-        (task_id, key)
+        task_id
     }
 
     /// Everything before registration.
-    async fn commit(
-        &self,
-        job_spec: &[u8],
-        input: &[u8],
-        salt: u8,
-    ) -> ([u8; 32], [u8; 32], String) {
+    async fn commit(&self, job_spec: &[u8], input: &[u8], salt: u8) -> ([u8; 32], String) {
         let c = self.client();
         let execution_spec = c.put_job_spec(job_spec).await.unwrap();
         let task = ComputeTask {
@@ -177,8 +187,7 @@ impl Stack {
         submit_task(&self.chain, &client_key(), &task).await.unwrap();
         self.chain.produce_block();
         self.chain.produce_block();
-        let key = execution_key(&execution_spec, &task.input_commitment);
-        (task_id, key, upload.object_ref)
+        (task_id, upload.object_ref)
     }
 
     /// Drives blocks and ticks until the task leaves the open states.
@@ -377,7 +386,7 @@ fn damaged_state_stops_the_store_from_opening() {
 async fn a_completed_job_keeps_its_status_and_result() {
     let dir = scratch();
     let s = start(&dir, FakeChain::new(), false).await;
-    let (id, _) = s.register(&spec("BIT_EXACT"), b"kept", 1).await;
+    let id = s.register(&spec("BIT_EXACT"), b"kept", 1).await;
     assert_eq!(s.drive(id).await["state"], "completed");
     let s = start(&dir, s.crash(), false).await;
     let status = s.client().status(id).await.unwrap();
@@ -391,7 +400,7 @@ async fn a_completed_job_keeps_its_status_and_result() {
 async fn a_parked_job_stays_parked() {
     let dir = scratch();
     let s = start(&dir, FakeChain::new(), true).await;
-    let (id, _) = s.register(&spec("BIT_EXACT"), b"x", 1).await;
+    let id = s.register(&spec("BIT_EXACT"), b"x", 1).await;
     let status = s.drive(id).await;
     assert_eq!(status["failure_code"], "JOB_RUNTIME_FAILED");
     let s = start(&dir, s.crash(), false).await;
@@ -405,7 +414,7 @@ async fn a_parked_job_stays_parked() {
 async fn an_accepted_upload_can_be_registered_after_a_restart() {
     let dir = scratch();
     let s = start(&dir, FakeChain::new(), false).await;
-    let (id, _, object_ref) = s.commit(&spec("BIT_EXACT"), b"later", 1).await;
+    let (id, object_ref) = s.commit(&spec("BIT_EXACT"), b"later", 1).await;
     let s = start(&dir, s.crash(), false).await;
     s.client().register(id, &object_ref).await.unwrap();
     assert_eq!(s.drive(id).await["state"], "completed");
@@ -416,7 +425,7 @@ async fn an_accepted_upload_can_be_registered_after_a_restart() {
 async fn a_registered_job_that_never_started_runs_once() {
     let dir = scratch();
     let s = start(&dir, FakeChain::new(), false).await;
-    let (id, _) = s.register(&spec("NON_DETERMINISTIC"), b"fresh", 1).await;
+    let id = s.register(&spec("NON_DETERMINISTIC"), b"fresh", 1).await;
     let s = start(&dir, s.crash(), false).await;
     assert_eq!(s.drive(id).await["state"], "completed");
     assert_eq!(s.calls(), 1);
@@ -426,8 +435,8 @@ async fn a_registered_job_that_never_started_runs_once() {
 async fn an_interrupted_deterministic_job_runs_again() {
     let dir = scratch();
     let s = start(&dir, FakeChain::new(), false).await;
-    let (id, key) = s.register(&spec("BIT_EXACT"), b"again", 1).await;
-    s.durable.started(key).unwrap();
+    let id = s.register(&spec("BIT_EXACT"), b"again", 1).await;
+    s.durable.started(id).unwrap();
     let s = start(&dir, s.crash(), false).await;
     assert_eq!(s.drive(id).await["state"], "completed");
     assert_eq!(s.calls(), 1);
@@ -439,8 +448,8 @@ async fn an_interrupted_job_that_is_not_deterministic_is_never_rerun() {
     for class in ["NON_DETERMINISTIC", "TOLERANCE"] {
         let dir = scratch();
         let s = start(&dir, FakeChain::new(), false).await;
-        let (id, key) = s.register(&spec(class), b"once", 1).await;
-        s.durable.started(key).unwrap();
+        let id = s.register(&spec(class), b"once", 1).await;
+        s.durable.started(id).unwrap();
         let s = start(&dir, s.crash(), false).await;
         let status = s.drive(id).await;
         assert_eq!(status["failure_code"], EXECUTION_INTERRUPTED, "{class}");
@@ -452,9 +461,9 @@ async fn an_interrupted_job_that_is_not_deterministic_is_never_rerun() {
 async fn a_job_that_keeps_crashing_the_provider_stops_being_retried() {
     let dir = scratch();
     let s = start(&dir, FakeChain::new(), false).await;
-    let (id, key) = s.register(&spec("BIT_EXACT"), b"loop", 1).await;
+    let id = s.register(&spec("BIT_EXACT"), b"loop", 1).await;
     for _ in 0..3 {
-        s.durable.started(key).unwrap();
+        s.durable.started(id).unwrap();
     }
     let s = start(&dir, s.crash(), false).await;
     assert_eq!(s.drive(id).await["failure_code"], EXECUTION_INTERRUPTED);
@@ -465,9 +474,9 @@ async fn a_job_that_keeps_crashing_the_provider_stops_being_retried() {
 async fn a_stored_output_is_reused_and_the_runner_is_not_called() {
     let dir = scratch();
     let s = start(&dir, FakeChain::new(), false).await;
-    let (id, key) = s.register(&spec("NON_DETERMINISTIC"), b"in", 1).await;
-    s.durable.started(key).unwrap();
-    s.durable.output(key, b"produced before the crash").unwrap();
+    let id = s.register(&spec("NON_DETERMINISTIC"), b"in", 1).await;
+    s.durable.started(id).unwrap();
+    s.durable.output(id, b"produced before the crash").unwrap();
     // A failing runner: calling it would fail the job.
     let s = start(&dir, s.crash(), true).await;
     assert_eq!(s.drive(id).await["state"], "completed");
@@ -497,7 +506,7 @@ async fn until_submitted(s: &Stack, id: [u8; 32]) {
 async fn a_crash_after_anchoring_binds_the_stored_output() {
     let dir = scratch();
     let s = start(&dir, FakeChain::new(), false).await;
-    let (id, _) = s.register(&spec("BIT_EXACT"), b"anchored", 1).await;
+    let id = s.register(&spec("BIT_EXACT"), b"anchored", 1).await;
     until_submitted(&s, id).await;
     s.chain.produce_block();
     let s = start(&dir, s.crash(), false).await;
@@ -510,10 +519,10 @@ async fn a_crash_after_anchoring_binds_the_stored_output() {
 async fn an_output_that_does_not_match_the_receipt_is_never_served() {
     let dir = scratch();
     let s = start(&dir, FakeChain::new(), false).await;
-    let (id, key) = s.register(&spec("BIT_EXACT"), b"true output", 1).await;
+    let id = s.register(&spec("BIT_EXACT"), b"true output", 1).await;
     until_submitted(&s, id).await;
     s.chain.produce_block();
-    s.durable.output(key, b"another output").unwrap();
+    s.durable.output(id, b"another output").unwrap();
     let s = start(&dir, s.crash(), false).await;
     assert_eq!(s.client().status(id).await.unwrap().state, "completed");
     match s.client().result(id).await {
@@ -529,7 +538,7 @@ async fn an_output_that_does_not_match_the_receipt_is_never_served() {
 async fn a_failure_outside_the_job_still_parks() {
     let dir = scratch();
     let s = start(&dir, FakeChain::new(), false).await;
-    let (id, _) = s.register(&spec("BIT_EXACT"), b"x", 1).await;
+    let id = s.register(&spec("BIT_EXACT"), b"x", 1).await;
     for _ in 0..30 {
         s.chain.reject_next("refused by this test");
         s.chain.produce_block();
@@ -558,6 +567,98 @@ async fn if_the_start_cannot_be_recorded_the_runner_is_not_called() {
         let _ = s.service.tick().await;
     }
     assert_eq!(s.calls(), 0);
+}
+
+// ── task identity ────────────────────────────────────────────────────
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn identical_jobs_with_different_salts_each_run_and_keep_their_own_output() {
+    let s = start(&scratch(), FakeChain::new(), false).await;
+    *s.runtime.varies.lock().unwrap() = true;
+    let job = spec("NON_DETERMINISTIC");
+    let first = s.register(&job, b"same input", 1).await;
+    let second = s.register(&job, b"same input", 2).await;
+    assert_ne!(first, second);
+    assert_eq!(s.drive(first).await["state"], "completed");
+    assert_eq!(s.drive(second).await["state"], "completed");
+    assert_eq!(s.calls(), 2, "each task runs: an output is never shared");
+    let (a, b) = (
+        s.client().result(first).await.unwrap(),
+        s.client().result(second).await.unwrap(),
+    );
+    assert_ne!(a, b, "two runs of a non-deterministic job");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stored_output_serves_its_own_task_only() {
+    let dir = scratch();
+    let s = start(&dir, FakeChain::new(), false).await;
+    let job = spec("NON_DETERMINISTIC");
+    let crashed = s.register(&job, b"same input", 1).await;
+    let other = s.register(&job, b"same input", 2).await;
+    s.durable.started(crashed).unwrap();
+    s.durable.output(crashed, b"output of the first task").unwrap();
+    let s = start(&dir, s.crash(), false).await;
+    assert_eq!(s.drive(crashed).await["state"], "completed");
+    assert_eq!(s.drive(other).await["state"], "completed");
+    assert_eq!(s.calls(), 1, "only the other task runs");
+    assert_eq!(
+        s.client().result(crashed).await.unwrap(),
+        b"output of the first task"
+    );
+    assert_eq!(s.client().result(other).await.unwrap(), b"same input");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn each_result_matches_the_receipt_of_its_own_task() {
+    use mbongo_compute::chain::{find_receipt, ChainClient};
+    use mbongo_compute::execution::reference_output_commitment;
+    let s = start(&scratch(), FakeChain::new(), false).await;
+    *s.runtime.varies.lock().unwrap() = true;
+    let job = spec("NON_DETERMINISTIC");
+    let ids = [
+        s.register(&job, b"same input", 1).await,
+        s.register(&job, b"same input", 2).await,
+    ];
+    for id in ids {
+        s.drive(id).await;
+    }
+    let tip = s.chain.latest_height().await.unwrap();
+    for id in ids {
+        let (_, receipt) = find_receipt(&s.chain, id, 1, tip).await.unwrap().unwrap();
+        let output = s.client().result(id).await.unwrap();
+        assert_eq!(
+            receipt.output_commitment,
+            reference_output_commitment(&output)
+        );
+    }
+}
+
+// ── exclusive ownership ──────────────────────────────────────────────────
+
+#[test]
+fn a_second_owner_is_refused_and_changes_nothing() {
+    let dir = scratch();
+    let first = store(&dir).unwrap();
+    first.accept_request(Address::zero(), [1; 16], u64::MAX, 0).unwrap();
+    let path = dir.join("state").join(JOURNAL);
+    let before = std::fs::read(&path).unwrap();
+    assert!(matches!(store(&dir), Err(JournalError::Locked)));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    first.accept_request(Address::zero(), [2; 16], u64::MAX, 0).unwrap();
+}
+
+#[test]
+fn ownership_is_released_when_the_store_closes() {
+    let dir = scratch();
+    let first = store(&dir).unwrap();
+    first.accept_request(Address::zero(), [1; 16], u64::MAX, 0).unwrap();
+    drop(first);
+    let second = store(&dir).unwrap();
+    assert_eq!(
+        second.accept_request(Address::zero(), [1; 16], u64::MAX, 0),
+        Err(AcceptError::Replayed)
+    );
 }
 
 // ── retention ────────────────────────────────────────────────────────────
@@ -602,7 +703,7 @@ fn uploads_are_kept_per_uploader() {
 async fn results_and_uploads_expire_on_policy() {
     let dir = scratch();
     let s = start(&dir, FakeChain::new(), false).await;
-    let (id, _) = s.register(&spec("BIT_EXACT"), b"old", 1).await;
+    let id = s.register(&spec("BIT_EXACT"), b"old", 1).await;
     s.drive(id).await;
     let policy = RetentionPolicy::default();
     s.durable.add_upload([5; 32], upload(Address::zero(), now())).unwrap();
@@ -659,7 +760,7 @@ fn compaction_keeps_the_live_state_and_drops_the_rest() {
 async fn a_completed_job_survives_compaction_and_a_restart() {
     let dir = scratch();
     let s = start(&dir, FakeChain::new(), false).await;
-    let (id, _) = s.register(&spec("BIT_EXACT"), b"compacted", 1).await;
+    let id = s.register(&spec("BIT_EXACT"), b"compacted", 1).await;
     s.drive(id).await;
     s.durable.compact().unwrap();
     let s = start(&dir, s.crash(), false).await;

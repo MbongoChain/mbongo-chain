@@ -17,5 +17,6 @@ pub mod auth;
 pub mod client;
 pub mod durable;
 pub mod journal;
+pub mod lock;
 pub mod runner;
 pub mod service;

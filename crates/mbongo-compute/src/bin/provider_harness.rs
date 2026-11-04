@@ -211,6 +211,27 @@ fn prove_failure(stack: &Stack) -> Result<(), String> {
     Ok(())
 }
 
+/// A second process on the same state directory must refuse to start, and
+/// change nothing.
+fn prove_exclusive_state(config_file: &Path, base: &Path) -> Result<(), String> {
+    let journal = base.join("state").join("provider-state.journal");
+    let before = std::fs::read(&journal).map_err(|e| e.to_string())?;
+    let second = Command::new(sibling("provider_service"))
+        .arg("--config")
+        .arg(config_file)
+        .output()
+        .map_err(|e| e.to_string())?;
+    let err = String::from_utf8_lossy(&second.stderr);
+    if second.status.success() || !err.contains("STATE_LOCKED") {
+        return Err(format!("second provider: {} {}", second.status, err.trim()));
+    }
+    if std::fs::read(&journal).map_err(|e| e.to_string())? != before {
+        return Err("a refused provider changed the journal".to_owned());
+    }
+    println!("  a second provider on the same state: refused, journal unchanged");
+    Ok(())
+}
+
 /// A real crash: the provider process is killed while a runner works, then
 /// restarted on the same state. The client keeps waiting and gets a verified
 /// result. The runner ran twice: at-least-once, with one receipt.
@@ -396,6 +417,7 @@ async fn run(base: &Path) -> Result<(), String> {
         };
         prove_vectors(&stack, &chain).await?;
         prove_failure(&stack)?;
+        prove_exclusive_state(&config_file, base)?;
         prove_crash_recovery(&stack, &mut provider, &provider_log, &config_file, config).await
     }
     .await;
