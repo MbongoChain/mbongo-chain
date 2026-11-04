@@ -12,7 +12,7 @@
 > [`RECEIPT_SPEC_v0.1.md`](../specs/RECEIPT_SPEC_v0.1.md),
 > [`PROTOCOL_LOCK_v0.3.md`](../specs/PROTOCOL_LOCK_v0.3.md) (FROZEN),
 > [`rpc_v0.2.md`](../specs/rpc_v0.2.md) (FROZEN),
-> [`VISION_v1.md`](../VISION_v1.md)
+> [`VISION_v2.md`](../VISION_v2.md)
 > **Parent architecture:** [`compute-privacy-data-plane.md`](compute-privacy-data-plane.md)
 > (the four-plane model) and
 > [`compute-private-data-plane-interface.md`](compute-private-data-plane-interface.md)
@@ -601,7 +601,7 @@ gate.
 | E22 | validators do not parse worker/vendor attestation evidence today | ALREADY_TRUE |
 | E23 | logs contain no payloads, keys or reusable capability secrets by default | DEFINED_BY_THIS_GATE (§18), inheriting F §13 |
 | E24 | `task_id` alone is not worker execution authorization | DEFINED_BY_THIS_GATE (§4, §6); F3 for data access |
-| E25 | the chain is not a scheduler | ALREADY_TRUE (`VISION_v1.md` §2; parent P14) |
+| E25 | the chain is not a scheduler | ALREADY_TRUE (`VISION_v2.md` P7; parent P14) |
 | E26 | the control plane is not a private object store | ALREADY_TRUE (parent §2); §17.1 |
 | E27 | the worker is not a consensus authority | ALREADY_TRUE (RFC 0005 §6) |
 | E28 | no vendor is protocol authority | ALREADY_TRUE |
