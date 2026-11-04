@@ -146,6 +146,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
+      # G2 Slice 2: a real node, a provider service, a standalone client and a
+      # runner written independently of the core, each in its own process.
+      - name: Mbongo Provider Flow
+        run: |
+          cargo build -p mbongo-node --bin mbongo-node
+          cargo build -p mbongo-compute --bin provider_service --bin job_client --bin provider_harness
+          target/debug/provider_harness
       - name: Mbongo MVP Launch Exposure
         run: node --test scripts/mvp-launch-exposure.test.mjs
       # POST-MVP-O1 privacy scanner (docs/product/POST_MVP_KAAYU_OBSERVATION.md
