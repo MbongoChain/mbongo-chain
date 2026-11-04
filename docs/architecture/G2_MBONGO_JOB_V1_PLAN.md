@@ -380,7 +380,7 @@ The code reaches the client through `GET /v1/tasks/{id}`, content-free. It is ca
 | S2-7 | Unsigned, **wrong-recipient**, replayed, tampered, expired and wrong-submitter requests are refused, each by its named code |
 | S2-8 | Canary values in input and runner stderr: 0 occurrences in logs, status, receipts, chain or metering (PE-1, PE-3) |
 | S2-9 | Evidence states T1 at most, with `BUSINESS_CORRECTNESS = NOT_ASSESSED` and no isolation claim (TV-3) |
-| S2-10 | `compute-conformance-v1` passes against the bundle through its `Subject` adapter. All existing MVP vectors and suites pass unchanged |
+| S2-10 | `compute-conformance-v1` passes against the bundle through its `Subject` adapter. All existing MVP vectors and suites pass unchanged. **Deferred and not satisfied (#191):** the suites pass unchanged, but no `Subject` adapter exists for the service |
 
 Fixtures stay the three of §3.5. No benchmarks.
 
@@ -401,3 +401,35 @@ All five are approved:
 3. Provider-managed artifacts only, identified by digest.
 4. Isolation is a documented provider duty. Key separation stays an unresolved limitation.
 5. `mbongo-runner:v1`, as in §9.4.
+
+## 10. Next stage: provider readiness (PROPOSED)
+
+**Scope not approved. Nothing here is implemented, and no provider is opened.** Slice 2 is merged (#190), loopback only and not deployed. Its status against §9.10: S2-1 to S2-9 met; **S2-10 deferred and not satisfied** (#191).
+
+**Goal:** the minimum infrastructure for a provider that MbongoChain does not operate. No new workload.
+
+| # | Task | Capability | Reuses | MbongoChain owns | Provider or client owns | Minimal tests | Excluded |
+|---|---|---|---|---|---|---|---|
+| **P1** | **Durable provider state** | Survives a restart: tasks, results and replay identifiers | `ControlPlane::snapshot` and `restore`, `Worker::resolve_pending`, the data-plane interface | An encrypted durable store; a replay store that persists until each window ends | Disk, backups, the storage key | A restart mid-job finishes without a second receipt; a captured request stays refused after a restart; a stored result is retrievable (#169) | Replication, a remote database |
+| **P2** | **Key separation and runner containment** | The runner cannot read the signing key, and a limit stops the whole tree | `mbongo-runner:v1` (`command` can be a launcher) | A start-up **probe** that runs through the runner and tries to read the key file, refusing to start if it can; killing the process group on Linux; a reference Linux launcher (separate account, cgroup) | Running it; any other platform | The probe refuses a same-account runner; a grandchild dies with the job; a memory limit stops a runner | Sandboxing untrusted code, Windows containment, an HSM |
+| **P3** | **Interoperability kit** | A third party can prove its provider conforms | `compute-conformance-v1`, the §3.5 fixtures, `provider_harness` | #191; a runner conformance pack; a run across two hosts, through the provider's own TLS boundary | Running it, TLS | A second, separately written runner passes; two hosts complete a job | Certification, a hosted test network |
+| **P4** | **Capability compatibility and discovery** | A client finds a compatible provider, and can tell who declared what | `capability-advertisement-v1`, `eligible()`, the executor key | A declaration signed by the executor key, with an expiry; a client check through `eligible()`; a static provider list | Publishing the list | A forged or expired declaration is refused; an incompatible job is refused before the chain | An on-chain registry (RFC), ranking, reputation |
+| **P5** | **Recovery from provider failure** | A client can recover when a provider disappears | Task salts, `find_receipt`, the absence of expiry (RFC 0005 §2.9) | Client policy: stop waiting, then submit a new task to another provider; duplicates are detected by the client | Choosing the fallback provider | A dead provider leads to a verified result from a second one; two receipts for two tasks are reported, not hidden | Automatic failover, refunds, on-chain cancellation (RFC) |
+
+**Order and dependencies.** P1 first: P5 and any real operation depend on it, and it reuses what exists. P2 next, independent of P1. P3 needs P1 and P2 to be meaningful. P4 and P5 follow.
+
+**Protected surfaces:** those of §4 and §9.11. P1–P5 need no protocol, consensus, RPC or SDK change. An on-chain registry, open assignment or task cancellation would each need an RFC.
+
+**Security gates before any independently operated provider runs:**
+
+| Gate | Closed by |
+|---|---|
+| No persistent replay protection | P1 |
+| Results lost on restart | P1 |
+| Signing key readable by the runner | P2 |
+| No process-tree or memory enforcement | P2 |
+| Loopback only, no TLS guidance proven | P3 |
+| S2-10 deferred | P3 (#191) |
+| Capability declarations unsigned | P4 |
+| Provider honesty unverified: evidence stops at T1 | **Stays open.** Needs G3 and later T2 or T3. Operators and clients must accept it explicitly |
+| Prompt-injection screen is best effort (CC-5) | **Stays open** for the released MVP. Not a provider gate |
