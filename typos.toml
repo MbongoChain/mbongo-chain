@@ -21,3 +21,6 @@ Determin = "Determin"  # Determination (abbreviated in diagrams)
 analyste = "analyste"
 # Spanish prompt-injection marker matched by the MVP injection screen (crates/mbongo-compute/src/mvp/screen.rs)
 ignora = "ignora"
+# Linux capability names: CapInh in /proc/<pid>/status, setpriv --inh-caps
+inh = "inh"
+Inh = "Inh"

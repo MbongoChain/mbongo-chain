@@ -25,11 +25,11 @@ use mbongo_compute::provider::auth::{sign_request, SignedRequest, HEADER_RECIPIE
 use mbongo_compute::provider::client::{
     run_job, JobClientError, JobReport, ProviderClient, WaitPolicy,
 };
+use mbongo_compute::provider::containment::{Containment, ContainmentConfig};
 use mbongo_compute::provider::durable::{DurableStore, RetentionPolicy};
 use mbongo_compute::provider::runner::{RunnerConfig, SubprocessRuntime};
 use mbongo_compute::provider::service::{
     MeteringLog, ProviderConfig, ProviderParts, ProviderService, ProviderStore,
-    KEY_ISOLATION_ENFORCED,
 };
 use mbongo_core::Address;
 use parity_scale_codec::Encode;
@@ -256,7 +256,6 @@ fn s2_5_the_runner_gets_no_credential_and_no_input_on_disk() {
     let left = std::fs::read_dir(r.dir.join("work")).unwrap().count();
     assert_eq!(left, 0, "the job directory was not removed");
     // This shows nothing was handed over. It does not show key isolation.
-    const { assert!(!KEY_ISOLATION_ENFORCED) };
 }
 
 #[test]
@@ -584,5 +583,83 @@ fn no_workload_is_compiled_into_the_provider_or_job_modules() {
             files += 1;
         }
     }
-    assert_eq!(files, 14);
+    assert_eq!(files, 15);
+}
+
+/// `required` is proven or refused. It is never a warning, and the mode is
+/// never assumed. The contained path itself runs under `provider_harness
+/// --contained`, which needs root.
+#[test]
+fn isolation_is_stated_and_refused_when_it_cannot_be_proven() {
+    let dir = scratch();
+    let key = dir.join("key");
+    std::fs::write(&key, hex::encode([0x57u8; 32])).unwrap();
+    let mut config = json!({
+        "bind": "127.0.0.1:0",
+        "rpc_url": "http://127.0.0.1:1/rpc",
+        "rest_url": "http://127.0.0.1:1",
+        "executor_key_file": key,
+        "state_dir": dir.join("state"),
+        "state_key_file": key,
+        "artifact_dir": dir.join("artifacts"),
+        "work_dir": dir.join("work"),
+        "runtimes": [],
+    });
+    let start = |config: &Value| {
+        let file = dir.join("provider.json");
+        std::fs::write(&file, config.to_string()).unwrap();
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_provider_service"))
+            .arg("--config")
+            .arg(&file)
+            .output()
+            .unwrap();
+        assert!(!out.status.success());
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    };
+
+    let err = start(&config);
+    assert!(err.contains("missing field `isolation`"), "{err}");
+
+    config["isolation"] = json!({
+        "mode": "required",
+        "runner_uid": 54_321,
+        "runner_gid": 54_321,
+        "cgroup_root": dir.join("no-cgroup"),
+        "max_memory_mib": 64,
+        "max_pids": 16,
+    });
+    let err = start(&config);
+    let expected = if cfg!(target_os = "linux") {
+        [
+            "ISOLATION_REFUSED=CGROUP_UNAVAILABLE",
+            "ISOLATION_REFUSED=SERVICE_IDENTITY",
+        ]
+    } else {
+        ["ISOLATION_REFUSED=UNSUPPORTED_PLATFORM"; 2]
+    };
+    assert!(expected.iter().any(|code| err.contains(code)), "{err}");
+    assert!(!err.contains("KEY_ISOLATION_ENFORCED=YES"), "{err}");
+}
+
+#[test]
+fn a_root_runner_is_refused_before_anything_else() {
+    let dir = scratch();
+    let refused = Containment::establish(ContainmentConfig {
+        runner_uid: 0,
+        runner_gid: 0,
+        cgroup_root: dir.join("cgroup"),
+        max_memory_mib: 64,
+        max_pids: 16,
+        secret_files: Vec::new(),
+        private_dirs: Vec::new(),
+        work_dir: dir.join("work"),
+        denied_paths: Vec::new(),
+    })
+    .unwrap_err();
+    let expected: &[&str] = if cfg!(target_os = "linux") {
+        &["RUNNER_IDENTITY", "SERVICE_IDENTITY"]
+    } else {
+        &["UNSUPPORTED_PLATFORM"]
+    };
+    assert!(expected.contains(&refused.code), "{refused}");
 }

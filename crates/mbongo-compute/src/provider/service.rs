@@ -38,6 +38,7 @@ use crate::mvp::client::random_bytes;
 use crate::worker::{AttemptOutcome, Worker};
 
 use super::auth::{self, AuthHeaders, Received};
+use super::containment::ContainmentProof;
 use super::durable::{
     AcceptError, DurableStore, HexBytes, RetentionPolicy, StoreError, TaskEntry, Terminal,
     UploadEntry,
@@ -45,9 +46,6 @@ use super::durable::{
 use super::journal::JournalError;
 use super::runner::RUNNER_CONTRACT;
 
-/// The runner receives no key, but a runner under the service's account can
-/// still read the executor key file. **No key isolation is claimed.**
-pub const KEY_ISOLATION_ENFORCED: bool = false;
 /// Largest request body.
 pub const MAX_BODY_BYTES: usize = 256 * 1024;
 /// Most job specs held at once.
@@ -90,6 +88,8 @@ pub struct ProviderConfig {
     pub control_plane: ControlPlaneConfig,
     /// What this provider accepts.
     pub limits: ProviderLimits,
+    /// Set once every runtime runs inside an established containment.
+    pub contained: Option<ContainmentProof>,
 }
 
 impl Default for ProviderConfig {
@@ -108,6 +108,7 @@ impl Default for ProviderConfig {
                 max_input_bytes: 65_536,
                 max_output_bytes: 65_536,
             },
+            contained: None,
         }
     }
 }
@@ -315,8 +316,10 @@ pub struct Capabilities {
     pub confidentiality: Vec<String>,
     /// What this provider accepts.
     pub limits: ProviderLimits,
-    /// Always `false` in this version.
+    /// Whether startup proved a runner cannot read this provider's keys.
     pub key_isolation_enforced: bool,
+    /// Whether `max_memory_mib` is enforced on the runner's whole tree.
+    pub memory_limit_enforced: bool,
 }
 
 /// `PUT /v1/job-specs` response.
@@ -839,7 +842,8 @@ impl<C: ChainClient + Clone + 'static> ProviderService<C> {
                 .collect(),
             confidentiality: vec!["PUBLIC".to_owned()],
             limits: self.inner.config.limits,
-            key_isolation_enforced: KEY_ISOLATION_ENFORCED,
+            key_isolation_enforced: self.inner.config.contained.is_some(),
+            memory_limit_enforced: self.inner.config.contained.is_some(),
         }
     }
 

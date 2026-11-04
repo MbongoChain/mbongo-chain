@@ -2,6 +2,7 @@
 // A conformance fixture for mbongo-runner:v1, written independently of the
 // Rust core: it speaks only the process contract. Not a workload.
 // `params.mode` asks for misbehaviour, so that tests can reach each failure.
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -38,6 +39,79 @@ function compute(input) {
     default:
       process.exit(71);
   }
+}
+
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const attempt = (action) => {
+  try {
+    action();
+    return "OK";
+  } catch (e) {
+    return e.code ?? "ERROR";
+  }
+};
+const session = (pid) => fs.readFileSync(`/proc/${pid}/stat`, "utf8").split(") ")[1].split(" ")[3];
+
+function sorted(value) {
+  if (Array.isArray(value)) return value.map(sorted);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(Object.keys(value).sort().map((k) => [k, sorted(value[k])]));
+}
+
+// What a compromised runner would try. Each path is tried, and the outcome
+// reported as an errno name: never what was read.
+function attack({ targets, service_pid: pid, cgroup_root: root }) {
+  const own = fs.readFileSync("/proc/self/cgroup", "utf8").trim().replace(/^0::/, "");
+  const status = fs.readFileSync("/proc/self/status", "utf8");
+  const line = (name) => status.split("\n").find((l) => l.startsWith(`${name}:`)).slice(name.length + 1).trim().replace(/\s+/g, " ");
+  return {
+    read: targets.map((t) => attempt(() => fs.readFileSync(t))),
+    write: targets.map((t) => attempt(() => fs.closeSync(fs.openSync(t, "a")))),
+    unlink: targets.map((t) => attempt(() => fs.unlinkSync(t))),
+    service: {
+      environ: attempt(() => fs.readFileSync(`/proc/${pid}/environ`)),
+      mem: attempt(() => fs.closeSync(fs.openSync(`/proc/${pid}/mem`, "r"))),
+      signal: attempt(() => process.kill(pid, 0)),
+    },
+    cgroup: {
+      into_parent: attempt(() => fs.writeFileSync(`${root}/cgroup.procs`, String(process.pid))),
+      into_service: attempt(() => fs.writeFileSync(`${root}/service/cgroup.procs`, String(process.pid))),
+      raise_memory: attempt(() => fs.writeFileSync(`/sys/fs/cgroup${own}/memory.max`, "max")),
+      new_child: attempt(() => fs.mkdirSync(`/sys/fs/cgroup${own}/escape`)),
+    },
+    setuid_root: attempt(() => process.setuid(0)),
+    job_spec: attempt(() => fs.readFileSync(path.join(dir, "job.json"))),
+    job_dir_write: attempt(() => fs.writeFileSync(path.join(dir, "left-behind"), "x")),
+    identity: {
+      uid: line("Uid"),
+      gid: line("Gid"),
+      groups: line("Groups"),
+      cap_eff: line("CapEff"),
+      cap_prm: line("CapPrm"),
+      cap_inh: line("CapInh"),
+      cap_amb: line("CapAmb"),
+      no_new_privs: line("NoNewPrivs"),
+      session_leader: session(process.pid) === String(process.pid) ? "YES" : "NO",
+      cgroup: own,
+    },
+    descriptors: fs.readdirSync("/proc/self/fd").flatMap((fd) => {
+      try {
+        return [fs.readlinkSync(`/proc/self/fd/${fd}`)];
+      } catch {
+        return [];
+      }
+    }),
+  };
+}
+
+// A descendant in its own session, which outlives its parent unless something
+// kills it. Returns once it has proven it is running.
+function daemon(heartbeat) {
+  const script = `while :; do echo $$ >> ${heartbeat}; sleep 0.05; done`;
+  const child = spawn("/bin/sh", ["-c", script], { detached: true, stdio: "ignore" });
+  child.unref();
+  while (!fs.existsSync(heartbeat) || fs.readFileSync(heartbeat, "utf8").split("\n").length < 4) pause(10);
+  return child.pid;
 }
 
 const input = readRequest();
@@ -80,6 +154,30 @@ switch (params.mode) {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, params.delay_ms);
     respond(compute(input));
     break;
+  case "attack":
+    respond(Buffer.from(JSON.stringify(sorted(attack(params)))));
+    break;
+  case "daemon": {
+    const pid = daemon(params.heartbeat);
+    if (params.hang) for (;;) pause(1000);
+    if (params.hold_ms) pause(params.hold_ms);
+    respond(Buffer.from(JSON.stringify({ descendant_session: session(pid), own_session: session(process.pid), pid })));
+    break;
+  }
+  case "fork": {
+    const script = `n=0; while [ $n -lt ${params.attempts} ]; do /bin/sleep 60 & n=$((n+1)); echo $n > ${params.counter}; done`;
+    spawnSync("/bin/sh", ["-c", script], { stdio: "ignore" });
+    fs.writeFileSync(params.marker, "ready\n");
+    pause(params.hold_ms);
+    respond(Buffer.from(JSON.stringify({ started: Number(fs.readFileSync(params.counter, "utf8")) })));
+    break;
+  }
+  case "alloc": {
+    const block = Buffer.alloc(params.mib * 1048576, 1);
+    respond(compute(input));
+    process.exitCode = block[0] === 1 ? 0 : 1;
+    break;
+  }
   case "report":
     respond(Buffer.from(JSON.stringify({
       env: Object.keys(process.env).sort(),

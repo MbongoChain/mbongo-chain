@@ -2,6 +2,10 @@
 //! producer node, a provider service, a standalone `job_client`, and a runner
 //! written independently of the core. Synthetic fixtures only.
 //!
+//! With `--contained` (Linux, root) the same flow runs under the reference
+//! launcher, then attacks the boundary from inside a runner. Root is the
+//! harness's, to set up and to observe: the service and the runner never have it.
+//!
 //! Exit code 0 on PASS. On failure, prints what the processes wrote.
 
 use std::path::{Path, PathBuf};
@@ -23,6 +27,17 @@ const P2P_PORT: u16 = 23333;
 /// The devnet's funded account.
 const CLIENT_SEED: [u8; 32] = [0xAA; 32];
 const EXECUTOR_SEED: [u8; 32] = [0xE1; 32];
+/// The provider's ceiling on a job's memory, in the contained run.
+const MEMORY_CEILING_MIB: u64 = 512;
+/// Processes and threads in one job, in the contained run.
+const MAX_PIDS: u64 = 256;
+/// Every way a contained start must be refused.
+const REFUSALS: usize = 17;
+/// Two key files, two directories, the journal, the lock, two `/proc` entries.
+const PROBED_PATHS: u64 = 8;
+const NO_CAPABILITIES: &str = "0000000000000000";
+/// `CAP_SETGID` and `CAP_SETUID`.
+const SERVICE_CAPABILITIES: &str = "00000000000000c0";
 
 /// Kills a child process when dropped.
 struct Process(Child);
@@ -50,6 +65,160 @@ fn on_path(program: &str) -> Result<PathBuf, String> {
         .map(|d| d.join(&name))
         .find(|p| p.is_file())
         .ok_or_else(|| format!("{program} not found on PATH"))
+}
+
+/// A contained deployment: the reference launcher, and the accounts it made.
+struct Contained {
+    launcher: PathBuf,
+    service: PathBuf,
+    base: PathBuf,
+    /// The runner's own directory: the only place it can write here.
+    scratch: PathBuf,
+    cgroup: PathBuf,
+    runner_uid: u32,
+    runner_gid: u32,
+    provider_uid: u32,
+}
+
+fn shell(script: &str) -> Result<(), String> {
+    let status = Command::new("sh").args(["-c", script]).status().map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("{script}: {status}"))
+    }
+}
+
+impl Contained {
+    fn prepare(&self) -> Result<String, String> {
+        let out = Command::new("bash")
+            .arg(&self.launcher)
+            .arg("prepare")
+            .arg(&self.base)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(format!(
+                "launcher prepare: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
+    /// Accounts, layout, and copies of what the accounts must be able to run:
+    /// the build directory may be out of their reach.
+    fn set_up(base: &Path) -> Result<Self, String> {
+        let bin = base.join("bin");
+        std::fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
+        let service = bin.join("provider_service");
+        std::fs::copy(sibling("provider_service"), &service).map_err(|e| e.to_string())?;
+        std::fs::copy(
+            repo_root().join("scripts/fixtures/mbongo-runner-fixture.mjs"),
+            bin.join("mbongo-runner-fixture.mjs"),
+        )
+        .map_err(|e| e.to_string())?;
+        let mut contained = Self {
+            launcher: repo_root().join("scripts/provider-containment-linux.sh"),
+            service,
+            base: base.to_path_buf(),
+            scratch: base.join("scratch"),
+            cgroup: PathBuf::new(),
+            runner_uid: 0,
+            runner_gid: 0,
+            provider_uid: 0,
+        };
+        let printed = contained.prepare()?;
+        let value = |name: &str| {
+            printed
+                .lines()
+                .find_map(|l| l.strip_prefix(name)?.strip_prefix('='))
+                .ok_or(format!("launcher printed no {name}"))
+        };
+        let id = |name: &str| value(name)?.parse::<u32>().map_err(|e| e.to_string());
+        contained.runner_uid = id("RUNNER_UID")?;
+        contained.runner_gid = id("RUNNER_GID")?;
+        contained.provider_uid = id("PROVIDER_UID")?;
+        contained.cgroup = PathBuf::from(value("CGROUP_ROOT")?);
+        std::fs::create_dir_all(&contained.scratch).map_err(|e| e.to_string())?;
+        shell(&format!(
+            "chown {}:{} {dir} && chmod 0700 {dir} && chmod 0755 {base}",
+            contained.runner_uid,
+            contained.runner_gid,
+            dir = contained.scratch.display(),
+            base = base.display(),
+        ))?;
+        Ok(contained)
+    }
+
+    fn oom_kills(&self) -> Result<u64, String> {
+        let events = std::fs::read_to_string(self.cgroup.join("memory.events"))
+            .map_err(|e| e.to_string())?;
+        events
+            .lines()
+            .find_map(|l| l.strip_prefix("oom_kill "))
+            .and_then(|n| n.parse().ok())
+            .ok_or_else(|| "no oom_kill counter".to_owned())
+    }
+
+    /// A file of the one running job's cgroup.
+    fn job_file(&self, name: &str) -> Result<String, String> {
+        let mut jobs: Vec<PathBuf> = std::fs::read_dir(&self.cgroup)
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with("job-"))
+            .map(|e| e.path())
+            .collect();
+        let job = jobs.pop().ok_or("no running job")?;
+        if !jobs.is_empty() {
+            return Err("more than one running job".to_owned());
+        }
+        std::fs::read_to_string(job.join(name)).map_err(|e| e.to_string())
+    }
+
+    /// Every process in the job cgroups, and how many cgroups there are.
+    fn job_processes(&self) -> Result<(usize, Vec<String>), String> {
+        let mut groups = 0;
+        let mut pids = Vec::new();
+        for entry in std::fs::read_dir(&self.cgroup).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            if entry.file_name().to_string_lossy().starts_with("job-") {
+                groups += 1;
+                let procs = std::fs::read_to_string(entry.path().join("cgroup.procs"))
+                    .map_err(|e| e.to_string())?;
+                pids.extend(procs.lines().map(str::to_owned));
+            }
+        }
+        Ok((groups, pids))
+    }
+}
+
+fn service_command(contained: Option<&Contained>, config_file: &Path) -> Command {
+    if let Some(c) = contained {
+        let mut command = Command::new("bash");
+        command
+            .arg(&c.launcher)
+            .arg("run")
+            .arg(&c.base)
+            .arg(&c.service)
+            .arg(config_file);
+        return command;
+    }
+    let mut command = Command::new(sibling("provider_service"));
+    command.arg("--config").arg(config_file);
+    command
+}
+
+async fn gone(pid: &str) -> Result<(), String> {
+    let path = PathBuf::from(format!("/proc/{pid}"));
+    let started = Instant::now();
+    while path.exists() {
+        if started.elapsed() > Duration::from_secs(5) {
+            return Err(format!("process {pid} survived"));
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    Ok(())
 }
 
 fn spawn_logged(mut command: Command, log: &Path) -> Result<Process, String> {
@@ -110,6 +279,7 @@ struct Stack {
     base: PathBuf,
     provider: String,
     executor: String,
+    contained: Option<Contained>,
 }
 
 impl Stack {
@@ -224,12 +394,10 @@ fn prove_failure(stack: &Stack) -> Result<(), String> {
 
 /// A second process on the same state directory must refuse to start, and
 /// change nothing.
-fn prove_exclusive_state(config_file: &Path, base: &Path) -> Result<(), String> {
-    let journal = base.join("state").join("provider-state.journal");
+fn prove_exclusive_state(stack: &Stack, config_file: &Path) -> Result<(), String> {
+    let journal = stack.base.join("state").join("provider-state.journal");
     let before = std::fs::read(&journal).map_err(|e| e.to_string())?;
-    let second = Command::new(sibling("provider_service"))
-        .arg("--config")
-        .arg(config_file)
+    let second = service_command(stack.contained.as_ref(), config_file)
         .output()
         .map_err(|e| e.to_string())?;
     let err = String::from_utf8_lossy(&second.stderr);
@@ -258,11 +426,13 @@ async fn prove_crash_recovery(
             .map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())?;
-    let marker = stack.base.join("runner-starts");
+    let contained = stack.contained.as_ref();
+    let marker = contained.map_or(stack.base.as_path(), |c| &c.scratch).join("runner-starts");
     let mut spec = vectors["specs"][1]["spec"].clone();
     spec["params"] = json!({
         "mode": "slow",
-        "delay_ms": 3000,
+        // Contained, long enough that only the sweep can end the orphan.
+        "delay_ms": if contained.is_some() { 8000 } else { 3000 },
         "marker": marker.display().to_string(),
     });
     spec["limits"]["max_wall_ms"] = json!(30_000);
@@ -285,13 +455,34 @@ async fn prove_crash_recovery(
     provider.0.kill().map_err(|e| e.to_string())?;
     let _ = provider.0.wait();
     println!("  provider killed while the runner was working");
+    let orphans = match contained {
+        Some(c) => {
+            let (groups, pids) = c.job_processes()?;
+            if groups != 1 || pids.is_empty() {
+                return Err(format!("expected one live job, found {groups}: {pids:?}"));
+            }
+            println!(
+                "  the contained runner outlived the provider: {} process(es)",
+                pids.len()
+            );
+            pids
+        }
+        None => Vec::new(),
+    };
 
     config["bind"] = json!(stack.provider.trim_start_matches("http://"));
     std::fs::write(config_file, config.to_string()).map_err(|e| e.to_string())?;
-    let mut command = Command::new(sibling("provider_service"));
-    command.arg("--config").arg(config_file);
-    *provider = spawn_logged(command, log)?;
+    *provider = spawn_logged(service_command(contained, config_file), log)?;
     wait_for_bind(log, provider).await?;
+    if contained.is_some() {
+        if !std::fs::read_to_string(log).unwrap_or_default().contains("CONTAINMENT_SWEPT=1") {
+            return Err("the restart did not sweep the orphaned job".to_owned());
+        }
+        for pid in &orphans {
+            gone(pid).await?;
+        }
+        println!("  the restart killed the orphan before running anything");
+    }
     // The orphaned runner is still alive: if it had inherited the listening
     // socket, this wait would last as long as it does.
     let text = std::fs::read_to_string(log).unwrap_or_default();
@@ -331,6 +522,659 @@ async fn prove_crash_recovery(
     Ok(())
 }
 
+/// A job spec for the fixture, with `params`, up to `max_bytes` of output.
+fn fixture_spec(params: Value, max_bytes: u64, limits: Value) -> Result<Vec<u8>, String> {
+    let vectors: Value = serde_json::from_slice(
+        &std::fs::read(repo_root().join("test-vectors/job/job-contract-v1.json"))
+            .map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let mut spec = vectors["specs"][1]["spec"].clone();
+    spec["params"] = params;
+    spec["output"]["max_bytes"] = json!(max_bytes);
+    spec["limits"] = limits;
+    mbongo_compute::inference::canonical::canonicalize(&spec.to_string(), 1 << 16)
+        .map_err(|e| e.to_string())
+}
+
+/// Runs a job that must succeed at T1, and returns its output.
+fn verified_output(stack: &Stack, name: &str, spec: &[u8]) -> Result<Vec<u8>, String> {
+    let run = stack.client(name, spec, b"[1]")?;
+    if !run.status.success() {
+        return Err(format!(
+            "{name}: {}",
+            String::from_utf8_lossy(&run.stderr).trim()
+        ));
+    }
+    let report: Value = serde_json::from_slice(&run.stdout).map_err(|e| e.to_string())?;
+    if report["technical_level"] != "T1" {
+        return Err(format!("{name}: {report}"));
+    }
+    hex::decode(report["output"].as_str().ok_or("output")?).map_err(|e| e.to_string())
+}
+
+/// Runs a job that must fail with `code`.
+fn refused_job(stack: &Stack, name: &str, spec: &[u8], code: &str) -> Result<(), String> {
+    let run = stack.client(name, spec, b"[1]")?;
+    let err = String::from_utf8_lossy(&run.stderr);
+    if run.status.code() != Some(3) || !err.contains(code) {
+        return Err(format!("{name}: {} {}", run.status, err.trim()));
+    }
+    Ok(())
+}
+
+/// Each way a contained start can be wrong, and the refusal it must reach.
+fn prove_refusals(c: &Contained, config: &Value) -> Result<(), String> {
+    enum Start {
+        Launcher,
+        NoCapabilities,
+        AsRoot,
+        /// With a probe's tool replaced, in a private mount namespace, by a
+        /// script reporting what a broken deployment would report.
+        BrokenProbe(&'static str, &'static str),
+    }
+    let base = c.base.display();
+    let root = c.cgroup.display();
+    let (provider, runner) = (c.provider_uid, c.runner_gid);
+    let cases: Vec<(&str, &str, String, String, Value, Start)> = vec![
+        (
+            "executor key world-readable",
+            "PROTECTED_PATH",
+            format!("chmod 0644 {base}/keys/executor.key"),
+            format!("chmod 0600 {base}/keys/executor.key"),
+            json!({}),
+            Start::Launcher,
+        ),
+        (
+            "state key group-readable",
+            "PROTECTED_PATH",
+            format!("chmod 0640 {base}/keys/state.key"),
+            format!("chmod 0600 {base}/keys/state.key"),
+            json!({}),
+            Start::Launcher,
+        ),
+        (
+            "key under a directory others can write",
+            "PROTECTED_PATH",
+            format!("chmod 0777 {base}/keys"),
+            format!("chmod 0700 {base}/keys"),
+            json!({}),
+            Start::Launcher,
+        ),
+        (
+            "state directory open",
+            "PROTECTED_PATH",
+            format!("chmod 0755 {base}/state"),
+            format!("chmod 0700 {base}/state"),
+            json!({}),
+            Start::Launcher,
+        ),
+        (
+            "artifact directory open",
+            "PROTECTED_PATH",
+            format!("chmod 0755 {base}/artifacts"),
+            format!("chmod 0700 {base}/artifacts"),
+            json!({}),
+            Start::Launcher,
+        ),
+        (
+            "work directory of the wrong group",
+            "WORK_DIR",
+            format!("chgrp {provider} {base}/work"),
+            format!("chgrp {runner} {base}/work && chmod 2750 {base}/work"),
+            json!({}),
+            Start::Launcher,
+        ),
+        (
+            "runner is root",
+            "RUNNER_IDENTITY",
+            "true".to_owned(),
+            "true".to_owned(),
+            json!({"runner_uid": 0}),
+            Start::Launcher,
+        ),
+        (
+            "runner is the service's account",
+            "RUNNER_IDENTITY",
+            "true".to_owned(),
+            "true".to_owned(),
+            json!({"runner_uid": provider}),
+            Start::Launcher,
+        ),
+        (
+            "cgroup missing",
+            "CGROUP_UNAVAILABLE",
+            "true".to_owned(),
+            "true".to_owned(),
+            json!({"cgroup_root": "/sys/fs/cgroup/mbongo-absent"}),
+            Start::Launcher,
+        ),
+        (
+            "memory controller not delegated",
+            "CGROUP_UNAVAILABLE",
+            format!("echo -memory > {root}/cgroup.subtree_control"),
+            format!("echo +memory > {root}/cgroup.subtree_control"),
+            json!({}),
+            Start::Launcher,
+        ),
+        (
+            "no capability to change identity",
+            "SPAWN_DENIED",
+            "true".to_owned(),
+            "true".to_owned(),
+            json!({}),
+            Start::NoCapabilities,
+        ),
+        (
+            "service running as root",
+            "SERVICE_IDENTITY",
+            "true".to_owned(),
+            "true".to_owned(),
+            json!({}),
+            Start::AsRoot,
+        ),
+        (
+            "identity probe reports the wrong account",
+            "PROBE_IDENTITY",
+            "true".to_owned(),
+            "true".to_owned(),
+            json!({}),
+            Start::BrokenProbe("cat", "echo 'Uid: 0 0 0 0'"),
+        ),
+        (
+            "descriptor probe finds an inherited descriptor",
+            "PROBE_DESCRIPTORS",
+            "true".to_owned(),
+            "true".to_owned(),
+            json!({}),
+            Start::BrokenProbe("ls", "echo 0 1 2 3 9"),
+        ),
+        (
+            "kill probe sees a process end by itself",
+            "PROBE_KILL",
+            "true".to_owned(),
+            "true".to_owned(),
+            json!({}),
+            Start::BrokenProbe("sleep", "exit 0"),
+        ),
+        (
+            "a protected path the runner can read",
+            "PROBE_READABLE",
+            "true".to_owned(),
+            "true".to_owned(),
+            json!({"denied_paths": ["/etc/passwd"]}),
+            Start::Launcher,
+        ),
+        (
+            "a protected path that does not exist",
+            "PROBE_INCONCLUSIVE",
+            "true".to_owned(),
+            "true".to_owned(),
+            json!({"denied_paths": ["/nonexistent/mbongo"]}),
+            Start::Launcher,
+        ),
+    ];
+    if cases.len() != REFUSALS {
+        return Err(format!(
+            "expected {REFUSALS} refusal cases, found {}",
+            cases.len()
+        ));
+    }
+    let file = c.base.join("refused.json");
+    for (name, code, breaks, restores, patch, start) in &cases {
+        let mut broken = config.clone();
+        for (key, value) in patch.as_object().ok_or("patch")? {
+            broken["isolation"][key] = value.clone();
+        }
+        std::fs::write(&file, broken.to_string()).map_err(|e| e.to_string())?;
+        shell(breaks)?;
+        let enter = format!("echo $$ > {root}/service/cgroup.procs; umask 027");
+        let (service, shown) = (c.service.display(), file.display());
+        let mut command = match start {
+            Start::Launcher => service_command(Some(c), &file),
+            Start::NoCapabilities => {
+                let mut command = Command::new("sh");
+                command.arg("-c").arg(format!(
+                    "{enter}; exec setpriv --reuid={provider} --regid={provider} --clear-groups \
+                     {service} --config {shown}"
+                ));
+                command
+            }
+            Start::AsRoot => {
+                let mut command = Command::new("sh");
+                command.arg("-c").arg(format!("{enter}; exec {service} --config {shown}"));
+                command
+            }
+            Start::BrokenProbe(tool, body) => {
+                let fake = c.base.join("bin").join(format!("broken-{tool}"));
+                std::fs::write(&fake, format!("#!/bin/sh\n{body}\n")).map_err(|e| e.to_string())?;
+                shell(&format!("chmod 0755 {}", fake.display()))?;
+                let mut command = Command::new("unshare");
+                command.args(["-m", "sh", "-c"]).arg(format!(
+                    "mount --bind {} /bin/{tool} && exec bash {} run {base} {service} {shown}",
+                    fake.display(),
+                    c.launcher.display(),
+                ));
+                command
+            }
+        };
+        let run = command.output().map_err(|e| e.to_string());
+        shell(restores)?;
+        let run = run?;
+        let err = String::from_utf8_lossy(&run.stderr);
+        if run.status.success() || !err.contains(&format!("ISOLATION_REFUSED={code}")) {
+            return Err(format!("{name}: {} {}", run.status, err.trim()));
+        }
+        println!("  refused, {name}: {code}");
+    }
+    let (groups, pids) = c.job_processes()?;
+    if groups != 0 || !pids.is_empty() {
+        return Err(format!(
+            "refused starts left {groups} job cgroups: {pids:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// The service is what the launcher promised, and says so.
+async fn prove_service_identity(
+    c: &Contained,
+    stack: &Stack,
+    service_pid: u32,
+    log: &Path,
+) -> Result<(), String> {
+    let status = std::fs::read_to_string(format!("/proc/{service_pid}/status"))
+        .map_err(|e| e.to_string())?;
+    let field = |name: &str| {
+        status
+            .lines()
+            .find_map(|l| l.strip_prefix(name)?.strip_prefix(':'))
+            .map_or("", str::trim)
+    };
+    let uids: Vec<&str> = field("Uid").split_whitespace().collect();
+    let expected = c.provider_uid.to_string();
+    if uids.len() != 4 || uids.iter().any(|u| *u != expected) {
+        return Err(format!("service uid: {uids:?}"));
+    }
+    for name in ["CapEff", "CapPrm", "CapAmb", "CapBnd"] {
+        if field(name) != SERVICE_CAPABILITIES {
+            return Err(format!("service {name}: {}", field(name)));
+        }
+    }
+    if field("NoNewPrivs") != "1" {
+        return Err("the service can gain privileges".to_owned());
+    }
+    let text = std::fs::read_to_string(log).unwrap_or_default();
+    for line in [
+        format!("ISOLATION_PROBE_PATHS={PROBED_PATHS}"),
+        "KEY_ISOLATION_ENFORCED=YES".to_owned(),
+        "MEMORY_LIMIT_ENFORCED=YES".to_owned(),
+    ] {
+        if !text.lines().any(|l| l == line) {
+            return Err(format!("the provider did not print {line}"));
+        }
+    }
+    let capabilities: Value = reqwest::get(format!("{}/v1/capabilities", stack.provider))
+        .await
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+    if capabilities["key_isolation_enforced"] != true
+        || capabilities["memory_limit_enforced"] != true
+    {
+        return Err(format!("capabilities: {capabilities}"));
+    }
+    println!("  service: uid {expected}, setuid and setgid only, probed {PROBED_PATHS} paths");
+    Ok(())
+}
+
+/// A compromised runner, through the real job path, tries what it must not.
+fn prove_attack(c: &Contained, stack: &Stack, service_pid: u32) -> Result<(), String> {
+    let base = &c.base;
+    let targets = [
+        base.join("keys/executor.key"),
+        base.join("keys/state.key"),
+        base.join("state/provider-state.journal"),
+        base.join("state/provider-state.lock"),
+    ];
+    let spec = fixture_spec(
+        json!({
+            "mode": "attack",
+            "targets": targets,
+            "service_pid": service_pid,
+            "cgroup_root": c.cgroup,
+        }),
+        65_536,
+        json!({"max_wall_ms": 10_000, "max_memory_mib": 256}),
+    )?;
+    let output = verified_output(stack, "attack", &spec)?;
+    let r: Value = serde_json::from_slice(&output).map_err(|e| e.to_string())?;
+    for action in ["read", "write", "unlink"] {
+        let found = r[action].as_array().ok_or(format!("no {action} results"))?;
+        if found.len() != targets.len() || found.iter().any(|v| v != "EACCES") {
+            return Err(format!("{action}: {found:?}"));
+        }
+    }
+    let expected = [
+        ("/service/environ", "EACCES"),
+        ("/service/mem", "EACCES"),
+        ("/service/signal", "EPERM"),
+        ("/cgroup/into_parent", "EACCES"),
+        ("/cgroup/into_service", "EACCES"),
+        ("/cgroup/raise_memory", "EACCES"),
+        ("/cgroup/new_child", "EACCES"),
+        ("/setuid_root", "EPERM"),
+        ("/job_dir_write", "EACCES"),
+        // The control: the same process, the same call, on what it may read.
+        ("/job_spec", "OK"),
+    ];
+    for (pointer, outcome) in expected {
+        if r.pointer(pointer).and_then(Value::as_str) != Some(outcome) {
+            return Err(format!("{pointer}: {:?}", r.pointer(pointer)));
+        }
+    }
+    let ids = |id: u32| vec![id.to_string(); 4].join(" ");
+    let identity = &r["identity"];
+    if identity["uid"] != ids(c.runner_uid).as_str()
+        || identity["gid"] != ids(c.runner_gid).as_str()
+        || identity["groups"] != ""
+        || identity["no_new_privs"] != "1"
+        || identity["session_leader"] != "YES"
+    {
+        return Err(format!("runner identity: {identity}"));
+    }
+    for name in ["cap_eff", "cap_prm", "cap_inh", "cap_amb"] {
+        if identity[name] != NO_CAPABILITIES {
+            return Err(format!("runner {name}: {identity}"));
+        }
+    }
+    if !identity["cgroup"].as_str().unwrap_or_default().contains("/job-") {
+        return Err(format!("runner cgroup: {identity}"));
+    }
+
+    // What the service holds open, read from the outside, while it holds it.
+    let held: Vec<String> = std::fs::read_dir(format!("/proc/{service_pid}/fd"))
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .filter_map(|e| std::fs::read_link(e.path()).ok())
+        .map(|p| p.display().to_string())
+        .filter(|p| p.starts_with("socket:") || p.starts_with(&base.display().to_string()))
+        .collect();
+    let sockets = held.iter().filter(|p| p.starts_with("socket:")).count();
+    if sockets == 0 || !held.iter().any(|p| p.ends_with("provider-state.lock")) {
+        return Err(format!("the service holds no listener or lock: {held:?}"));
+    }
+    let inherited = r["descriptors"].as_array().ok_or("no descriptors")?;
+    if inherited.is_empty() || inherited.iter().any(|d| held.iter().any(|h| d == h.as_str())) {
+        return Err(format!("the runner inherited: {inherited:?} of {held:?}"));
+    }
+    println!(
+        "  attack: {} paths x read, write, unlink denied; {} further attempts as expected",
+        targets.len(),
+        expected.len(),
+    );
+    println!(
+        "  descriptors: none of the service's {} sockets and files reached the runner",
+        held.len()
+    );
+    Ok(())
+}
+
+/// A descendant in its own session dies with its job, whether the parent
+/// exits by itself or is killed at the deadline.
+async fn prove_descendants(c: &Contained, stack: &Stack) -> Result<(), String> {
+    for hang in [false, true] {
+        let name = if hang {
+            "killed-parent"
+        } else {
+            "exited-parent"
+        };
+        let heartbeat = c.scratch.join(format!("{name}.heartbeat"));
+        let spec = fixture_spec(
+            json!({"mode": "daemon", "heartbeat": heartbeat, "hang": u8::from(hang)}),
+            1_024,
+            json!({"max_wall_ms": if hang { 4_000 } else { 20_000 }, "max_memory_mib": 256}),
+        )?;
+        if hang {
+            refused_job(stack, name, &spec, "JOB_LIMIT_WALL_TIME")?;
+        } else {
+            let output = verified_output(stack, name, &spec)?;
+            let r: Value = serde_json::from_slice(&output).map_err(|e| e.to_string())?;
+            if r["descendant_session"] == r["own_session"] {
+                return Err(format!("the descendant did not detach: {r}"));
+            }
+        }
+        let beats = std::fs::read_to_string(&heartbeat).map_err(|e| e.to_string())?;
+        let count = beats.lines().count();
+        let pid = beats.lines().next().ok_or("no heartbeat")?.to_owned();
+        if count < 3 {
+            return Err(format!("{name}: {count} heartbeats"));
+        }
+        // At the deadline the failure is reported up to `KILL_GRACE` before the
+        // kill, so the count only settles once the process is gone.
+        gone(&pid).await?;
+        let settled = std::fs::read_to_string(&heartbeat).map_err(|e| e.to_string())?;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let after = std::fs::read_to_string(&heartbeat).map_err(|e| e.to_string())?;
+        if after != settled {
+            return Err(format!("{name}: the heartbeat continued"));
+        }
+        println!("  {name}: descendant alive for {count} heartbeats, then dead");
+    }
+    Ok(())
+}
+
+/// A job that forks without end stops at the limit, and takes nothing with it.
+/// A runner cannot read its own cgroup, so the counters are read from outside.
+async fn prove_process_limit(c: &Contained, stack: &Stack) -> Result<(), String> {
+    let attempts = MAX_PIDS * 3;
+    let marker = c.scratch.join("forks.done");
+    let spec = fixture_spec(
+        json!({
+            "mode": "fork",
+            "attempts": attempts,
+            "counter": c.scratch.join("forks"),
+            "marker": marker,
+            "hold_ms": 2_000,
+        }),
+        1_024,
+        json!({"max_wall_ms": 20_000, "max_memory_mib": 256}),
+    )?;
+    let mut client = stack.client_command("fork", &spec, b"[1]")?;
+    let client = client
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let waiting = Instant::now();
+    while !marker.exists() {
+        if waiting.elapsed() > Duration::from_secs(60) {
+            return Err("the forking job never finished forking".to_owned());
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let (limit, current, events) = (
+        c.job_file("pids.max")?,
+        c.job_file("pids.current")?,
+        c.job_file("pids.events")?,
+    );
+    let limit: u64 = limit.trim().parse().map_err(|_| format!("pids.max: {limit}"))?;
+    let current: u64 = current.trim().parse().map_err(|_| format!("pids.current: {current}"))?;
+    let denied = events
+        .lines()
+        .find_map(|l| l.strip_prefix("max "))
+        .and_then(|n| n.parse::<u64>().ok())
+        .ok_or(format!("pids.events: {events}"))?;
+    if limit != MAX_PIDS || current > limit || current * 2 < limit || denied == 0 {
+        return Err(format!("limit {limit}, current {current}, denied {denied}"));
+    }
+    let run = client.wait_with_output().map_err(|e| e.to_string())?;
+    let report: Value = serde_json::from_slice(&run.stdout)
+        .map_err(|_| format!("fork: {}", String::from_utf8_lossy(&run.stderr).trim()))?;
+    let output =
+        hex::decode(report["output"].as_str().ok_or("output")?).map_err(|e| e.to_string())?;
+    let result: Value = serde_json::from_slice(&output).map_err(|e| e.to_string())?;
+    let forked = result["started"].as_u64().ok_or(format!("fork: {result}"))?;
+    if !run.status.success() || report["technical_level"] != "T1" || forked >= attempts {
+        return Err(format!("fork: {report}"));
+    }
+    let started = Instant::now();
+    loop {
+        let (groups, pids) = c.job_processes()?;
+        if groups == 0 && pids.is_empty() {
+            break;
+        }
+        if started.elapsed() > Duration::from_secs(5) {
+            return Err(format!("{} processes outlived the job", pids.len()));
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    println!(
+        "  {attempts} attempts under pids.max {limit}: {forked} forked, {current} running, \
+         {denied} denied, none left"
+    );
+    Ok(())
+}
+
+/// `SIGTERM` with a job running: the service takes the job's whole tree down
+/// and exits cleanly. The next start runs the task again, to a verified result.
+async fn prove_sigterm(
+    stack: &Stack,
+    provider: &mut Process,
+    log: &Path,
+    config_file: &Path,
+    config: &Value,
+) -> Result<(), String> {
+    let c = stack.contained.as_ref().ok_or("not contained")?;
+    let heartbeat = c.scratch.join("sigterm.heartbeat");
+    let spec = fixture_spec(
+        json!({"mode": "daemon", "heartbeat": heartbeat, "hold_ms": 6_000}),
+        1_024,
+        json!({"max_wall_ms": 30_000, "max_memory_mib": 256}),
+    )?;
+    let mut client = stack.client_command("sigterm", &spec, b"[1]")?;
+    let client = client
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let started = Instant::now();
+    let lines = || std::fs::read_to_string(&heartbeat).map_or(0, |b| b.lines().count());
+    while lines() < 3 {
+        if started.elapsed() > Duration::from_secs(60) {
+            return Err("the job never started".to_owned());
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let (groups, pids) = c.job_processes()?;
+    if groups != 1 || pids.len() < 2 {
+        return Err(format!(
+            "expected a runner and a descendant: {groups} {pids:?}"
+        ));
+    }
+    shell(&format!("kill -TERM {}", provider.0.id()))?;
+    let status = loop {
+        if let Some(status) = provider.0.try_wait().map_err(|e| e.to_string())? {
+            break status;
+        }
+        if started.elapsed() > Duration::from_secs(90) {
+            return Err("the service did not stop".to_owned());
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    if !status.success() {
+        return Err(format!("the service stopped with {status}"));
+    }
+    let stopped = std::fs::read_to_string(log).unwrap_or_default();
+    if !stopped.lines().any(|l| l == "SHUTDOWN_JOBS_KILLED=1") {
+        return Err("the service did not report the job it killed".to_owned());
+    }
+    for pid in &pids {
+        gone(pid).await?;
+    }
+    let (groups, left) = c.job_processes()?;
+    if groups != 0 || !left.is_empty() {
+        return Err(format!("left after SIGTERM: {groups} {left:?}"));
+    }
+    println!(
+        "  SIGTERM with a job running: exit 0, {} processes dead, no cgroup left",
+        pids.len()
+    );
+
+    let mut config = config.clone();
+    config["bind"] = json!(stack.provider.trim_start_matches("http://"));
+    std::fs::write(config_file, config.to_string()).map_err(|e| e.to_string())?;
+    *provider = spawn_logged(service_command(Some(c), config_file), log)?;
+    wait_for_bind(log, provider).await?;
+    if !std::fs::read_to_string(log).unwrap_or_default().contains("CONTAINMENT_SWEPT=0") {
+        return Err("SIGTERM left a job for the next start to sweep".to_owned());
+    }
+    let run = client.wait_with_output().map_err(|e| e.to_string())?;
+    let report: Value = serde_json::from_slice(&run.stdout).map_err(|_| {
+        format!(
+            "after SIGTERM: {}",
+            String::from_utf8_lossy(&run.stderr).trim()
+        )
+    })?;
+    if !run.status.success() || report["technical_level"] != "T1" {
+        return Err(format!("after SIGTERM: {report}"));
+    }
+    println!("  restarted: nothing to sweep, the task completed at T1");
+    Ok(())
+}
+
+/// Under the limit it runs. Over it, the kernel kills the job and says so.
+/// A spec cannot lift the provider's ceiling.
+fn prove_memory(c: &Contained, stack: &Stack, log: &Path) -> Result<(), String> {
+    let cause_logged = || {
+        std::fs::read_to_string(log)
+            .unwrap_or_default()
+            .contains("memory limit reached")
+    };
+    let job = |limit: u64, mib: u64| {
+        fixture_spec(
+            json!({"mode": "alloc", "mib": mib}),
+            64,
+            json!({"max_wall_ms": 20_000, "max_memory_mib": limit}),
+        )
+    };
+    let before = c.oom_kills()?;
+    let output = verified_output(stack, "under-limit", &job(256, 64)?)?;
+    if output != b"{\"count\":1,\"sum\":1}" || c.oom_kills()? != before {
+        return Err("a job under its limit was disturbed".to_owned());
+    }
+    if cause_logged() {
+        return Err("an out-of-memory cause logged with none".to_owned());
+    }
+    println!("  64 MiB under a 256 MiB limit: verified at T1, no OOM kill");
+    refused_job(stack, "over-limit", &job(128, 512)?, "JOB_RUNTIME_FAILED")?;
+    let after = c.oom_kills()?;
+    if after <= before {
+        return Err("the job failed, but not by the memory limit".to_owned());
+    }
+    if !cause_logged() {
+        return Err("the out-of-memory cause was not recorded".to_owned());
+    }
+    println!("  512 MiB under a 128 MiB limit: killed, oom_kill {before} -> {after}");
+    let huge = 1 << 20;
+    refused_job(
+        stack,
+        "over-ceiling",
+        &job(huge, 1_024)?,
+        "JOB_RUNTIME_FAILED",
+    )?;
+    let last = c.oom_kills()?;
+    if last <= after {
+        return Err("a spec lifted the provider's ceiling".to_owned());
+    }
+    println!(
+        "  1 GiB under a declared 1 TiB, ceiling {MEMORY_CEILING_MIB} MiB: killed, \
+         oom_kill {after} -> {last}"
+    );
+    Ok(())
+}
+
 async fn wait_for_node(chain: &RpcChainClient) -> Result<(), String> {
     for _ in 0..100 {
         if chain.latest_height().await.is_ok() {
@@ -356,9 +1200,15 @@ async fn wait_for_bind(log: &Path, provider: &mut Process) -> Result<String, Str
     Err("provider did not start".to_owned())
 }
 
-async fn run(base: &Path) -> Result<(), String> {
+async fn run(base: &Path, contain: bool) -> Result<(), String> {
     std::fs::create_dir_all(base.join("artifacts")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(base.join("keys")).map_err(|e| e.to_string())?;
     report_time_wait();
+    let contained = if contain {
+        Some(Contained::set_up(base)?)
+    } else {
+        None
+    };
     let node_log = base.join("node.log");
     let provider_log = base.join("provider.log");
     let mut node = Command::new(sibling("mbongo-node"));
@@ -382,9 +1232,9 @@ async fn run(base: &Path) -> Result<(), String> {
 
         std::fs::write(base.join("client.key"), hex::encode(CLIENT_SEED))
             .map_err(|e| e.to_string())?;
-        std::fs::write(base.join("executor.key"), hex::encode(EXECUTOR_SEED))
+        std::fs::write(base.join("keys/executor.key"), hex::encode(EXECUTOR_SEED))
             .map_err(|e| e.to_string())?;
-        std::fs::write(base.join("state.key"), hex::encode([0x57u8; 32]))
+        std::fs::write(base.join("keys/state.key"), hex::encode([0x57u8; 32]))
             .map_err(|e| e.to_string())?;
         let vectors: Value = serde_json::from_slice(
             &std::fs::read(repo_root().join("test-vectors/job/job-contract-v1.json"))
@@ -396,16 +1246,34 @@ async fn run(base: &Path) -> Result<(), String> {
         let sha = vectors["specs"][0]["spec"]["artifacts"][0]["sha256"].as_str().ok_or("sha256")?;
         std::fs::write(base.join("artifacts").join(sha), table).map_err(|e| e.to_string())?;
 
-        let fixture = repo_root().join("scripts/fixtures/mbongo-runner-fixture.mjs");
+        let fixture = match &contained {
+            Some(c) => {
+                c.prepare()?;
+                base.join("bin/mbongo-runner-fixture.mjs")
+            }
+            None => repo_root().join("scripts/fixtures/mbongo-runner-fixture.mjs"),
+        };
+        let isolation = match &contained {
+            Some(c) => json!({
+                "mode": "required",
+                "runner_uid": c.runner_uid,
+                "runner_gid": c.runner_gid,
+                "cgroup_root": c.cgroup,
+                "max_memory_mib": MEMORY_CEILING_MIB,
+                "max_pids": MAX_PIDS,
+            }),
+            None => json!({"mode": "none"}),
+        };
         let config = json!({
             "bind": "127.0.0.1:0",
             "rpc_url": format!("http://127.0.0.1:{RPC_PORT}/rpc"),
             "rest_url": format!("http://127.0.0.1:{REST_PORT}"),
-            "executor_key_file": base.join("executor.key"),
+            "executor_key_file": base.join("keys/executor.key"),
             "state_dir": base.join("state"),
-            "state_key_file": base.join("state.key"),
+            "state_key_file": base.join("keys/state.key"),
             "artifact_dir": base.join("artifacts"),
             "work_dir": base.join("work"),
+            "isolation": isolation,
             "runtimes": [{
                 "family": "test-fixture",
                 "revision": "1",
@@ -417,8 +1285,10 @@ async fn run(base: &Path) -> Result<(), String> {
         });
         let config_file = base.join("provider.json");
         std::fs::write(&config_file, config.to_string()).map_err(|e| e.to_string())?;
-        let mut command = Command::new(sibling("provider_service"));
-        command.arg("--config").arg(&config_file);
+        if let Some(c) = &contained {
+            prove_refusals(c, &config)?;
+        }
+        let command = service_command(contained.as_ref(), &config_file);
         let mut provider = spawn_logged(command, &provider_log)?;
         let url = wait_for_bind(&provider_log, &mut provider).await?;
         println!("  provider service up at {url}");
@@ -426,10 +1296,22 @@ async fn run(base: &Path) -> Result<(), String> {
             base: base.to_path_buf(),
             provider: url,
             executor: hex::encode(executor.address().0),
+            contained,
         };
+        if let Some(c) = &stack.contained {
+            let pid = provider.0.id();
+            prove_service_identity(c, &stack, pid, &provider_log).await?;
+            prove_attack(c, &stack, pid)?;
+            prove_descendants(c, &stack).await?;
+            prove_memory(c, &stack, &provider_log)?;
+            prove_process_limit(c, &stack).await?;
+        }
         prove_vectors(&stack, &chain).await?;
         prove_failure(&stack)?;
-        prove_exclusive_state(&config_file, base)?;
+        prove_exclusive_state(&stack, &config_file)?;
+        if stack.contained.is_some() {
+            prove_sigterm(&stack, &mut provider, &provider_log, &config_file, &config).await?;
+        }
         prove_crash_recovery(&stack, &mut provider, &provider_log, &config_file, config).await
     }
     .await;
@@ -444,15 +1326,21 @@ async fn run(base: &Path) -> Result<(), String> {
 
 #[tokio::main]
 async fn main() {
+    let contain = std::env::args().any(|a| a == "--contained");
+    let title = if contain {
+        "PROVIDER CONTAINMENT"
+    } else {
+        "PROVIDER FLOW"
+    };
     let base = std::env::temp_dir().join("mbongo_provider_harness");
     let _ = std::fs::remove_dir_all(&base);
-    println!("=== Provider Flow Harness ===\n");
-    let result = run(&base).await;
+    println!("=== {title} ===\n");
+    let result = run(&base, contain).await;
     let _ = std::fs::remove_dir_all(&base);
     match result {
-        Ok(()) => println!("\nPROVIDER FLOW: PASS"),
+        Ok(()) => println!("\n{title}: PASS"),
         Err(e) => {
-            eprintln!("\nPROVIDER FLOW: FAIL\n  Error: {e}");
+            eprintln!("\n{title}: FAIL\n  Error: {e}");
             std::process::exit(1);
         }
     }

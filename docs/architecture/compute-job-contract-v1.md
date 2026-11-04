@@ -22,7 +22,7 @@ Every field is required, and any unknown field is refused.
 | `runtime` | `family`, `revision`, `accelerator_class`, and optional `binary_sha256` |
 | `artifacts[]` | `role` (unique), `sha256` (lowercase hex), `size_bytes` |
 | `input`, `output` | `type` (`bytes` or `canonical-json`), `max_bytes` |
-| `limits` | `max_wall_ms`, enforced. `max_memory_mib`, **declared, not enforced** in v1 |
+| `limits` | `max_wall_ms`, enforced. `max_memory_mib`, **declared, not enforced** in v1 Under Linux containment a provider enforces it, capped by its own ceiling ([`PROVIDER_CONTAINMENT_LINUX.md`](../runbooks/PROVIDER_CONTAINMENT_LINUX.md)). |
 | `determinism` | `BIT_EXACT`, `BIT_EXACT_PINNED`, `TOLERANCE`, `NON_DETERMINISTIC` |
 | `confidentiality` | One or more of `PUBLIC`, `VERIFIED`, `CONFIDENTIAL`, `SOVEREIGN` |
 | `params` | An object. **Opaque**; passed to the adapter |
