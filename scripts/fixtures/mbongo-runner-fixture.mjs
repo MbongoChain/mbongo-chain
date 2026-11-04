@@ -75,6 +75,11 @@ switch (params.mode) {
       fs.appendFileSync(params.heartbeat, "x");
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
     }
+  case "slow":
+    fs.appendFileSync(params.marker, "started\n");
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, params.delay_ms);
+    respond(compute(input));
+    break;
   case "report":
     respond(Buffer.from(JSON.stringify({
       env: Object.keys(process.env).sort(),

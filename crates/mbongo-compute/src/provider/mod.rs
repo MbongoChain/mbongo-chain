@@ -7,10 +7,16 @@
 //!
 //! **Limits.** Runtime identity, capability declarations and metering are
 //! untrusted. The process boundary gives interoperability, not isolation, and
-//! no key isolation is claimed ([`service::KEY_ISOLATION_ENFORCED`]). State is
-//! in memory and lost on restart.
+//! no key isolation is claimed ([`service::KEY_ISOLATION_ENFORCED`]).
+//!
+//! **Durability.** Accepted requests, job specs, inputs, task status and
+//! results survive a restart ([`durable`], [`journal`]). At most one receipt
+//! per task; exactly-once execution of an external runtime is not claimed.
 
 pub mod auth;
 pub mod client;
+pub mod durable;
+pub mod journal;
+pub mod lock;
 pub mod runner;
 pub mod service;
