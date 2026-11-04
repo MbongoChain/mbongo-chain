@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | **CANDIDATE — NOT READY FOR MERGE.** Acceptance criterion A4 failed on the real client path: all 3 held-out benign controls were flagged (§3). No merge approval is requested for this revision. |
+| **Status** | **CANDIDATE, REVISION 2 — NOT READY FOR MERGE.** On an independent held-out corpus the candidate detected 0 of 14 obeyed attacks and flagged 2 more benign CVs (§8). No merge approval is requested. The first revision failed A4 (§3). |
 | **Proposed change control** | CC-5, which would amend the CC-3 safety property's detection rules. It is not adopted. |
 | **Kind** | Security, released-client behaviour (`crates/mbongo-compute/src/mvp/screen.rs`), non-consensus. No profile, protocol, SDK or prompt change |
 | **Date** | 2026-11-03 |
@@ -91,3 +91,12 @@ The held-out corpus has now been seen. Any revised candidate needs a **new held-
 
 - **Before merge.** The rule in #180 §7 G1 applies: stop when any criterion fails. This revision stops at A4.
 - **After any future merge.** Revert the single squash commit if a benign false positive or an adversarial regression is reported. PR #182, the documentation correction, is independent and stays.
+const fs=require("fs");const H=process.env.USERPROFILE+"/mbongo-mvp/sec178/";
+const put=(src,name,note)=>{const r=require(H+src+"/adversarial-report.json");const s=JSON.stringify({$comment:note,...r},null,2)+"\n";if(/Users|\\|seed|_KEY/i.test(s.replace(note,"")))throw new Error("leak? "+name);fs.writeFileSync("docs/product/evidence/sec178/"+name,s);console.log(name,r.rows.length);};
+put("state-rev2-candidate","rev2-candidate-client-path-report.json","#183 revision 2, real devnet client path, candidate source 92642299. Corpora: mvp-e-injection-corpus-v1, mvp-e-unseen-variants-v1, mvp-sec178-adversarial-v1, mvp-sec178-adversarial-v2 (frozen held-out), mvp-sec178-benign-regression-v1. pass=false: see docs/security/SEC178_SCREEN_HARDENING.md §8. Synthetic data only; no CV text in this file.");
+put("state-rev2-released","rev2-released-client-path-report.json","#183 revision 2, real devnet client path, RELEASED code: source 5569efa0 (crates tree = mvp-v0.1.0). Corpora: mvp-sec178-adversarial-v2 (frozen held-out), mvp-sec178-benign-regression-v1. pass=false is the expected finding for released code. Synthetic data only; no CV text in this file.");
+const f="docs/security/SEC178_SCREEN_HARDENING.md";let s=fs.readFileSync(f,"utf8");
+const a="| **Status** | **CANDIDATE — NOT READY FOR MERGE.** Acceptance criterion A4 failed on the real client path: all 3 held-out benign controls were flagged (§3). No merge approval is requested for this revision. |";
+if(s.split(a).length!==2)throw new Error("status");
+s=s.replace(a,"| **Status** | **CANDIDATE, REVISION 2 — NOT READY FOR MERGE.** On an independent held-out corpus the candidate detected 0 of 14 obeyed attacks and flagged 2 more benign CVs (§8). No merge approval is requested. The first revision failed A4 (§3). |");
+s=s.trimEnd()+"\n"+fs.readFileSync(process.argv[1],"utf8");fs.writeFileSync(f,s);
