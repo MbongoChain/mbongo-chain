@@ -16,9 +16,10 @@
 //!
 //! Exit code 0 on PASS. Never prints private bytes or keys.
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use mbongo_compute::chain::{find_receipt, scan_tasks, ChainClient, RpcChainClient};
@@ -36,6 +37,7 @@ use mbongo_core::{
     Address, ComputeTask, Receipt, Transaction, TransactionPayload, TransactionType,
     COMPUTE_TASK_VERSION,
 };
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::{Child, Command};
 use tokio::time::sleep;
 
@@ -44,6 +46,11 @@ const REST_PORT: u16 = 41080;
 const P2P_PORT: u16 = 51333;
 const BLOCK_TIME_SECS: u64 = 1;
 const WAIT_SECS: u64 = 90;
+/// Lines of the node's output kept for a start-up failure report.
+const NODE_LOG_TAIL: usize = 40;
+
+/// The last lines the node wrote, stdout and stderr interleaved.
+type NodeLog = Arc<Mutex<VecDeque<String>>>;
 
 fn node_binary_path() -> PathBuf {
     let self_exe = std::env::current_exe().expect("cannot determine own executable path");
@@ -82,15 +89,63 @@ fn spawn_producer(data_dir: &std::path::Path) -> Result<Child, String> {
         .map_err(|e| format!("failed to spawn producer: {e}"))
 }
 
-async fn wait_for_rpc(chain: &RpcChainClient) -> Result<(), String> {
+/// Reads `stream` to its end, keeping the last lines in `log`.
+fn keep_tail(stream: impl AsyncRead + Unpin + Send + 'static, name: &'static str, log: NodeLog) {
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(stream).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            let mut log = log.lock().expect("node log lock");
+            if log.len() == NODE_LOG_TAIL {
+                log.pop_front();
+            }
+            log.push_back(format!("{name}: {line}"));
+        }
+    });
+}
+
+/// Starts reading the node's output. The pipes must be read: unread, they
+/// fill and block the node, and the reason a node died is lost.
+fn read_node_output(producer: &mut Child) -> NodeLog {
+    let log = NodeLog::default();
+    if let Some(stdout) = producer.stdout.take() {
+        keep_tail(stdout, "stdout", Arc::clone(&log));
+    }
+    if let Some(stderr) = producer.stderr.take() {
+        keep_tail(stderr, "stderr", Arc::clone(&log));
+    }
+    log
+}
+
+/// Waits for the RPC to answer. A node that exits fails at once: its status
+/// is the finding, and no amount of waiting brings it back. A node that lives
+/// without an RPC is possible too — it reports a failed bind on stderr and
+/// keeps running — and ends in the timeout.
+async fn wait_for_rpc(chain: &RpcChainClient, producer: &mut Child) -> Result<(), String> {
     sleep(Duration::from_secs(2)).await;
     for _ in 0..50 {
+        if let Some(status) = producer.try_wait().map_err(|e| e.to_string())? {
+            return Err(format!("the node exited before its RPC answered: {status}"));
+        }
         if chain.latest_height().await.is_ok() {
             return Ok(());
         }
         sleep(Duration::from_millis(200)).await;
     }
     Err("timeout waiting for the node's RPC".to_string())
+}
+
+/// A start-up failure with what the node said. Only the start-up path uses
+/// this: no private input exists yet, and the node never holds one.
+async fn with_node_output(error: String, log: &NodeLog) -> String {
+    // The readers may still hold the last lines of a node that just exited.
+    sleep(Duration::from_millis(200)).await;
+    let log = log.lock().expect("node log lock");
+    let lines: Vec<&str> = log.iter().map(String::as_str).collect();
+    format!(
+        "{error}\n  Node output (last {} lines):\n    {}",
+        lines.len(),
+        lines.join("\n    ")
+    )
 }
 
 /// Polls until `pred` over the chain returns `Some`.
@@ -422,9 +477,10 @@ async fn main() {
     let result = match spawn_producer(&data_dir) {
         Err(e) => Err(e),
         Ok(mut producer) => {
-            let r = match wait_for_rpc(&chain).await {
+            let log = read_node_output(&mut producer);
+            let r = match wait_for_rpc(&chain, &mut producer).await {
                 Ok(()) => run(&chain).await,
-                Err(e) => Err(e),
+                Err(e) => Err(with_node_output(e, &log).await),
             };
             let _ = producer.kill().await;
             r
