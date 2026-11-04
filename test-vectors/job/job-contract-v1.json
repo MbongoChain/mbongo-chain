@@ -1,0 +1,153 @@
+{
+ "$comment": "mbongo-job:v1 conformance vectors, computed by scripts/job-vectors.test.mjs, independently of the Rust code. The fixtures test the infrastructure and are not workloads. Synthetic only.",
+ "version": "job-contract-vectors:v1",
+ "table": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae1e8eff6fd040b121920272e353c434a51585f666d747b828990979ea5acb3bac1c8cfd6dde4ebf2f900070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc",
+ "specs": [
+  {
+   "name": "fixture-byte-table",
+   "spec": {
+    "workload": "fixture-byte-table",
+    "runtime": {
+     "family": "test-fixture",
+     "revision": "1",
+     "accelerator_class": "cpu"
+    },
+    "artifacts": [
+     {
+      "role": "table",
+      "sha256": "d9c76fa34978cb9620dab8c3f46bbe075fddc145eb282b39009141f98d0cfe82",
+      "size_bytes": 256
+     }
+    ],
+    "input": {
+     "type": "bytes",
+     "max_bytes": 64
+    },
+    "output": {
+     "type": "bytes",
+     "max_bytes": 64
+    },
+    "limits": {
+     "max_wall_ms": 5000,
+     "max_memory_mib": 16
+    },
+    "determinism": "BIT_EXACT",
+    "confidentiality": [
+     "PUBLIC"
+    ],
+    "params": {}
+   },
+   "canonical": "{\"artifacts\":[{\"role\":\"table\",\"sha256\":\"d9c76fa34978cb9620dab8c3f46bbe075fddc145eb282b39009141f98d0cfe82\",\"size_bytes\":256}],\"confidentiality\":[\"PUBLIC\"],\"determinism\":\"BIT_EXACT\",\"input\":{\"max_bytes\":64,\"type\":\"bytes\"},\"limits\":{\"max_memory_mib\":16,\"max_wall_ms\":5000},\"output\":{\"max_bytes\":64,\"type\":\"bytes\"},\"params\":{},\"runtime\":{\"accelerator_class\":\"cpu\",\"family\":\"test-fixture\",\"revision\":\"1\"},\"workload\":\"fixture-byte-table\"}",
+   "digest": "e4fbb6a7be49de40b82de34ddf876e3be05a48bdf678a2865e467b7b0fe8180f",
+   "execution_spec": "6d626f6e676f2d6a6f623a7631e4fbb6a7be49de40b82de34ddf876e3be05a48bdf678a2865e467b7b0fe8180f"
+  },
+  {
+   "name": "fixture-sum",
+   "spec": {
+    "workload": "fixture-sum",
+    "runtime": {
+     "family": "test-fixture",
+     "revision": "1",
+     "accelerator_class": "cpu"
+    },
+    "artifacts": [],
+    "input": {
+     "type": "canonical-json",
+     "max_bytes": 64
+    },
+    "output": {
+     "type": "canonical-json",
+     "max_bytes": 64
+    },
+    "limits": {
+     "max_wall_ms": 5000,
+     "max_memory_mib": 16
+    },
+    "determinism": "BIT_EXACT",
+    "confidentiality": [
+     "PUBLIC"
+    ],
+    "params": {}
+   },
+   "canonical": "{\"artifacts\":[],\"confidentiality\":[\"PUBLIC\"],\"determinism\":\"BIT_EXACT\",\"input\":{\"max_bytes\":64,\"type\":\"canonical-json\"},\"limits\":{\"max_memory_mib\":16,\"max_wall_ms\":5000},\"output\":{\"max_bytes\":64,\"type\":\"canonical-json\"},\"params\":{},\"runtime\":{\"accelerator_class\":\"cpu\",\"family\":\"test-fixture\",\"revision\":\"1\"},\"workload\":\"fixture-sum\"}",
+   "digest": "b1a6b4fd8eb84d9a2c5772a8bd2eb6455208ccb39ec46b6201125190c9f5ccdb",
+   "execution_spec": "6d626f6e676f2d6a6f623a7631b1a6b4fd8eb84d9a2c5772a8bd2eb6455208ccb39ec46b6201125190c9f5ccdb"
+  },
+  {
+   "name": "fixture-future-runtime",
+   "spec": {
+    "workload": "fixture-future-runtime",
+    "runtime": {
+     "family": "test-future",
+     "revision": "1",
+     "accelerator_class": "gpu:test"
+    },
+    "artifacts": [],
+    "input": {
+     "type": "canonical-json",
+     "max_bytes": 64
+    },
+    "output": {
+     "type": "canonical-json",
+     "max_bytes": 64
+    },
+    "limits": {
+     "max_wall_ms": 5000,
+     "max_memory_mib": 16
+    },
+    "determinism": "TOLERANCE",
+    "confidentiality": [
+     "PUBLIC"
+    ],
+    "params": {}
+   },
+   "canonical": "{\"artifacts\":[],\"confidentiality\":[\"PUBLIC\"],\"determinism\":\"TOLERANCE\",\"input\":{\"max_bytes\":64,\"type\":\"canonical-json\"},\"limits\":{\"max_memory_mib\":16,\"max_wall_ms\":5000},\"output\":{\"max_bytes\":64,\"type\":\"canonical-json\"},\"params\":{},\"runtime\":{\"accelerator_class\":\"gpu:test\",\"family\":\"test-future\",\"revision\":\"1\"},\"workload\":\"fixture-future-runtime\"}",
+   "digest": "8df9882b647db28cbdf2381811670cea2d1247dbe583b8a0f8f3f5837492f0de",
+   "execution_spec": "6d626f6e676f2d6a6f623a76318df9882b647db28cbdf2381811670cea2d1247dbe583b8a0f8f3f5837492f0de"
+  }
+ ],
+ "cases": [
+  {
+   "workload": "fixture-byte-table",
+   "input": "",
+   "output": "",
+   "input_commitment": "bdd503418af6765544042c4c668d082f186d9628e5e46c1cee5644a8785b658c",
+   "output_commitment": "b2e80c4e6e02e1814c0201c0c382042a1b01e1c6acb7ab04d110797044afdf70"
+  },
+  {
+   "workload": "fixture-byte-table",
+   "input": "000102ff",
+   "output": "030a11fc",
+   "input_commitment": "27b56a585e9d46b4290ff04c782c4664966e69c8ceff5770233985b1e123d463",
+   "output_commitment": "cb034d3b4abae06847bee4f13f0622e4fcd59826a1dfc22e6e89b49932b8692a"
+  },
+  {
+   "workload": "fixture-byte-table",
+   "input": "6d626f6e676f",
+   "output": "feb10c05d40c",
+   "input_commitment": "698f46c318452ad5dcf6f712290009ea5d22443aafd430d7a7896189b0f856fa",
+   "output_commitment": "1b3f00e6506ae72688e5c21aab25499ad7c46c4c9a5a2369c6ecd01fac921005"
+  },
+  {
+   "workload": "fixture-sum",
+   "input": "5b5d",
+   "output": "7b22636f756e74223a302c2273756d223a307d",
+   "input_commitment": "546c675e1f2f1d666c058085dbf607db55bc1f75aaff51c353143d93c084e030",
+   "output_commitment": "63c1d28f30d2b32ef08f85a927ea2d77392d8d421c9bbfc24363dcab09cfb110"
+  },
+  {
+   "workload": "fixture-sum",
+   "input": "5b375d",
+   "output": "7b22636f756e74223a312c2273756d223a377d",
+   "input_commitment": "0fc47bc24719abee18a2f915ad52e934b9af5f98e08797a2995c28d695c149f4",
+   "output_commitment": "94082813bf761ddad5591ba97f5ccf68594fe7b13cfe4425886b42fceb5ccfed"
+  },
+  {
+   "workload": "fixture-sum",
+   "input": "5b312c322c332c342c355d",
+   "output": "7b22636f756e74223a352c2273756d223a31357d",
+   "input_commitment": "8da510570c9144bc7c3ff35154b334fdc16b7072732db902d50315e4985b38d1",
+   "output_commitment": "c29150c37cf59cb968462849ff48053d8da57fd2f56a28a0da8fe73cea3b3da0"
+  }
+ ]
+}

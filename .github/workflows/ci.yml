@@ -463,6 +463,10 @@ jobs:
         run: npm test
         working-directory: sdk/typescript
 
+      # mbongo-job:v1 vectors, recomputed independently of the Rust code.
+      - name: Job contract vectors
+        run: node --test scripts/job-vectors.test.mjs
+
       # Packs the SDK and installs the resulting tarball into a throwaway
       # project outside the repository, then imports it by package name from
       # both JavaScript and TypeScript. This is the gate that would catch a
