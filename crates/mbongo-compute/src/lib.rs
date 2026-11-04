@@ -68,4 +68,5 @@ pub mod job;
 pub mod mvp;
 pub mod policy;
 pub mod profiles;
+pub mod provider;
 pub mod worker;

@@ -80,6 +80,18 @@ name = "mvp_injection_harness"
 path = "src/bin/mvp_injection_harness.rs"
 
 [[bin]]
+name = "provider_service"
+path = "src/bin/provider_service.rs"
+
+[[bin]]
+name = "job_client"
+path = "src/bin/job_client.rs"
+
+[[bin]]
+name = "provider_harness"
+path = "src/bin/provider_harness.rs"
+
+[[bin]]
 name = "mvp_service"
 path = "src/bin/mvp_service.rs"
 
