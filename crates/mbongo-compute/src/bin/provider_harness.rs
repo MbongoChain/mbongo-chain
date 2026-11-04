@@ -29,8 +29,10 @@ const CLIENT_SEED: [u8; 32] = [0xAA; 32];
 const EXECUTOR_SEED: [u8; 32] = [0xE1; 32];
 /// The provider's ceiling on a job's memory, in the contained run.
 const MEMORY_CEILING_MIB: u64 = 512;
+/// Processes and threads in one job, in the contained run.
+const MAX_PIDS: u64 = 256;
 /// Every way a contained start must be refused.
-const REFUSALS: usize = 14;
+const REFUSALS: usize = 17;
 /// Two key files, two directories, the journal, the lock, two `/proc` entries.
 const PROBED_PATHS: u64 = 8;
 const NO_CAPABILITIES: &str = "0000000000000000";
@@ -552,6 +554,9 @@ fn prove_refusals(c: &Contained, config: &Value) -> Result<(), String> {
         Launcher,
         NoCapabilities,
         AsRoot,
+        /// With a probe's tool replaced, in a private mount namespace, by a
+        /// script reporting what a broken deployment would report.
+        BrokenProbe(&'static str, &'static str),
     }
     let base = c.base.display();
     let root = c.cgroup.display();
@@ -654,6 +659,30 @@ fn prove_refusals(c: &Contained, config: &Value) -> Result<(), String> {
             Start::AsRoot,
         ),
         (
+            "identity probe reports the wrong account",
+            "PROBE_IDENTITY",
+            "true".to_owned(),
+            "true".to_owned(),
+            json!({}),
+            Start::BrokenProbe("cat", "echo 'Uid: 0 0 0 0'"),
+        ),
+        (
+            "descriptor probe finds an inherited descriptor",
+            "PROBE_DESCRIPTORS",
+            "true".to_owned(),
+            "true".to_owned(),
+            json!({}),
+            Start::BrokenProbe("ls", "echo 0 1 2 3 9"),
+        ),
+        (
+            "kill probe sees a process end by itself",
+            "PROBE_KILL",
+            "true".to_owned(),
+            "true".to_owned(),
+            json!({}),
+            Start::BrokenProbe("sleep", "exit 0"),
+        ),
+        (
             "a protected path the runner can read",
             "PROBE_READABLE",
             "true".to_owned(),
@@ -699,6 +728,18 @@ fn prove_refusals(c: &Contained, config: &Value) -> Result<(), String> {
             Start::AsRoot => {
                 let mut command = Command::new("sh");
                 command.arg("-c").arg(format!("{enter}; exec {service} --config {shown}"));
+                command
+            }
+            Start::BrokenProbe(tool, body) => {
+                let fake = c.base.join("bin").join(format!("broken-{tool}"));
+                std::fs::write(&fake, format!("#!/bin/sh\n{body}\n")).map_err(|e| e.to_string())?;
+                shell(&format!("chmod 0755 {}", fake.display()))?;
+                let mut command = Command::new("unshare");
+                command.args(["-m", "sh", "-c"]).arg(format!(
+                    "mount --bind {} /bin/{tool} && exec bash {} run {base} {service} {shown}",
+                    fake.display(),
+                    c.launcher.display(),
+                ));
                 command
             }
         };
@@ -909,9 +950,144 @@ async fn prove_descendants(c: &Contained, stack: &Stack) -> Result<(), String> {
     Ok(())
 }
 
+/// A job that forks without end stops at the limit, and takes nothing with it.
+async fn prove_process_limit(c: &Contained, stack: &Stack) -> Result<(), String> {
+    let attempts = MAX_PIDS * 3;
+    let spec = fixture_spec(
+        json!({
+            "mode": "fork",
+            "attempts": attempts,
+            "counter": c.scratch.join("forks"),
+        }),
+        1_024,
+        json!({"max_wall_ms": 20_000, "max_memory_mib": 256}),
+    )?;
+    let output = verified_output(stack, "fork", &spec)?;
+    let r: Value = serde_json::from_slice(&output).map_err(|e| e.to_string())?;
+    let number = |key: &str| r[key].as_str().and_then(|v| v.parse::<u64>().ok());
+    let limit = number("limit").ok_or(format!("limit: {r}"))?;
+    let current = number("current").ok_or(format!("current: {r}"))?;
+    let denied = r["denied"]
+        .as_str()
+        .and_then(|e| e.strip_prefix("max "))
+        .and_then(|n| n.split(' ').next())
+        .and_then(|n| n.parse::<u64>().ok())
+        .ok_or(format!("denied: {r}"))?;
+    if limit != MAX_PIDS || current > limit || current * 2 < limit || denied == 0 {
+        return Err(format!("the process limit did not hold: {r}"));
+    }
+    let started = Instant::now();
+    loop {
+        let (groups, pids) = c.job_processes()?;
+        if groups == 0 && pids.is_empty() {
+            break;
+        }
+        if started.elapsed() > Duration::from_secs(5) {
+            return Err(format!("{} processes outlived the job", pids.len()));
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    println!(
+        "  {attempts} forks under pids.max {limit}: {current} running, {denied} denied, none left"
+    );
+    Ok(())
+}
+
+/// `SIGTERM` with a job running: the service takes the job's whole tree down
+/// and exits cleanly. The next start runs the task again, to a verified result.
+async fn prove_sigterm(
+    stack: &Stack,
+    provider: &mut Process,
+    log: &Path,
+    config_file: &Path,
+    config: &Value,
+) -> Result<(), String> {
+    let c = stack.contained.as_ref().ok_or("not contained")?;
+    let heartbeat = c.scratch.join("sigterm.heartbeat");
+    let spec = fixture_spec(
+        json!({"mode": "daemon", "heartbeat": heartbeat, "hold_ms": 6_000}),
+        1_024,
+        json!({"max_wall_ms": 30_000, "max_memory_mib": 256}),
+    )?;
+    let mut client = stack.client_command("sigterm", &spec, b"[1]")?;
+    let client = client
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let started = Instant::now();
+    let lines = || std::fs::read_to_string(&heartbeat).map_or(0, |b| b.lines().count());
+    while lines() < 3 {
+        if started.elapsed() > Duration::from_secs(60) {
+            return Err("the job never started".to_owned());
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let (groups, pids) = c.job_processes()?;
+    if groups != 1 || pids.len() < 2 {
+        return Err(format!(
+            "expected a runner and a descendant: {groups} {pids:?}"
+        ));
+    }
+    shell(&format!("kill -TERM {}", provider.0.id()))?;
+    let status = loop {
+        if let Some(status) = provider.0.try_wait().map_err(|e| e.to_string())? {
+            break status;
+        }
+        if started.elapsed() > Duration::from_secs(90) {
+            return Err("the service did not stop".to_owned());
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    if !status.success() {
+        return Err(format!("the service stopped with {status}"));
+    }
+    let stopped = std::fs::read_to_string(log).unwrap_or_default();
+    if !stopped.lines().any(|l| l == "SHUTDOWN_JOBS_KILLED=1") {
+        return Err("the service did not report the job it killed".to_owned());
+    }
+    for pid in &pids {
+        gone(pid).await?;
+    }
+    let (groups, left) = c.job_processes()?;
+    if groups != 0 || !left.is_empty() {
+        return Err(format!("left after SIGTERM: {groups} {left:?}"));
+    }
+    println!(
+        "  SIGTERM with a job running: exit 0, {} processes dead, no cgroup left",
+        pids.len()
+    );
+
+    let mut config = config.clone();
+    config["bind"] = json!(stack.provider.trim_start_matches("http://"));
+    std::fs::write(config_file, config.to_string()).map_err(|e| e.to_string())?;
+    *provider = spawn_logged(service_command(Some(c), config_file), log)?;
+    wait_for_bind(log, provider).await?;
+    if !std::fs::read_to_string(log).unwrap_or_default().contains("CONTAINMENT_SWEPT=0") {
+        return Err("SIGTERM left a job for the next start to sweep".to_owned());
+    }
+    let run = client.wait_with_output().map_err(|e| e.to_string())?;
+    let report: Value = serde_json::from_slice(&run.stdout).map_err(|_| {
+        format!(
+            "after SIGTERM: {}",
+            String::from_utf8_lossy(&run.stderr).trim()
+        )
+    })?;
+    if !run.status.success() || report["technical_level"] != "T1" {
+        return Err(format!("after SIGTERM: {report}"));
+    }
+    println!("  restarted: nothing to sweep, the task completed at T1");
+    Ok(())
+}
+
 /// Under the limit it runs. Over it, the kernel kills the job and says so.
 /// A spec cannot lift the provider's ceiling.
-fn prove_memory(c: &Contained, stack: &Stack) -> Result<(), String> {
+fn prove_memory(c: &Contained, stack: &Stack, log: &Path) -> Result<(), String> {
+    let cause_logged = || {
+        std::fs::read_to_string(log)
+            .unwrap_or_default()
+            .contains("memory limit reached")
+    };
     let job = |limit: u64, mib: u64| {
         fixture_spec(
             json!({"mode": "alloc", "mib": mib}),
@@ -924,11 +1100,17 @@ fn prove_memory(c: &Contained, stack: &Stack) -> Result<(), String> {
     if output != b"{\"count\":1,\"sum\":1}" || c.oom_kills()? != before {
         return Err("a job under its limit was disturbed".to_owned());
     }
+    if cause_logged() {
+        return Err("an out-of-memory cause logged with none".to_owned());
+    }
     println!("  64 MiB under a 256 MiB limit: verified at T1, no OOM kill");
     refused_job(stack, "over-limit", &job(128, 512)?, "JOB_RUNTIME_FAILED")?;
     let after = c.oom_kills()?;
     if after <= before {
         return Err("the job failed, but not by the memory limit".to_owned());
+    }
+    if !cause_logged() {
+        return Err("the out-of-memory cause was not recorded".to_owned());
     }
     println!("  512 MiB under a 128 MiB limit: killed, oom_kill {before} -> {after}");
     let huge = 1 << 20;
@@ -1034,7 +1216,7 @@ async fn run(base: &Path, contain: bool) -> Result<(), String> {
                 "runner_gid": c.runner_gid,
                 "cgroup_root": c.cgroup,
                 "max_memory_mib": MEMORY_CEILING_MIB,
-                "max_pids": 256,
+                "max_pids": MAX_PIDS,
             }),
             None => json!({"mode": "none"}),
         };
@@ -1077,11 +1259,15 @@ async fn run(base: &Path, contain: bool) -> Result<(), String> {
             prove_service_identity(c, &stack, pid, &provider_log).await?;
             prove_attack(c, &stack, pid)?;
             prove_descendants(c, &stack).await?;
-            prove_memory(c, &stack)?;
+            prove_memory(c, &stack, &provider_log)?;
+            prove_process_limit(c, &stack).await?;
         }
         prove_vectors(&stack, &chain).await?;
         prove_failure(&stack)?;
         prove_exclusive_state(&stack, &config_file)?;
+        if stack.contained.is_some() {
+            prove_sigterm(&stack, &mut provider, &provider_log, &config_file, &config).await?;
+        }
         prove_crash_recovery(&stack, &mut provider, &provider_log, &config_file, config).await
     }
     .await;

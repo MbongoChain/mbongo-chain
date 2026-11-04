@@ -7,7 +7,8 @@
 //! The configuration names the node, the executor key file, the artifact
 //! directory, the runtimes and the isolation mode, which has no default.
 //! `required` is Linux only and refuses to start unless containment is proven
-//! (`docs/runbooks/PROVIDER_CONTAINMENT_LINUX.md`). `none` isolates nothing.
+//! (`docs/runbooks/PROVIDER_CONTAINMENT_LINUX.md`). `none` isolates nothing,
+//! and is for controlled local testing only.
 //! Remote exposure and TLS are the provider's responsibility.
 
 use std::net::SocketAddr;
@@ -56,7 +57,8 @@ struct RuntimeEntry {
 #[derive(Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 enum Isolation {
-    /// Nothing is isolated, and nothing is claimed.
+    /// Nothing is isolated, and nothing is claimed. For controlled local
+    /// testing only.
     None,
     /// Proven at startup, or the service does not start.
     Required {
@@ -151,6 +153,22 @@ async fn bind(address: SocketAddr) -> Result<tokio::net::TcpListener, String> {
     }
 }
 
+/// Ctrl-C, or `SIGTERM` where there is one.
+async fn stop_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        if let Ok(mut terminate) = signal(SignalKind::terminate()) {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = terminate.recv() => {}
+            }
+            return;
+        }
+    }
+    let _ = tokio::signal::ctrl_c().await;
+}
+
 async fn serve(config: Config) -> Result<(), String> {
     if !config.bind.ip().is_loopback() {
         return Err(format!(
@@ -215,6 +233,9 @@ async fn serve(config: Config) -> Result<(), String> {
     println!("EXECUTOR={}", hex::encode(service.executor().0));
     println!("RUNNER_CONTRACT={RUNNER_CONTRACT}");
     let enforced = if containment.is_some() { "YES" } else { "NO" };
+    if containment.is_none() {
+        log::warn!("provider: isolation is off: for controlled local testing only");
+    }
     println!("KEY_ISOLATION_ENFORCED={enforced}");
     println!("MEMORY_LIMIT_ENFORCED={enforced}");
     println!("STATE=DURABLE");
@@ -230,9 +251,16 @@ async fn serve(config: Config) -> Result<(), String> {
             }
         })
     };
+    let stop_ticking = ticker.abort_handle();
     let result = axum::serve(listener, service.router())
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+        .with_graceful_shutdown(async move {
+            stop_signal().await;
+            stop_ticking.abort();
+            // A job must not outlive the service that bounds it. It stays
+            // unfinished in the journal, and the next start runs it again.
+            if let Some(containment) = containment {
+                println!("SHUTDOWN_JOBS_KILLED={}", containment.stop());
+            }
         })
         .await
         .map_err(|e| format!("serve: {}", e.kind()));

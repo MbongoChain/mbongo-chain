@@ -219,7 +219,10 @@ impl RuntimeAdapter for SubprocessRuntime {
         let dir = self.job_dir(job).map_err(|_| RuntimeFailed)?;
         // Declared after `dir`: what is left in the cgroup dies first.
         let group = match &self.containment {
-            Some(c) => Some(c.job(job.spec.max_memory_mib).map_err(|_| RuntimeFailed)?),
+            Some(c) => {
+                let label = hex(&job.digest[..8]);
+                Some(c.job(job.spec.max_memory_mib, &label).map_err(|_| RuntimeFailed)?)
+            }
             None => None,
         };
         let group = group.as_ref();

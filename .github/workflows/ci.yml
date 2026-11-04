@@ -229,6 +229,36 @@ jobs:
       - name: Containment harness
         run: sudo env "PATH=$PATH" target/debug/provider_harness --contained
 
+  # The provider service must keep working on Windows. No isolation is claimed
+  # there: `required` refuses to start, and a test proves it.
+  provider-windows:
+    name: Mbongo Provider (Windows compatibility)
+    runs-on: windows-2025
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.94.0
+        uses: dtolnay/rust-toolchain@1.94.0
+        with:
+          components: clippy
+
+      - name: Cache cargo registry + build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy -p mbongo-compute --all-targets --all-features -- -D warnings
+
+      - name: Provider tests
+        run: cargo test -p mbongo-compute --all-features --locked --test provider_contract --test provider_durability
+
   compute-vertical:
     name: Mbongo Compute v0.4 Vertical
     runs-on: ubuntu-24.04

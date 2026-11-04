@@ -100,7 +100,12 @@ mod other {
         }
 
         /// Unreachable.
-        pub fn job(&self, _max_memory_mib: u64) -> io::Result<JobCgroup> {
+        pub fn job(&self, _max_memory_mib: u64, _label: &str) -> io::Result<JobCgroup> {
+            match *self {}
+        }
+
+        /// Unreachable.
+        pub fn stop(&self) -> usize {
             match *self {}
         }
     }
@@ -139,6 +144,7 @@ mod linux {
     const JOB_PREFIX: &str = "job-";
     const PROBE_MEMORY_MIB: u64 = 64;
     const REAP_TIMEOUT: Duration = Duration::from_secs(5);
+    const PROBE_SETTLE: Duration = Duration::from_millis(200);
     const SIGKILL: i32 = 9;
 
     const PR_SET_NO_NEW_PRIVS: c_int = 38;
@@ -263,7 +269,8 @@ mod linux {
         procs: File,
         uid: u32,
         gid: u32,
-        survivors: Arc<AtomicBool>,
+        closed: Arc<AtomicBool>,
+        label: String,
     }
 
     impl JobCgroup {
@@ -289,8 +296,17 @@ mod linux {
 
     impl Drop for JobCgroup {
         fn drop(&mut self) {
+            // The client sees `JOB_RUNTIME_FAILED`: the cause stays here.
+            let events = fs::read_to_string(self.path.join("memory.events")).unwrap_or_default();
+            let kills = events.lines().find_map(|l| l.strip_prefix("oom_kill "));
+            if let Some(kills) = kills.filter(|k| *k != "0") {
+                log::warn!(
+                    "containment: job {}: memory limit reached, {kills} process(es) killed",
+                    self.label
+                );
+            }
             if !reap(&self.path) {
-                self.survivors.store(true, Ordering::SeqCst);
+                self.closed.store(true, Ordering::SeqCst);
             }
         }
     }
@@ -303,8 +319,9 @@ mod linux {
         swept: usize,
         probed_paths: usize,
         proof: ContainmentProof,
-        /// A job's processes could not be killed. Nothing else runs beside them.
-        survivors: Arc<AtomicBool>,
+        /// No further job: the service is stopping, or a job's processes could
+        /// not be killed and nothing else may run beside them.
+        closed: Arc<AtomicBool>,
     }
 
     fn check_identity(
@@ -491,7 +508,7 @@ mod linux {
                 swept,
                 probed_paths: 0,
                 proof: ContainmentProof(()),
-                survivors: Arc::new(AtomicBool::new(false)),
+                closed: Arc::new(AtomicBool::new(false)),
             };
             containment.probe_identity()?;
             containment.probe_descriptors()?;
@@ -517,10 +534,8 @@ mod linux {
 
         /// A cgroup for one job, with its limits in place. `max_memory_mib`
         /// comes from the job spec, so the provider's ceiling caps it.
-        pub fn job(&self, max_memory_mib: u64) -> io::Result<JobCgroup> {
-            if self.survivors.load(Ordering::SeqCst) {
-                return Err(io::Error::from(io::ErrorKind::Other));
-            }
+        /// `label` names the job in the log.
+        pub fn job(&self, max_memory_mib: u64, label: &str) -> io::Result<JobCgroup> {
             let n = self.next_job.fetch_add(1, Ordering::SeqCst);
             let path = self.config.cgroup_root.join(format!("{JOB_PREFIX}{n}"));
             fs::create_dir(&path)?;
@@ -531,13 +546,18 @@ mod linux {
                     procs,
                     uid: self.config.runner_uid,
                     gid: self.config.runner_gid,
-                    survivors: Arc::clone(&self.survivors),
+                    closed: Arc::clone(&self.closed),
+                    label: label.to_owned(),
                 },
                 Err(e) => {
                     reap(&path);
                     return Err(e);
                 }
             };
+            // After the cgroup exists: `stop` then sees it, or this sees `stop`.
+            if self.closed.load(Ordering::SeqCst) {
+                return Err(io::Error::from(io::ErrorKind::Other));
+            }
             let bytes = max_memory_mib
                 .min(self.config.max_memory_mib)
                 .checked_mul(1 << 20)
@@ -553,13 +573,24 @@ mod linux {
             Ok(group)
         }
 
+        /// For a service that is stopping: no further job, and every running
+        /// one is killed with its descendants. Returns how many there were.
+        pub fn stop(&self) -> usize {
+            self.closed.store(true, Ordering::SeqCst);
+            let groups = job_entries(&self.config.cgroup_root).unwrap_or_default();
+            for group in &groups {
+                reap(group);
+            }
+            groups.len()
+        }
+
         fn probe(
             &self,
             program: &str,
             args: &[OsString],
         ) -> Result<(JobCgroup, Output), ContainmentError> {
             let group = self
-                .job(PROBE_MEMORY_MIB)
+                .job(PROBE_MEMORY_MIB, "probe")
                 .map_err(|e| refuse("CGROUP_UNAVAILABLE", format!("job cgroup: {:?}", e.kind())))?;
             let mut command = Command::new(program);
             command.args(args).env_clear().current_dir("/").stdin(Stdio::null());
@@ -670,7 +701,7 @@ mod linux {
         /// `cgroup.kill` reaches a process the service could not signal.
         fn probe_kill(&self) -> Result<(), ContainmentError> {
             let group = self
-                .job(PROBE_MEMORY_MIB)
+                .job(PROBE_MEMORY_MIB, "probe")
                 .map_err(|e| refuse("CGROUP_UNAVAILABLE", format!("job cgroup: {:?}", e.kind())))?;
             let mut command = Command::new("/bin/sleep");
             command.arg("30").env_clear().current_dir("/").stdin(Stdio::null());
@@ -678,6 +709,8 @@ mod linux {
             let mut child = command
                 .spawn()
                 .map_err(|e| refuse("SPAWN_DENIED", format!("sleep: {:?}", e.kind())))?;
+            // Long enough to be running, so that the kill is what ends it.
+            std::thread::sleep(PROBE_SETTLE);
             group.kill();
             let status =
                 child.wait().map_err(|e| refuse("PROBE_KILL", format!("{:?}", e.kind())))?;

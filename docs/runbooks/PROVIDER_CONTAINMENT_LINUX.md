@@ -54,7 +54,8 @@ sudo scripts/provider-containment-linux.sh run /srv/mbongo /srv/mbongo/bin/provi
 ```
 
 `isolation` has no default. A configuration that omits it does not load, and
-`{"mode": "none"}` isolates nothing and claims nothing.
+`{"mode": "none"}` isolates nothing and claims nothing. It is for controlled
+local testing only.
 
 The binary, the runner and its interpreter must be readable and executable by
 the two accounts, and must not be writable by the runner account. Nothing
@@ -75,10 +76,11 @@ path, on the configuration above.
 | It inherits no descriptor | `close_range` with `CLOSE_RANGE_CLOEXEC` before exec, whatever the descriptor's flags | A deliberately inheritable canary at startup; the service's sockets and files compared with the runner's, from outside |
 | Descendants die with the job | One cgroup per job, `cgroup.kill` at the end of every job, success or failure. If they cannot be killed, no further job runs | A process in its own session, with the parent exiting, then with the parent killed at the deadline |
 | Memory is limited | `memory.max` from `max_memory_mib`, capped by the provider's ceiling, no swap, `memory.oom.group` | Under the limit: verified at T1, no OOM kill. Over it, and over the ceiling: killed, `oom_kill` rises |
-| Processes are limited | `pids.max` | Set on every job. **Not exercised by a test** |
+| Processes are limited | `pids.max` | A job attempting three times the limit: stopped at it, `pids.events` records the denials, no process left |
 | It cannot leave its cgroup or change its limits | Interface files belong to the provider account | Moving itself out, raising `memory.max` and creating a child cgroup: `EACCES` |
+| `SIGTERM` or Ctrl-C leaves no job running | The service refuses further jobs, kills each running job's cgroup, and exits 0. The task stays unfinished in the journal, and the next start runs it again | A job and its detached descendant killed, exit 0, no cgroup left, the task completed at T1 after a restart |
 | A restart leaves nothing from before it running | With the state lock held, the service kills every leftover `job-*` cgroup before it runs anything, and removes their job directories | Real `SIGKILL` of the service, orphan observed alive, then gone; the task completes at T1 |
-| It starts only if all of this holds | `Containment::establish` | 14 refusal cases, over 8 of the codes below. `PROBE_IDENTITY`, `PROBE_DESCRIPTORS` and `PROBE_KILL` have no refusal case in CI |
+| It starts only if all of this holds | `Containment::establish` | 17 refusal cases, over 11 of the codes below. `UNSUPPORTED_PLATFORM` is tested on Windows. The three probe failures are produced by replacing the probe's tool in a private mount namespace, which tests the service's decision, not a real kernel fault |
 
 ### Refusals
 
@@ -108,11 +110,11 @@ These are the provider's responsibility.
 
 | Not provided | Consequence |
 |---|---|
-| **Network isolation** | The runner can reach the internet, every loopback service, including the node RPC and this service's HTTP API, and local Unix sockets its account may open. It can send out anything it was given. Use firewall rules on the runner's uid, or a network namespace |
+| **Network isolation** | The runner can reach the internet, every loopback service, including the node RPC and this service's HTTP API, and local Unix sockets its account may open. It can send out anything it was given. Use firewall rules on the runner's uid, or a network namespace. **A prerequisite for untrusted workloads**, not provided by P2 |
 | **A private filesystem view** | The runner reads whatever is world-readable, and writes wherever its account can, such as `/tmp`. Files it leaves there persist and reach later jobs. There is no mount namespace, `chroot` or seccomp filter |
 | **Isolation between jobs** | Jobs share one runner account. The worker starts one at a time and no process survives a job, but files can, and a job past its deadline can briefly overlap the next |
 | **Memory held outside a job** | `memory.max` ends with the job. What it left in `/dev/shm`, another tmpfs or System V shared memory stays, and repeated jobs can exhaust the host |
-| **Running jobs when the service stops** | Any exit, `SIGTERM` included, leaves a running job alive with no deadline until the next start kills it. To stop both, stop the service, then write `1` to `<cgroup_root>/cgroup.kill` |
+| **Running jobs when the service dies** | `SIGKILL`, a crash or power loss leaves a running job alive with no deadline until the next start kills it. To end it sooner, write `1` to `<cgroup_root>/cgroup.kill` |
 | **CPU and disk limits** | A job can use all CPU until `max_wall_ms`, and fill any disk its account can write to |
 | **Protection from the service** | The service holds `CAP_SETUID` and `CAP_SETGID`. A compromised service can become any uid, so the service is trusted. Its bounding set allows nothing else |
 | **Kernel bugs** | The boundary is the kernel's. It is weaker than a VM |
@@ -123,7 +125,7 @@ These are the provider's responsibility.
 
 An out-of-memory kill reaches the client as `JOB_RUNTIME_FAILED`, which is
 retried: the job contract has no memory code, and P2 does not change it. The
-cgroup's `memory.events` shows the cause.
+provider's log records the cause: `memory limit reached`, with the job.
 
 At the deadline, `JOB_LIMIT_WALL_TIME` can be reported up to 50 ms before the
 job's processes are killed.

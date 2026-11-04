@@ -2,7 +2,7 @@
 // A conformance fixture for mbongo-runner:v1, written independently of the
 // Rust core: it speaks only the process contract. Not a workload.
 // `params.mode` asks for misbehaviour, so that tests can reach each failure.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -160,7 +160,16 @@ switch (params.mode) {
   case "daemon": {
     const pid = daemon(params.heartbeat);
     if (params.hang) for (;;) pause(1000);
+    if (params.hold_ms) pause(params.hold_ms);
     respond(Buffer.from(JSON.stringify({ descendant_session: session(pid), own_session: session(process.pid), pid })));
+    break;
+  }
+  case "fork": {
+    const script = `n=0; while [ $n -lt ${params.attempts} ]; do /bin/sleep 60 & n=$((n+1)); echo $n > ${params.counter}; done`;
+    spawnSync("/bin/sh", ["-c", script], { stdio: "ignore" });
+    const own = fs.readFileSync("/proc/self/cgroup", "utf8").trim().replace(/^0::/, "");
+    const read = (name) => fs.readFileSync(`/sys/fs/cgroup${own}/${name}`, "utf8").trim().replace(/\s+/g, " ");
+    respond(Buffer.from(JSON.stringify({ current: read("pids.current"), denied: read("pids.events"), limit: read("pids.max") })));
     break;
   }
   case "alloc": {
