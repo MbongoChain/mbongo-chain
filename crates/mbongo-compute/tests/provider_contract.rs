@@ -583,7 +583,7 @@ fn no_workload_is_compiled_into_the_provider_or_job_modules() {
             files += 1;
         }
     }
-    assert_eq!(files, 15);
+    assert_eq!(files, 16);
 }
 
 /// `required` is proven or refused. It is never a warning, and the mode is

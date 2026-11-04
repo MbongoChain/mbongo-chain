@@ -1,6 +1,6 @@
 # P3: Provider Network Security and Interoperability
 
-**Status: architecture approved in principle (2026-11-04).** P3-A is authorized.
+**Status: architecture approved in principle (2026-11-04).** P3-A is implemented.
 P3-B, P3-C and P3-D each need separate authorization after the stage before them.
 The service stays loopback-only: no infrastructure is purchased, and no provider
 is exposed publicly. This replaces the P3 row of
@@ -19,7 +19,7 @@ consensus, RPC or SDK change.
 | Requests are signed and bound to one recipient (`mbongo-provider-http:v1`), with persistent replay protection (P1) | Requests and responses are readable and alterable on the wire. A client cannot tell it reached the right host |
 | Results are checked against the on-chain receipt, up to T1 | Status and error responses are not authenticated |
 | On Linux the runner is contained (P2) | The runner has full network access |
-| `compute-conformance-v1` covers the components the service reuses | It does not run against `ProviderService` (S2-10, #191) |
+| `compute-conformance-v1` runs against `ProviderService` (P3-A) | Nothing |
 | Everything runs on one host | Nothing has crossed a real network |
 
 ## 2. Tasks
@@ -123,5 +123,5 @@ Evidence for P2 stays in [`PROVIDER_CONTAINMENT_LINUX.md`](../runbooks/PROVIDER_
 | 5 | Windows stays a functional testing target, with no isolation claim |
 | 6 | No infrastructure is purchased and no provider is exposed publicly |
 
-Only P3-A is authorized. Each later stage needs its own authorization after the
-one before it, and public deployment needs a separate one.
+Each later stage needs its own authorization after the one before it, and public
+deployment needs a separate one.

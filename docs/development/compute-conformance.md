@@ -180,6 +180,31 @@ not depend on Rust semantics), in-memory storage, or any vendor. GPU- or
 AI-specific suites, and metering, are later additions alongside this one,
 not changes to it.
 
+## The provider service
+
+`ProviderService` runs the same 38 cases through a second adapter,
+`provider/service_conformance.rs`, built for tests only. The CI gate is the step
+**Mbongo Provider Conformance**, and Windows runs it too. The result is **38 of
+38, none unsupported, none excluded**. The test fails if a case is neither passed
+nor listed in `NOT_APPLICABLE`, which is empty.
+
+The subject is the real service: its durable store, task loop, admission path and
+result route, and an external runner speaking `mbongo-runner:v1` on the generic
+`fixture-sum` job. A second test proves the scenario reaches the runner and the
+journal, and that the journal on disk does not hold the input or the output.
+
+How to read the result:
+
+| Point | What it means |
+|---|---|
+| Inside the crate | Leases, grants and presentations have no public route, so the adapter reaches the service's control plane and data plane directly. It does not go through HTTP |
+| Authentication not covered | Request signatures, replay protection and the routes are `provider_contract`'s, not this suite's |
+| `Actor::Client` on the data plane | The service holds a private owner key and acts for the client it authenticated. The adapter presents with that key. The client's own path to its result is the result route, as the submitter |
+| C14 and C35 | The probe task never reaches the worker: registration refuses it, because no job spec matches. Stricter than the reference, and it means the worker's own check is not exercised on this path |
+| Faults | Crashes are injected in process, through the worker. Real process crashes are `provider_durability`'s and `provider_harness`'s |
+| Chain and clock | A chain double and a manual clock. A real node is `provider_harness`'s |
+| Runner | Not contained. The suite says nothing about isolation, which `provider_harness --contained` tests |
+
 ## Versioning
 
 `compute-conformance-v1` tests the authorities listed at the top, as

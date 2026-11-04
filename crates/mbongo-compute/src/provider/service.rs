@@ -1400,3 +1400,7 @@ async fn result_route<C: ChainClient + Clone + 'static>(
     };
     r.unwrap_or_else(IntoResponse::into_response)
 }
+
+#[cfg(test)]
+#[path = "service_conformance.rs"]
+mod conformance;

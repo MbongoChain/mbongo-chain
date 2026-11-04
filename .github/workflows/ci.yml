@@ -158,6 +158,9 @@ jobs:
           cargo build -p mbongo-node --bin mbongo-node
           cargo build -p mbongo-compute --bin provider_service --bin job_client --bin provider_harness
           target/debug/provider_harness
+      # compute-conformance-v1 against the real provider service (S2-10).
+      - name: Mbongo Provider Conformance
+        run: cargo test -p mbongo-compute --all-features --locked --lib service::conformance -- --nocapture
       - name: Mbongo MVP Launch Exposure
         run: node --test scripts/mvp-launch-exposure.test.mjs
       # POST-MVP-O1 privacy scanner (docs/product/POST_MVP_KAAYU_OBSERVATION.md
@@ -258,6 +261,9 @@ jobs:
 
       - name: Provider tests
         run: cargo test -p mbongo-compute --all-features --locked --test provider_contract --test provider_durability
+
+      - name: Provider conformance
+        run: cargo test -p mbongo-compute --all-features --locked --lib service::conformance -- --nocapture
 
   compute-vertical:
     name: Mbongo Compute v0.4 Vertical
