@@ -117,7 +117,16 @@ Evidence: [`evidence/mvp-e-cc3/adversarial-report.json`](../product/evidence/mvp
   - S06: an instruction with no imperative marker.
 - **Benign false positive.** One benign control, B03 (a quoted motto that the model echoed), was **flagged and rejected**. That is fail-closed, but it is a false positive.
 
-Evidence: [`../product/evidence/sec178/released-v3-client-path-report.json`](../product/evidence/sec178/released-v3-client-path-report.json). Controls unchanged: human review of every profile, `PROMPT_INJECTION_IMMUNITY_CLAIMED = NO`.
+Evidence: [`../product/evidence/sec178/released-v3-client-path-report.json`](../product/evidence/sec178/released-v3-client-path-report.json).
+
+**Independent corpus, released code (2026-11-03, #178).** A later held-out corpus was written by an independent agent, from a class specification, without the screen code. Through the real client path:
+
+- the model obeyed **14 of 16** attacks;
+- the screen flagged **none** of them, and all 14 were accepted (exit 0, `VERIFIED`, screen `CLEAR`);
+- none of the 16 attacks matches the screen's instruction-marker list, and every value-based screen rule depends on that list;
+- 2 of 34 benign CVs were flagged by the quoted-text rule.
+
+The gap is therefore wider than unquoted or punctuated values: **attacks phrased without a listed marker are not detected at all**, and the earlier model figures (1 of 10, 2 of 12) describe the MVP-E corpus, not attacks in general. Human review of every profile is the actual control. Evidence: [`../product/evidence/sec178/rev2-released-client-path-report.json`](../product/evidence/sec178/rev2-released-client-path-report.json). Controls unchanged: human review of every profile, `PROMPT_INJECTION_IMMUNITY_CLAIMED = NO`.
 
 ### 3.5 Extraction fidelity (targeted, QUALITATIVE_ONLY)
 

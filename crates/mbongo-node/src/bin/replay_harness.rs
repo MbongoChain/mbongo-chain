@@ -10,13 +10,16 @@
 //! consensus logic. Block production happens via a real node process;
 //! replay uses the same `apply_block` code path as follower sync.
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use mbongo_storage::Storage;
 use reqwest::Client;
 use serde_json::{json, Value};
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::{Child, Command};
 use tokio::time::sleep;
 
@@ -40,6 +43,12 @@ const RPC_PROBE_INTERVAL_MS: u64 = 200;
 
 // Initial delay before first RPC probe to let the OS bind ports.
 const RPC_STARTUP_DELAY_SECS: u64 = 2;
+
+// Lines of the node's output kept for a failure report.
+const NODE_LOG_TAIL: usize = 40;
+
+/// The last lines the node wrote, stdout and stderr interleaved.
+type NodeLog = Arc<Mutex<VecDeque<String>>>;
 
 // ── RPC helpers ─────────────────────────────────────────────────────────
 
@@ -78,17 +87,23 @@ async fn rpc_call(client: &Client, method: &str, params: Option<Value>) -> Resul
 /// Uses a fixed retry loop: an initial delay to let the OS bind ports,
 /// then up to `RPC_PROBE_MAX_ATTEMPTS` pings with `RPC_PROBE_INTERVAL_MS`
 /// between each attempt. Total wait ≈ startup delay + 10 seconds.
-async fn wait_for_rpc(client: &Client) -> Result<(), String> {
+///
+/// A node that exits fails at once: no amount of waiting brings it back.
+async fn wait_for_rpc(client: &Client, producer: &mut Child) -> Result<(), String> {
     // Initial delay — let the process bind its ports before we start probing.
     sleep(Duration::from_secs(RPC_STARTUP_DELAY_SECS)).await;
 
     for attempt in 1..=RPC_PROBE_MAX_ATTEMPTS {
+        if let Some(status) = producer.try_wait().map_err(|e| e.to_string())? {
+            return Err(format!("the node exited before its RPC answered: {status}"));
+        }
         match rpc_call(client, "ping", None).await {
             Ok(_) => return Ok(()),
-            Err(_) => {
+            Err(e) => {
                 if attempt == RPC_PROBE_MAX_ATTEMPTS {
                     return Err(format!(
-                        "timeout waiting for RPC on port {RPC_PORT} after {RPC_PROBE_MAX_ATTEMPTS} attempts"
+                        "timeout waiting for RPC on port {RPC_PORT} after {RPC_PROBE_MAX_ATTEMPTS} attempts; \
+                         node still running; last error: {e}"
                     ));
                 }
                 sleep(Duration::from_millis(RPC_PROBE_INTERVAL_MS)).await;
@@ -134,6 +149,46 @@ fn spawn_producer(data_dir: &std::path::Path) -> Result<Child, String> {
         .map_err(|e| format!("failed to spawn producer: {e}"))?;
 
     Ok(child)
+}
+
+/// Reads `stream` to its end, keeping the last lines in `log`.
+fn keep_tail(stream: impl AsyncRead + Unpin + Send + 'static, name: &'static str, log: NodeLog) {
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(stream).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            let mut log = log.lock().expect("node log lock");
+            if log.len() == NODE_LOG_TAIL {
+                log.pop_front();
+            }
+            log.push_back(format!("{name}: {line}"));
+        }
+    });
+}
+
+/// Starts reading the node's output. The pipes must be read: unread, they
+/// fill and block the node, and the reason a node died is lost.
+fn read_node_output(producer: &mut Child) -> NodeLog {
+    let log = NodeLog::default();
+    if let Some(stdout) = producer.stdout.take() {
+        keep_tail(stdout, "stdout", Arc::clone(&log));
+    }
+    if let Some(stderr) = producer.stderr.take() {
+        keep_tail(stderr, "stderr", Arc::clone(&log));
+    }
+    log
+}
+
+/// A producer failure with what the node said.
+async fn with_node_output(error: String, log: &NodeLog) -> String {
+    // The readers may still hold the last lines of a node that just exited.
+    sleep(Duration::from_millis(200)).await;
+    let log = log.lock().expect("node log lock");
+    let lines: Vec<&str> = log.iter().map(String::as_str).collect();
+    format!(
+        "{error}\n  Node output (last {} lines):\n    {}",
+        lines.len(),
+        lines.join("\n    ")
+    )
 }
 
 fn cleanup(dir: &std::path::Path) {
@@ -263,8 +318,11 @@ async fn run_replay(client: &Client, producer_dir: &std::path::Path) -> Result<(
 
     println!("Phase A: Producing chain...");
     let mut producer = spawn_producer(producer_dir)?;
+    let node_log = read_node_output(&mut producer);
 
-    wait_for_rpc(client).await?;
+    if let Err(e) = wait_for_rpc(client, &mut producer).await {
+        return Err(with_node_output(e, &node_log).await);
+    }
     println!("  Producer RPC ready");
 
     // Submit one ComputeTask from the dev account (nonce 0) so the chain
@@ -299,12 +357,13 @@ async fn run_replay(client: &Client, producer_dir: &std::path::Path) -> Result<(
             break h;
         }
         if poll_start.elapsed() >= Duration::from_secs(PRODUCTION_TIMEOUT_SECS) {
-            return Err(format!(
+            let e = format!(
                 "height {h} did not reach minimum {MIN_HEIGHT} within \
                  {PRODUCTION_TIMEOUT_SECS}s ({:.1}s elapsed): producer is stalled \
-                 or producing too slowly — check its stdout/stderr",
+                 or producing too slowly",
                 poll_start.elapsed().as_secs_f64()
-            ));
+            );
+            return Err(with_node_output(e, &node_log).await);
         }
         sleep(Duration::from_millis(PRODUCTION_POLL_INTERVAL_MS)).await;
     };
