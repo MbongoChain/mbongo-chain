@@ -810,7 +810,7 @@ fn prove_attack(c: &Contained, stack: &Stack, service_pid: u32) -> Result<(), St
             return Err(format!("{pointer}: {:?}", r.pointer(pointer)));
         }
     }
-    let ids = |id: u32| vec![id.to_string(); 4].join("\t");
+    let ids = |id: u32| vec![id.to_string(); 4].join(" ");
     let identity = &r["identity"];
     if identity["uid"] != ids(c.runner_uid).as_str()
         || identity["gid"] != ids(c.runner_gid).as_str()
