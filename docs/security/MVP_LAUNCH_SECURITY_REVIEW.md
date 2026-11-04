@@ -126,7 +126,9 @@ Evidence: [`../product/evidence/sec178/released-v3-client-path-report.json`](../
 - none of the 16 attacks matches the screen's instruction-marker list, and every value-based screen rule depends on that list;
 - 2 of 34 benign CVs were flagged by the quoted-text rule.
 
-The gap is therefore wider than unquoted or punctuated values: **attacks phrased without a listed marker are not detected at all**, and the earlier model figures (1 of 10, 2 of 12) describe the MVP-E corpus, not attacks in general. Human review of every profile is the actual control. Evidence: [`../product/evidence/sec178/rev2-released-client-path-report.json`](../product/evidence/sec178/rev2-released-client-path-report.json). Controls unchanged: human review of every profile, `PROMPT_INJECTION_IMMUNITY_CLAIMED = NO`.
+The gap is therefore wider than unquoted or punctuated values: **attacks phrased without a listed marker are not detected at all**, and the earlier model figures (1 of 10, 2 of 12) describe the MVP-E corpus, not attacks in general. Human review of every profile is the actual control. Evidence: [`../product/evidence/sec178/rev2-released-client-path-report.json`](../product/evidence/sec178/rev2-released-client-path-report.json).
+
+**CC-5 (2026-11-03).** The screen is best-effort detection, not a safety boundary, and mandatory human review is the compensating control: [`MVP_v0.1.md`](../product/MVP_v0.1.md) §20.4. Controls unchanged: human review of every profile, `PROMPT_INJECTION_IMMUNITY_CLAIMED = NO`.
 
 ### 3.5 Extraction fidelity (targeted, QUALITATIVE_ONLY)
 
