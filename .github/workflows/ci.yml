@@ -8,6 +8,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Full debug info made target/ 14 GB in the checks job, and that job has died
+  # with "No space left on device". Line tables keep file:line in backtraces.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 jobs:
   # ---------------------------------------------------------
@@ -22,6 +26,14 @@ jobs:
     timeout-minutes: 20
 
     steps:
+      # Some runners have far less free disk than others, and this job has run
+      # out of it. Nothing here uses the preinstalled Android SDK.
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android
+          df -h /
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -148,6 +160,13 @@ jobs:
       # committed baseline report. Synthetic data only; no model runs here.
       - name: Mbongo Kaayu Extraction Evaluation
         run: node --test scripts/kaayu-eval.test.mjs
+
+      # Runners do not all have the same free disk. Keep the numbers in the log.
+      - name: Disk usage report
+        if: always()
+        run: |
+          df -h /
+          du -sh target ~/.cargo || true
 
   # ---------------------------------------------------------
   # Mbongo Compute v0.4 Vertical (run on PR + push)
