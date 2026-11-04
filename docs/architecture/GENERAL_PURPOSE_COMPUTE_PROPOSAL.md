@@ -38,6 +38,12 @@ These followed the review of the second revision. They record the decisions; the
 | D13 | G2 implementation **plan** for `mbongo-job:v1` | The first workload is the deterministic synthetic MbongoPay integer scorecard: no real financial data, no automated lending decisions. Interfaces for future runtimes are designed and tested without implementing GPU or ML execution. Kaayu's released profile is unchanged. **G2 product code needs a separate implementation approval** | G2 plan document |
 | D14 | G3 prerequisites | Host-class identity and reproducibility requirements for LLM re-execution are defined. **Metering stays in the private data plane initially.** Signed contract registries, open assignment and settlement are deferred to their own gates or RFCs | G3 prerequisites document |
 
+### 0.2.1 Governing scope decision
+
+| # | Decision | Effect | Where |
+|---|---|---|---|
+| D15 (2026-11-03) | **Infrastructure first** is the governing scope for all future development | It amends D3 and D13: reference programs are minimal conformance fixtures only, and MbongoPay is no longer a workload to build. Where this document still describes one, §1.4 wins | §1.4, [`G2_MBONGO_JOB_V1_PLAN.md`](G2_MBONGO_JOB_V1_PLAN.md) |
+
 ### 0.3 Decision requested in the first revision
 
 1. **Direction.** MbongoChain is a **general-purpose, verifiable and eventually decentralized compute infrastructure**. Kaayu CV extraction and MbongoPay synthetic loan-risk scoring are **reference workloads** that validate infrastructure capabilities; their business-specific accuracy is never on the critical path (§1).
@@ -114,6 +120,39 @@ These boundaries bind every milestone and gate in this document. A change that c
 - **Additive first.** A gate adds modules beside the released path. It does not refactor that path unless golden vectors prove the result byte-identical, and then only in a gate that names the refactor.
 - **No silent widening.** A gate that finds it must cross a boundary stops and re-scopes.
 - **Workload neutrality.** No generic layer (L1–L5) may hard-code a reference workload's field names, vocabulary or thresholds. Workload-specific logic lives in that workload's contract, profile or screen.
+
+### 1.4 Governing scope: infrastructure first (D15)
+
+**MbongoChain builds the infrastructure and protocol that enable clients to submit compute tasks and independent providers to execute them. It does not build, optimise or operate each client's business workload.**
+
+**Prioritised:**
+- generic task contracts and APIs;
+- client SDKs;
+- provider and worker software and interfaces;
+- worker capability registration and discovery;
+- execution integrity and receipts;
+- verification mechanisms;
+- resource metering and future settlement;
+- security boundaries and failure handling;
+- future support for heterogeneous compute environments.
+
+**Outside the core product:**
+- Kaayu-specific CV extraction improvements;
+- MbongoPay-specific credit-scoring products;
+- domain-specific logistics or optimisation engines;
+- customer-specific prompts, schemas or evaluation rules;
+- individual model integrations without a demonstrated generic infrastructure need.
+
+**Reference programs** are minimal synthetic or deterministic conformance fixtures. They test the infrastructure and never become product workloads. The released MVP and its Kaayu profile stay as released, and the approved security boundaries stand.
+
+**Every proposed implementation task states:**
+1. the reusable infrastructure capability delivered;
+2. the component MbongoChain owns;
+3. the responsibility remaining with clients or providers;
+4. minimal acceptance tests;
+5. explicit scope exclusions.
+
+Repeated business-workload optimisation, unnecessary benchmarking campaigns and speculative architecture expansion are to be avoided.
 
 ---
 
@@ -328,6 +367,8 @@ None of this is in the next three gates.
 
 ### 4.11 G2 generic-runtime design
 
+> **Superseded in part by D15.** The G2 plan makes the workload contract data in the job spec, not a Rust trait per workload, and replaces MbongoPay and `mbongo-native` with test-only fixtures and a mock worker. This section is kept as the record of the earlier design.
+
 This section is the design G2 implements, if approved. It is written so that a future ML or GPU runtime is **one new adapter and one new contract**, with no protocol change and no change to existing contracts (D3). No ML or GPU adapter is part of G2.
 
 #### 4.11.1 Layering inside the worker
@@ -430,6 +471,8 @@ pub trait WorkloadContract: Send + Sync {
 ---
 
 ## 5. Reference workloads
+
+> **Amended by D15.** No new workload is built. §5.2 is kept as a record; G2 uses the minimal fixtures of the G2 plan. Where §6 and §7 name MbongoPay, read "a deterministic conformance fixture". Kaayu stays a released reference, without further optimisation.
 
 Both are synthetic and are **infrastructure test vehicles**. Their business-specific improvements are always out of scope for infrastructure milestones (see "Out of scope" in §6).
 
@@ -583,6 +626,8 @@ This status is the record of the first candidate. D12 set the revision; its resu
 - **Deployment.** The fix reaches users only through a release decision, which is not part of G1.
 
 ### G2 — Generic workload contracts plus the MbongoPay reference workload (M1)
+
+> **Superseded by D15.** Scope, tasks and acceptance tests are in [`G2_MBONGO_JOB_V1_PLAN.md`](G2_MBONGO_JOB_V1_PLAN.md). The criteria below are kept as a record.
 
 **Scope:** the design in §4.11:
 - the `mbongo-job:v1` contract document and vectors;

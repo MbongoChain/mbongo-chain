@@ -7,6 +7,8 @@
 | **Kind** | Non-consensus, client-side verification. No receipt, protocol or SDK change. |
 | **Date** | 2026-11-03 |
 
+> **Scope (D15).** These requirements are generic: they apply to any `BIT_EXACT_PINNED` contract, and Kaayu is only the example available today. Where this document names MbongoPay, read "a deterministic conformance fixture". The Q1–Q5 tests are not a scheduled campaign: they run only if a contract needs a T2 claim.
+
 ## 1. The problem
 
 T2 means that an independent re-execution reproduced the output. For a `BIT_EXACT` contract such as MbongoPay, any conforming host can do that.
