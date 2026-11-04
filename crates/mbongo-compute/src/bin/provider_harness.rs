@@ -15,9 +15,11 @@ use mbongo_compute::mvp::client::find_anchored_receipt;
 use mbongo_core::{Address, Transaction, TransactionPayload, TransactionType};
 use serde_json::{json, Value};
 
-const RPC_PORT: u16 = 43944;
-const REST_PORT: u16 = 43080;
-const P2P_PORT: u16 = 53333;
+// Below the Linux ephemeral range (32768-60999). A recent outbound connection
+// in TIME_WAIT on a port in that range blocks a listener from binding it.
+const RPC_PORT: u16 = 23944;
+const REST_PORT: u16 = 23080;
+const P2P_PORT: u16 = 23333;
 /// The devnet's funded account.
 const CLIENT_SEED: [u8; 32] = [0xAA; 32];
 const EXECUTOR_SEED: [u8; 32] = [0xE1; 32];
@@ -66,6 +68,15 @@ fn tail(log: &Path) -> String {
     let text = std::fs::read_to_string(log).unwrap_or_default();
     let lines: Vec<&str> = text.lines().collect();
     lines[lines.len().saturating_sub(20)..].join("\n    ")
+}
+
+/// How many sockets sit in TIME_WAIT now (Linux only).
+fn report_time_wait() {
+    let Ok(table) = std::fs::read_to_string("/proc/net/tcp") else {
+        return;
+    };
+    let count = table.lines().filter(|l| l.split_whitespace().nth(3) == Some("06")).count();
+    println!("  sockets in TIME_WAIT at start: {count}");
 }
 
 async fn fund(
@@ -347,6 +358,7 @@ async fn wait_for_bind(log: &Path, provider: &mut Process) -> Result<String, Str
 
 async fn run(base: &Path) -> Result<(), String> {
     std::fs::create_dir_all(base.join("artifacts")).map_err(|e| e.to_string())?;
+    report_time_wait();
     let node_log = base.join("node.log");
     let provider_log = base.join("provider.log");
     let mut node = Command::new(sibling("mbongo-node"));

@@ -99,6 +99,9 @@ struct Stack {
     durable: Arc<DurableStore>,
     runtime: Arc<MockRuntime>,
     base: String,
+    /// One client, so that a test holds one connection: every connection
+    /// closed here leaves a port in TIME_WAIT for the steps that follow.
+    client: ProviderClient,
     server: JoinHandle<()>,
 }
 
@@ -140,12 +143,14 @@ async fn start(dir: &Path, chain: FakeChain, fail: bool) -> Stack {
     let base = format!("http://{}", listener.local_addr().unwrap());
     let router = service.router();
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = ProviderClient::new(&base, client_key(), service.executor()).unwrap();
     Stack {
         chain,
         service,
         durable,
         runtime,
         base,
+        client,
         server,
     }
 }
@@ -155,8 +160,8 @@ fn client_key() -> LocalKey {
 }
 
 impl Stack {
-    fn client(&self) -> ProviderClient {
-        ProviderClient::new(&self.base, client_key(), self.service.executor()).unwrap()
+    fn client(&self) -> &ProviderClient {
+        &self.client
     }
 
     fn calls(&self) -> usize {
