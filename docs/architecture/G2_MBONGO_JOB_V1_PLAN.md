@@ -287,7 +287,7 @@ A provider operates **one service bundle**: front, control plane, data plane and
 | Failure handling | `JobError`, `AttemptEvent::Failed`, leases | Task loop that parks by failure class (§9.5) |
 | Request auth | `verify_signature`, `ReplayGuard`, the header names | A signing message with an audience (§9.8, decision 2) |
 
-`mvp/front.rs` cannot be reused directly: it hard-codes the frozen task, the Kaayu input and one executor, and it is protected. Its task loop is about 100 lines; re-writing them in `provider/` is cheaper than risking the released path.
+`mvp/front.rs` cannot be reused directly: it hard-codes the frozen task, the Kaayu input and one executor, and it is protected. Its task loop is about 130 lines; re-writing them in `provider/` is cheaper than risking the released path.
 
 ### 9.4 Runner contract (`mbongo-runner:v1`)
 
