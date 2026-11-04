@@ -1,5 +1,7 @@
 # Mbongo Vision v1 — Deterministic AI Inference Verification Layer
 
+> **SUPERSEDED on 2026-11-03 by [`VISION_v2.md`](VISION_v2.md).** Kept intact as a historical record: nothing below this banner has changed. Citations of this document in accepted RFCs, frozen specs and frozen product records describe the vision as it stood when they were written.
+
 **Status:** Strategic direction document
 **Last updated:** 2026-02-16
 

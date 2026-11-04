@@ -14,8 +14,10 @@ document disagrees with one of these, this table wins.
 
 | Subject | Authority | Status |
 |---|---|---|
-| Project vision and scope | [`VISION_v1.md`](VISION_v1.md) | NORMATIVE |
+| Project vision and scope | [`VISION_v2.md`](VISION_v2.md) | NORMATIVE (adopted 2026-11-03) |
+| Project vision before 2026-11-03 | [`VISION_v1.md`](VISION_v1.md) | SUPERSEDED (historical record, kept intact) |
 | What Mbongo launches first — the MVP: first user, workload, runtime, model, worker, privacy level, provider model, payment, client surface, exit criteria, and the frozen defer list that separates MVP BLOCKING from POST-MVP and PARALLEL RESEARCH | [`product/MVP_v0.1.md`](product/MVP_v0.1.md) | NORMATIVE (FROZEN PRODUCT SCOPE; product decision, non-consensus — every protocol and architecture row above wins on its own subject) |
+| Where the project is going after the MVP: general-purpose compute direction, claims vocabulary (E, T0–T5, B, C, S), architectural boundaries, reference workloads, milestones and implementation gates | [`architecture/GENERAL_PURPOSE_COMPUTE_PROPOSAL.md`](architecture/GENERAL_PURPOSE_COMPUTE_PROPOSAL.md) | APPROVED DIRECTION (plan, non-consensus — not a description of what runs today; every other row wins on its own subject; authorises no implementation) |
 | What a `ComputeTask` means when it asks for the MVP inference: the `mbongo-infer:v1` `execution_spec` layout, the off-chain job spec and its canonical form and digest, runtime and model artifact identity, the `kaayu-cv-extract:v1` profile (input contract, prompt template, output schema, generation parameters), result canonicalization, the worker validation order and error taxonomy, what the receipt proves | [`product/MVP_INFERENCE_CONTRACT_v1.md`](product/MVP_INFERENCE_CONTRACT_v1.md) | NORMATIVE (APPLICATION CONTRACT, non-consensus — RFC 0005 wins on protocol; implementation in `crates/mbongo-compute/src/inference/`, vectors in `test-vectors/inference/`) |
 | The MVP inference profile `kaayu-cv-extract:v2` (superseded for the MVP by v3, still resolvable and reproducible): why v1 was superseded (output larger than its own token budget), the v2 output bounds and 600-token budget, the maximal-output analysis, the v1/v2 diff, real corpus and latency evidence, and what the profile does not promise (no full CV transcription) | [`product/KAAYU_CV_EXTRACT_PROFILE_v2.md`](product/KAAYU_CV_EXTRACT_PROFILE_v2.md) | NORMATIVE (APPLICATION PROFILE, non-consensus — change control CC-1 of `MVP_v0.1.md`; the inference contract and RFC 0005 win; code in `crates/mbongo-compute/src/profiles/`) |
 | The active MVP inference profile `kaayu-cv-extract:v3`: prompt-injection hardening (change control CC-2) — what changed (the prompt only), the adversarial and corpus evidence, the latency cost, what it does not promise (no immunity, no accuracy) | [`product/KAAYU_CV_EXTRACT_PROFILE_v3.md`](product/KAAYU_CV_EXTRACT_PROFILE_v3.md) | NORMATIVE (APPLICATION PROFILE, non-consensus — change control CC-2 of `MVP_v0.1.md`; the inference contract and RFC 0005 win; code in `crates/mbongo-compute/src/profiles/kaayu_v3.rs`, vector `test-vectors/inference/kaayu-cv-extract-v3.json`) |
@@ -527,7 +529,7 @@ describe the running system.
 ### Path 0: What Mbongo Chain currently is
 ```
 1. ../README.md                            what runs today, how to start it
-2. VISION_v1.md                            scope, and what is excluded
+2. VISION_v2.md                            scope, and what is excluded
 3. specs/PROTOCOL_LOCK_v0.4.md             which surfaces are frozen
 4. specs/rpc_v0.3.md                       the RPC contract
 5. architecture/compute-receipts.md        receipts on chain

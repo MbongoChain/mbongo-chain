@@ -170,7 +170,7 @@ See [CONTRIBUTION_TIERS.md](./docs/CONTRIBUTION_TIERS.md) for full rules.
 
 - [README](./README.md)
 - [DEV_ONBOARDING.md](./docs/DEV_ONBOARDING.md) — Quick start, CLI reference
-- [VISION_v1.md](./docs/VISION_v1.md) — Verification layer scope
+- [VISION_v2.md](./docs/VISION_v2.md) — Vision and scope
 - [PROTOCOL_LOCK_v0.2.md](./docs/specs/PROTOCOL_LOCK_v0.2.md)
 - [RFC_PROCESS.md](./docs/RFC_PROCESS.md)
 - [CONTRIBUTION_TIERS.md](./docs/CONTRIBUTION_TIERS.md)
