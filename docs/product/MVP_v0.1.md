@@ -403,6 +403,20 @@ This document is **frozen** until the MVP exit criteria (§12) are met or a gate
 | **Approval** | instructed by the maintainer in the MVP-E review of PR #163 (2026-10-27); recorded here for review with the re-run evidence |
 | **Standing positions** | `BUSINESS_EXTRACTION_ACCURACY = NOT_ASSESSED`; `PROVIDER_RESISTANT_CONFIDENTIALITY = NO` |
 
+### 20.4 Change record CC-5 — the injection screen is best-effort detection (#178, 2026-11-03)
+
+CC-4 is reserved for the proposed Kaayu v4 profile and was not started.
+
+| | |
+|---|---|
+| **Decision changed** | The safety property of CC-3 (§20.3) |
+| **Old** | Adversarially influenced output is "detected and rejected before normal client consumption" |
+| **Evidence** | On an independent synthetic corpus, through the real client path, the model obeyed 14 of 16 attacks and released code detected none. None of the attacks matches the screen's marker list. A hardening candidate also detected 0 of 14 and rejected more benign CVs, so it was not adopted (#183) |
+| **Replacement — normative for the controlled MVP** | **The injection screen is best-effort detection, not a safety boundary.** A flagged result stays rejected from normal use (`CONTENT_FLAGGED`, exit 12), but `CLEAR` is no assurance. **Mandatory human review of every profile is the compensating control.** `PROMPT_INJECTION_IMMUNITY_CLAIMED = NO` |
+| **Not changed** | The released client and screen, v3, the protocol, and the CC-3 record and evidence, which stay as measured on their corpus. `MUST_FIX_BEFORE_PUBLIC_LAUNCH` still applies to prompt-injection assurance |
+| **Approval** | Option A selected by the maintainer in the review of #178 (2026-11-03) |
+| **Follow-up** | Residual risk stays tracked in #178 |
+
 ## See also
 
 - [`docs/INDEX.md`](../INDEX.md) — authority map (this document is the product-scope row)
