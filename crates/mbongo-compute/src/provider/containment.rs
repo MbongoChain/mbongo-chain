@@ -294,6 +294,7 @@ mod linux {
         next_job: AtomicU64,
         swept: usize,
         probed_paths: usize,
+        proof: ContainmentProof,
     }
 
     fn check_identity(
@@ -440,6 +441,7 @@ mod linux {
                 next_job: AtomicU64::new(0),
                 swept,
                 probed_paths: 0,
+                proof: ContainmentProof(()),
             };
             containment.probe_identity()?;
             containment.probe_descriptors()?;
@@ -450,7 +452,7 @@ mod linux {
 
         /// That this containment was established.
         pub fn proof(&self) -> ContainmentProof {
-            ContainmentProof(())
+            self.proof
         }
 
         /// Leftover jobs killed at startup.
