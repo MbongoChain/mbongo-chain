@@ -121,6 +121,9 @@ An out-of-memory kill reaches the client as `JOB_RUNTIME_FAILED`, which is
 retried: the job contract has no memory code, and P2 does not change it. The
 cgroup's `memory.events` shows the cause.
 
+At the deadline, `JOB_LIMIT_WALL_TIME` can be reported up to 50 ms before the
+job's processes are killed.
+
 ### The job directory
 
 Under containment the job directory is read-only for the runner. Scratch space
