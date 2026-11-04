@@ -186,6 +186,44 @@ jobs:
   # negative cases, restarts and privacy/log scans. Needs the node binary
   # and the built workspace SDK; exits non-zero unless it prints
   # "MBONGO COMPUTE V0.4 VERTICAL: PASS".
+  # P2: the provider flow under the reference launcher, on the supported
+  # configuration, with attacks from inside the runner. Needs root, to create
+  # the accounts and the cgroup; the service and the runner never have it.
+  provider-containment:
+    name: Mbongo Provider Containment (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.94.0
+        uses: dtolnay/rust-toolchain@1.94.0
+
+      - name: Cache cargo registry + build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Report the platform
+        run: |
+          uname -r
+          stat -f -c %T /sys/fs/cgroup
+          cat /sys/fs/cgroup/cgroup.subtree_control
+          setpriv --version
+
+      - name: Build
+        run: |
+          cargo build -p mbongo-node --bin mbongo-node
+          cargo build -p mbongo-compute --bin provider_service --bin job_client --bin provider_harness
+
+      - name: Containment harness
+        run: sudo env "PATH=$PATH" target/debug/provider_harness --contained
+
   compute-vertical:
     name: Mbongo Compute v0.4 Vertical
     runs-on: ubuntu-24.04

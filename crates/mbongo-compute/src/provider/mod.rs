@@ -6,8 +6,10 @@
 //! behind `mbongo-runner:v1` ([`runner`]), so no workload is compiled in.
 //!
 //! **Limits.** Runtime identity, capability declarations and metering are
-//! untrusted. The process boundary gives interoperability, not isolation, and
-//! no key isolation is claimed ([`service::KEY_ISOLATION_ENFORCED`]).
+//! untrusted. The process boundary alone gives interoperability, not
+//! isolation. On Linux, [`containment`] adds a separate identity, descendant
+//! termination and a memory limit, proven at startup. Elsewhere nothing is
+//! isolated, and none is claimed.
 //!
 //! **Durability.** Accepted requests, job specs, inputs, task status and
 //! results survive a restart ([`durable`], [`journal`]). At most one receipt
@@ -15,6 +17,7 @@
 
 pub mod auth;
 pub mod client;
+pub mod containment;
 pub mod durable;
 pub mod journal;
 pub mod lock;

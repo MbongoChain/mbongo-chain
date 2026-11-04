@@ -1,11 +1,11 @@
 //! [`SubprocessRuntime`]: `mbongo-runner:v1`, a provider's runtime as an OS
 //! process. Any language can implement it, and no workload is compiled in.
 //!
-//! **This is interoperability, not isolation.** The environment is cleared,
-//! but that gives no filesystem, network or OS isolation: a runner under the
-//! worker's account can still read the executor key file. Only the direct
-//! child is killed on a limit; its own children may survive unless the
-//! provider's launcher contains them.
+//! **Alone, this is interoperability, not isolation.** The environment is
+//! cleared, but that gives no filesystem, network or OS isolation: a runner
+//! under the worker's account can still read the executor key file, and only
+//! the direct child is killed on a limit. [`SubprocessRuntime::contained`]
+//! adds what [`super::containment`] enforces.
 
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 
+use super::containment::{Containment, JobCgroup};
 use crate::job::{
     JobSource, ResolvedJob, RunOutput, RuntimeAdapter, RuntimeFailed, RuntimeIdentity,
     UntrustedMetering,
@@ -49,6 +50,7 @@ pub struct SubprocessRuntime {
     config: RunnerConfig,
     source: Arc<dyn JobSource>,
     next_dir: AtomicU64,
+    containment: Option<Arc<Containment>>,
 }
 
 /// A job directory, deleted when dropped.
@@ -116,8 +118,15 @@ fn hex(bytes: &[u8]) -> String {
     hex::encode(bytes)
 }
 
-fn kill(child: &mut Child) {
-    let _ = child.kill();
+/// A contained runner is under another account, so the service cannot signal
+/// it, and its descendants are the cgroup's to kill anyway.
+fn kill(child: &mut Child, group: Option<&JobCgroup>) {
+    match group {
+        Some(group) => group.kill(),
+        None => {
+            let _ = child.kill();
+        }
+    }
     let _ = child.wait();
 }
 
@@ -128,7 +137,16 @@ impl SubprocessRuntime {
             config,
             source,
             next_dir: AtomicU64::new(0),
+            containment: None,
         }
+    }
+
+    /// Runs every job inside `containment`. A job that cannot be contained
+    /// does not run.
+    #[must_use]
+    pub fn contained(mut self, containment: Arc<Containment>) -> Self {
+        self.containment = Some(containment);
+        self
     }
 
     /// Refuses a command that is not the build the configuration pins.
@@ -163,7 +181,7 @@ impl SubprocessRuntime {
         Ok(dir)
     }
 
-    fn spawn(&self, dir: &Path) -> io::Result<Child> {
+    fn spawn(&self, dir: &Path, group: Option<&JobCgroup>) -> io::Result<Child> {
         let (program, args) = self
             .config
             .command
@@ -183,6 +201,9 @@ impl SubprocessRuntime {
                 command.env(name, value);
             }
         }
+        if let Some(group) = group {
+            group.confine(&mut command);
+        }
         command.spawn()
     }
 }
@@ -196,12 +217,18 @@ impl RuntimeAdapter for SubprocessRuntime {
         let started = Instant::now();
         let deadline = started + Duration::from_millis(job.spec.max_wall_ms) + KILL_GRACE;
         let dir = self.job_dir(job).map_err(|_| RuntimeFailed)?;
-        let mut child = self.spawn(&dir.0).map_err(|_| RuntimeFailed)?;
+        // Declared after `dir`: what is left in the cgroup dies first.
+        let group = match &self.containment {
+            Some(c) => Some(c.job(job.spec.max_memory_mib).map_err(|_| RuntimeFailed)?),
+            None => None,
+        };
+        let group = group.as_ref();
+        let mut child = self.spawn(&dir.0, group).map_err(|_| RuntimeFailed)?;
 
         let (Some(mut stdin), Some(stdout), Some(mut stderr)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
         else {
-            kill(&mut child);
+            kill(&mut child, group);
             return Err(RuntimeFailed);
         };
         let mut request =
@@ -235,14 +262,14 @@ impl RuntimeAdapter for SubprocessRuntime {
         let raw = match collected {
             Some(Response::Output(bytes)) => bytes,
             Some(Response::TooLarge(bytes)) => {
-                kill(&mut child);
+                kill(&mut child, group);
                 return Ok(RunOutput {
                     raw: bytes,
                     metering: UntrustedMetering::default(),
                 });
             }
             Some(Response::Malformed) | None => {
-                kill(&mut child);
+                kill(&mut child, group);
                 return Err(RuntimeFailed);
             }
         };
@@ -251,7 +278,7 @@ impl RuntimeAdapter for SubprocessRuntime {
                 Ok(Some(status)) => break status.success(),
                 Ok(None) if Instant::now() < deadline => std::thread::sleep(POLL),
                 _ => {
-                    kill(&mut child);
+                    kill(&mut child, group);
                     break false;
                 }
             }
