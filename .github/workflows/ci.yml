@@ -26,11 +26,6 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - name: "PROBE: sample free disk space"
-        run: |
-          df -h /
-          nohup bash -c 'while true; do echo "$(date +%T) $(df -B1M --output=avail / | tail -1)" >> /tmp/disk-samples.log; sleep 2; done' >/dev/null 2>&1 &
-
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -58,18 +53,6 @@ jobs:
       # off-chain, scoped capability, commitment check, deterministic
       # execution, result persisted before the bound receipt is anchored.
       # Spawns the node binary the previous steps built.
-      - name: "PROBE: compute harness with a full data directory"
-        continue-on-error: true
-        run: |
-          cargo build -p mbongo-compute --bin compute_harness
-          sudo mkdir -p /mnt/fullfs
-          sudo mount -t tmpfs -o size=64k,mode=1777 tmpfs /mnt/fullfs
-          dd if=/dev/zero of=/mnt/fullfs/fill bs=1k count=64 || true
-          df -h /mnt/fullfs
-          set +e
-          TMPDIR=/mnt/fullfs target/debug/compute_harness
-          echo "PROBE_EXIT=$?"
-
       - name: Run reference compute harness
         run: cargo run -p mbongo-compute --bin compute_harness
 
@@ -167,14 +150,6 @@ jobs:
       # V4-G0 (#175): field-level evaluation of Kaayu CV extraction against the
       # synthetic gold set; the committed v3 outputs must re-score to the
       # committed baseline report. Synthetic data only; no model runs here.
-      - name: "PROBE: free disk report (early)"
-        if: always()
-        run: |
-          df -h /
-          du -sh target ~/.cargo 2>/dev/null || true
-          echo "lowest free MiB so far: $(awk '{print $2}' /tmp/disk-samples.log | sort -n | head -1)"
-          awk '{print $1, $2}' /tmp/disk-samples.log | sort -k2 -n | head -3
-
       - name: Mbongo Kaayu Extraction Evaluation
         run: node --test scripts/kaayu-eval.test.mjs
 
