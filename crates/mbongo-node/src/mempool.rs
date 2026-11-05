@@ -1281,17 +1281,17 @@ mod tests {
     }
 
     #[test]
-    fn a_chain_that_no_longer_follows_the_committed_nonce_goes() {
+    fn a_chain_with_a_gap_above_the_committed_nonce_goes() {
         let mut pool = bounded(8, 60);
         let (ahead, tx) = make_tx_with_hash(1, 6, 10);
         pool.insert(ahead, tx).unwrap();
         let (above, tx) = make_tx_with_hash(1, 7, 11);
         pool.insert(above, tx).unwrap();
-        let (block_hash, block_tx) = make_tx_with_hash(1, 5, 12);
+        let (block_hash, block_tx) = make_tx_with_hash(1, 3, 12);
 
-        // The block did not move the committed nonce past 5.
+        // Nothing pending fills nonces 4 and 5, so neither entry can ever apply.
         let evicted =
-            pool.after_commit(&[(block_hash, block_tx)], |_| Some((5, u128::MAX)), no_task);
+            pool.after_commit(&[(block_hash, block_tx)], |_| Some((4, u128::MAX)), no_task);
         assert_eq!(evicted.len(), 2, "{evicted:?}");
         assert_eq!(evicted[0].reason, EvictionReason::Superseded);
         assert_eq!(evicted[1].reason, EvictionReason::Dependent);
