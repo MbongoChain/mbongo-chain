@@ -107,7 +107,8 @@ sets that rule for `rpc_v0.4`: a hash means the producer admitted the transactio
 committed. Messages are not contract, so the class below is carried in the standard
 JSON-RPC `error.data`, as `{"kind": "..."}`. Clients that ignore `data` see today's error
 shape. `BackendError` gets a variant carrying the class. The `kind` values and the
-forwarding header are additive, and are specified in `rpc_v0.4.md` with PR 3.
+forwarding header are not in RFC 0006. They are additive, and PR 3 specifies them as a
+minor revision of `rpc_v0.4` under `RFC_PROCESS.md`.
 
 | `kind` | When | Reached the producer? | Client action |
 |---|---|---|---|
