@@ -2,9 +2,13 @@
 //! verifies the result against the chain, up to T1.
 //!
 //! ```text
-//! job_client --provider <url> --executor <hex> --job-spec <file> --input <file>
+//! job_client --provider-endpoint <file> --job-spec <file> --input <file>
 //!            --key-file <file> [--rpc-url …] [--rest-url …] [--timeout-secs n]
 //! ```
+//!
+//! `--provider-endpoint` names a `provider-endpoint-v1` file: TLS 1.3, against
+//! that provider's own trust anchors. `--provider <url> --executor <hex>` is
+//! plain HTTP, for a provider on this host only.
 //!
 //! Prints a JSON report and exits 0 on a verified result; exits 3 when the
 //! job failed or could not be verified, with the code on stderr. The key is
@@ -18,18 +22,22 @@ use clap::Parser;
 use mbongo_compute::chain::RpcChainClient;
 use mbongo_compute::mvp::client::{load_key_file, parse_hex32};
 use mbongo_compute::provider::client::{run_job, ProviderClient, WaitPolicy};
+use mbongo_compute::provider::endpoint::ProviderEndpoint;
 use mbongo_core::Address;
 
 #[derive(Parser)]
 #[command(name = "job_client", about = "Submit a generic job to one provider")]
 struct Cli {
-    /// The provider's base URL.
-    #[arg(long)]
-    provider: String,
+    /// The provider's endpoint file.
+    #[arg(long, conflicts_with_all = ["provider", "executor"], required_unless_present = "provider")]
+    provider_endpoint: Option<PathBuf>,
+    /// The provider's base URL, on this host.
+    #[arg(long, requires = "executor")]
+    provider: Option<String>,
     /// The provider's executor address, known out of band: the signature's
     /// recipient and the task's executor.
-    #[arg(long)]
-    executor: String,
+    #[arg(long, requires = "provider")]
+    executor: Option<String>,
     /// The canonical job spec.
     #[arg(long)]
     job_spec: PathBuf,
@@ -52,12 +60,19 @@ struct Cli {
 
 async fn run(cli: Cli) -> Result<String, String> {
     let key = load_key_file(&cli.key_file)?;
-    let executor = parse_hex32(&cli.executor).ok_or("executor is not 32 bytes of hex")?;
     let read = |p: &PathBuf| std::fs::read(p).map_err(|e| format!("read: {}", e.kind()));
     let (job_spec, input) = (read(&cli.job_spec)?, read(&cli.input)?);
     let chain = RpcChainClient::new(cli.rpc_url, cli.rest_url);
-    let client = ProviderClient::new(&cli.provider, key.clone(), Address(executor))
-        .map_err(|e| e.to_string())?;
+    let client = if let Some(file) = &cli.provider_endpoint {
+        let endpoint = ProviderEndpoint::load(file).map_err(|e| e.to_string())?;
+        ProviderClient::secure(&endpoint, key.clone())
+    } else {
+        let provider = cli.provider.as_deref().ok_or("no provider")?;
+        let executor = cli.executor.as_deref().and_then(parse_hex32);
+        let executor = executor.ok_or("executor is not 32 bytes of hex")?;
+        ProviderClient::new(provider, key.clone(), Address(executor))
+    }
+    .map_err(|e| e.to_string())?;
     let wait = WaitPolicy {
         timeout: Duration::from_secs(cli.timeout_secs),
         poll: Duration::from_millis(300),

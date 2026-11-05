@@ -993,6 +993,13 @@ impl<C: ChainClient + Clone + 'static> ProviderService<C> {
         headers: &HeaderMap,
         body: &[u8],
     ) -> Result<Address, ApiError> {
+        // The signature does not cover a query, and no route takes one.
+        if uri.query().is_some() {
+            return Err(ApiError(
+                StatusCode::BAD_REQUEST,
+                "AUTH_QUERY_NOT_ALLOWED".to_owned(),
+            ));
+        }
         let h = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
         let now = self.inner.clock.now();
         let verified = auth::verify_request(

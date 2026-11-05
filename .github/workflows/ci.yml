@@ -264,7 +264,7 @@ jobs:
         run: cargo clippy -p mbongo-compute --all-targets --all-features -- -D warnings
 
       - name: Provider tests
-        run: cargo test -p mbongo-compute --all-features --locked --test provider_contract --test provider_durability
+        run: cargo test -p mbongo-compute --all-features --locked --test provider_contract --test provider_durability --test provider_transport
 
       - name: Provider conformance
         run: cargo test -p mbongo-compute --all-features --locked --lib service::conformance -- --nocapture
