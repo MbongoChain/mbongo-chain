@@ -43,7 +43,7 @@ pub enum JobClientError {
     /// Plain HTTP to anything but loopback, or a URL this client cannot use.
     #[error("PROVIDER_INSECURE_URL")]
     InsecureUrl,
-    /// The TLS handshake failed: nothing was sent.
+    /// The TLS handshake failed: no request was sent.
     #[error("PROVIDER_TLS_REFUSED")]
     TlsRefused,
     /// The provider answered with a redirect. It is not followed.
@@ -111,6 +111,10 @@ fn is_invalid_data(error: &std::io::Error) -> bool {
 }
 
 fn is_tls_failure(e: &reqwest::Error) -> bool {
+    // Only while connecting: a malformed body is invalid data too.
+    if !e.is_connect() {
+        return false;
+    }
     let mut source = std::error::Error::source(e);
     while let Some(cause) = source {
         if cause.downcast_ref::<std::io::Error>().is_some_and(is_invalid_data) {
@@ -161,27 +165,31 @@ impl ProviderClient {
     /// `recipient`. Anything off loopback goes through [`Self::secure`].
     pub fn new(base: &str, key: LocalKey, recipient: Address) -> Result<Self, JobClientError> {
         let url = Url::parse(base).map_err(|_| JobClientError::InsecureUrl)?;
+        // An address, not a name: a name can resolve somewhere else.
         let host = url.host_str().unwrap_or_default().trim_matches(['[', ']']);
-        let loopback =
-            host == "localhost" || host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback());
+        let loopback = host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback());
         if url.scheme() != "http" || !loopback {
             return Err(JobClientError::InsecureUrl);
         }
         Self::build(reqwest::Client::builder(), base, key, recipient)
     }
 
-    /// A client for a provider across a network: TLS 1.3, and only the
-    /// authorities its endpoint file names. The chain and the host name are
-    /// verified, and no option turns that off.
+    /// A client for a provider across a network: TLS 1.3 only, and the
+    /// authorities its endpoint file names, in a store built from nothing else.
+    /// The chain and the host name are verified, and no option turns that off.
+    /// HTTP/1.1: HTTP/2 would let the client resend a signed request by itself.
     pub fn secure(endpoint: &ProviderEndpoint, key: LocalKey) -> Result<Self, JobClientError> {
-        let mut builder = reqwest::Client::builder()
-            .use_rustls_tls()
-            .tls_built_in_root_certs(false)
-            .min_tls_version(reqwest::tls::Version::TLS_1_3)
-            .https_only(true);
-        for anchor in endpoint.anchors() {
-            builder = builder.add_root_certificate(anchor.clone());
-        }
+        let tls = rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .map_err(|_| JobClientError::Unavailable("cannot build TLS configuration"))?
+        .with_root_certificates(endpoint.roots().clone())
+        .with_no_client_auth();
+        let builder = reqwest::Client::builder()
+            .use_preconfigured_tls(tls)
+            .https_only(true)
+            .http1_only();
         Self::build(builder, &endpoint.base(), key, endpoint.executor())
     }
 

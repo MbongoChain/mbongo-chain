@@ -77,16 +77,19 @@ fails. P4's signed declaration is the place to close this.
 
 ## 4. Certificates and trust
 
-- **Trust anchors are per provider.** The system's roots are off for this
-  connection, so a public CA cannot vouch for a provider. The file holds a CA, not
-  a leaf, so a provider can rotate its certificate without touching clients.
+- **Trust anchors are per provider.** The client's root store is built from this
+  file and nothing else, so a public CA cannot vouch for a provider. The anchors
+  must sit beside the endpoint file, so it cannot point at a system bundle. They
+  hold a CA, not a leaf, so a provider can rotate its certificate without touching
+  clients.
 - **Host names are verified.** There is no option to turn verification off.
 - **Minimum TLS 1.3.** Both ends are ours or the provider's, so no older client
   needs supporting.
 - **Anchor rotation** is out of band: the client replaces the file. Revocation is
   the same step. No OCSP or CRL in P3-C.
 - **A client must refuse:**
-  - `http://` to anything but loopback (`PROVIDER_INSECURE_URL`);
+  - `http://` to anything but a loopback address (`PROVIDER_INSECURE_URL`). A name
+    is refused too, even `localhost`: it can resolve elsewhere;
   - **redirects**: the client follows them by default today, which could send a
     signed request and its input elsewhere. They are turned off;
   - proxies, which are off already.
@@ -101,9 +104,9 @@ window and request identifier. Replay protection is durable and fails closed
 |---|---|
 | Query string | Not signed, and no route uses one. The service **refuses** a request carrying one |
 | Path | Must reach the service byte for byte. A terminator that normalizes it fails with `AUTH_BAD_SIGNATURE`: safe, and a configuration error |
-| Other headers, `Host`, `X-Forwarded-*` | Not signed. The service must not act on them, and does not today. A test keeps it so |
+| Other headers, `Host`, `X-Forwarded-*` | Not signed. The service must not act on them, and does not read them |
 | Terminator retries | **Off.** A retried request is a replay, and is refused |
-| Client retries | Always a fresh signature and identifier |
+| Client retries | Always a fresh signature and identifier. The client speaks HTTP/1.1, so that nothing below it resends a signed request |
 | Clock | Unchanged: a 120 s window, 30 s skew. A skewed client fails with `AUTH_NOT_YET_VALID` or `AUTH_EXPIRED` |
 
 ## 6. Backend and host
@@ -201,7 +204,7 @@ Existing P2, P3-A and P3-B checks must keep passing.
 
 | Stage | Content |
 |---|---|
-| **C1, client and service** | Endpoint file, TLS trust, no redirects, `Unavailable` mapping, query refusal, portable tests |
+| **C1, client and service** | Endpoint file, TLS trust, no redirects, bounded retries on gateway failures, query refusal, portable tests |
 | **C2, reference and host** | Inbound policy in the launcher, nginx configuration, runbook, Linux tests |
 
 Each is one PR. C1 needs no host change.

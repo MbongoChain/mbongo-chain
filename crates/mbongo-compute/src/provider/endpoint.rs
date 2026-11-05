@@ -5,10 +5,13 @@
 //! alone. Nothing here ties the certificate to the executor key: TLS proves a
 //! host name, and the chain proves the executor.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use mbongo_core::Address;
-use reqwest::{Certificate, Url};
+use reqwest::Url;
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::CertificateDer;
+use rustls::RootCertStore;
 use serde::Deserialize;
 
 /// The file's schema.
@@ -20,7 +23,7 @@ struct EndpointFile {
     schema: String,
     executor: String,
     url: String,
-    /// PEM, relative to this file.
+    /// PEM, beside this file: it cannot name a bundle kept elsewhere.
     trust_anchors: PathBuf,
 }
 
@@ -38,7 +41,7 @@ fn invalid(detail: impl Into<String>) -> EndpointError {
 pub struct ProviderEndpoint {
     executor: Address,
     url: Url,
-    anchors: Vec<Certificate>,
+    roots: RootCertStore,
 }
 
 impl ProviderEndpoint {
@@ -63,17 +66,25 @@ impl ProviderEndpoint {
         if url.scheme() != "https" || url.host().is_none() || !bare {
             return Err(invalid("url must be https, with a host and nothing else"));
         }
+        let beside = file.trust_anchors.components().all(|c| matches!(c, Component::Normal(_)));
+        if !beside {
+            return Err(invalid("trust_anchors must sit beside the endpoint file"));
+        }
         let anchors_file = path.parent().unwrap_or(Path::new(".")).join(file.trust_anchors);
         let pem =
             std::fs::read(anchors_file).map_err(|e| invalid(format!("anchors: {:?}", e.kind())))?;
-        let anchors = Certificate::from_pem_bundle(&pem).map_err(|_| invalid("anchors"))?;
-        if anchors.is_empty() {
+        let mut roots = RootCertStore::empty();
+        for certificate in CertificateDer::pem_slice_iter(&pem) {
+            let certificate = certificate.map_err(|_| invalid("anchors"))?;
+            roots.add(certificate).map_err(|_| invalid("anchors"))?;
+        }
+        if roots.is_empty() {
             return Err(invalid("no trust anchors"));
         }
         Ok(Self {
             executor: Address(executor),
             url,
-            anchors,
+            roots,
         })
     }
 
@@ -87,8 +98,8 @@ impl ProviderEndpoint {
         self.url.as_str().trim_end_matches('/').to_owned()
     }
 
-    /// The certificate authorities trusted for this provider.
-    pub fn anchors(&self) -> &[Certificate] {
-        &self.anchors
+    /// The certificate authorities trusted for this provider, and no others.
+    pub fn roots(&self) -> &RootCertStore {
+        &self.roots
     }
 }

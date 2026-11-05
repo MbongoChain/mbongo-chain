@@ -195,9 +195,9 @@ impl Gateway {
         rule.faults.pop_front()
     }
 
-    fn count(&self, method: &str, path_ends_with: &str) -> usize {
+    fn count(&self, method: &str, path_contains: &str) -> usize {
         let seen = self.seen.lock().unwrap();
-        seen.iter().filter(|(m, p)| m == method && p.ends_with(path_ends_with)).count()
+        seen.iter().filter(|(m, p)| m == method && p.contains(path_contains)).count()
     }
 
     fn add(&self, method: &'static str, path_contains: &'static str, faults: &[Fault]) {
@@ -449,7 +449,7 @@ async fn tls_older_than_1_3_is_refused() {
 fn plain_http_is_for_loopback_only() {
     let key = || LocalKey::from_seed(&CLIENT_SEED);
     let executor = Address([1; 32]);
-    for allowed in ["http://127.0.0.1:1", "http://[::1]:1", "http://localhost:1"] {
+    for allowed in ["http://127.0.0.1:1", "http://[::1]:1"] {
         assert!(
             ProviderClient::new(allowed, key(), executor).is_ok(),
             "{allowed}"
@@ -457,6 +457,7 @@ fn plain_http_is_for_loopback_only() {
     }
     for refused in [
         "http://provider.invalid",
+        "http://localhost:1",
         "http://192.0.2.1:8080",
         "https://provider.invalid",
         "ftp://127.0.0.1",
@@ -499,6 +500,15 @@ fn an_endpoint_file_says_exactly_what_it_must() {
     std::fs::write(&file, value.to_string()).unwrap();
     assert!(ProviderEndpoint::load(&file).is_err(), "another schema");
     value["schema"] = json!("provider-endpoint-v1");
+    for elsewhere in [
+        dir.join("anchors.pem").display().to_string(),
+        "../anchors.pem".to_owned(),
+    ] {
+        value["trust_anchors"] = json!(elsewhere);
+        std::fs::write(&file, value.to_string()).unwrap();
+        assert!(ProviderEndpoint::load(&file).is_err(), "{elsewhere}");
+    }
+    value["trust_anchors"] = json!("anchors.pem");
     value["verify"] = json!(false);
     std::fs::write(&file, value.to_string()).unwrap();
     assert!(ProviderEndpoint::load(&file).is_err(), "an unknown field");
@@ -621,9 +631,13 @@ async fn gives_up_at_its_bound(seed: u8, method: &'static str, path: &'static st
     let started = Instant::now();
     let outcome = s.job(&client, wait).await;
     assert!(gateway_failure(&outcome, 503), "{outcome:?}");
-    assert!(started.elapsed() < Duration::from_secs(10));
-    let attempts = s.gateway.count(method, "");
-    assert!((2..=40).contains(&attempts), "{attempts} attempts");
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= wait.timeout && elapsed < Duration::from_secs(10),
+        "{elapsed:?}"
+    );
+    let attempts = s.gateway.count(method, path);
+    assert!((3..=40).contains(&attempts), "{attempts} attempts");
     assert_eq!(s.gateway.count("PUT", "/v1/inputs"), 1);
     assert_eq!(s.tasks_on_chain().await, 1, "the job was submitted again");
 }
@@ -658,8 +672,11 @@ async fn a_valid_certificate_does_not_make_a_wrong_result_right() {
     let forged = b"{\"count\":2,\"sum\":6}".to_vec();
     s.gateway.add_forever("GET", "/result", Fault::Respond(forged));
     let outcome = s.job(&client, WAIT).await;
-    assert!(
-        matches!(outcome, Err(JobClientError::Verification(_))),
-        "{outcome:?}"
+    let Err(JobClientError::Verification(reason)) = &outcome else {
+        panic!("{outcome:?}");
+    };
+    assert_ne!(
+        reason, "no anchored receipt",
+        "the receipt was not what refused it"
     );
 }
