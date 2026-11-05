@@ -34,7 +34,8 @@ be a single-operator demonstration.
 
 - [x] Block/transaction SCALE encoding: `BlockHeader`, `Block`
 - [x] Hashing rules: block hash input changes with the block, new domains
-- [x] `apply_block` validity rules: new rules (t)–(w), and a normative transfer definition that supersedes v0.4 behaviour where they differ
+- [x] `apply_block` validity rules: new rules (t)–(w), one strict signature definition, and a normative transfer definition that supersedes v0.4 behaviour where they differ
+- [x] Producer obligations: one block per height (section 3)
 - [ ] Atomic `write_batch` requirement: unchanged
 - [x] Storage: schema 4, chain identity metadata, refusal of older directories
 - [x] P2P protocol strings: new versions and chain binding. Framing unchanged
@@ -76,8 +77,9 @@ and does not depend on any other code:
 - `name`: 1 to 64 characters from `[a-z0-9-]`.
 - `timestamp`: digits only, no leading zero unless it is `0`, fitting in `u64`.
 - `address`, `authorities[]`: 64 hex characters. Each authority is a canonical encoding of
-  an Ed25519 point that is not of small order. `authorities` holds at least one, with no
-  duplicates. **Its order is significant.**
+  an Ed25519 point that is not of small order. `authorities` holds **exactly one** in
+  `mbongo-genesis:v1`. It stays a list so that a later schema can define more, under its
+  own review.
 - `allocations`: sorted ascending by address, with no duplicates. May be empty. Each one
   creates an account with its amount and nonce 0, including an amount of `"0"`.
 - `amount`: a decimal string with no sign and no leading zero, or `"0"`. Each amount and
@@ -102,7 +104,7 @@ automatically. It is a public test key.
 `scripts/devnet/*`, `scripts/mvp-launch.mjs`, `scripts/mvp-d-acceptance.mjs`, and every
 harness that starts a node: `replay_harness`, `devnet_harness`, `compute_vertical`,
 `compute_harness`, `mvp_inference_harness`, `provider_harness`, and the tests that start
-one.
+one. `MBONGO_CHAIN` goes with `--chain`.
 
 ### 2. Transaction signing
 
@@ -115,8 +117,11 @@ The signed bytes become:
 The `Transaction` encoding and its hash are unchanged: only the signature's domain
 changes. A signature made for one network does not verify on another. `ComputeTask`
 and `Receipt` need no change: an anchoring transaction carries a chain-bound signature.
-A `Receipt` signature alone does not name a network. How transaction signatures are
-verified is otherwise unchanged.
+A `Receipt` signature alone does not name a network.
+
+Transaction signatures and receipt signatures (rule (h)) are verified by the strict
+definition of section 3, so that this is a protocol rule and not a library default. Their
+signed bytes are as stated here and in Lock §5.
 
 ### 3. Authenticated blocks
 
@@ -141,22 +146,43 @@ pub struct Block {
 `BLAKE3("mbongo-block:v1" || chain_id || SCALE(header))`. Verification is strict, because
 the block hash covers the signature, and a malleable signature would give one block two
 hashes: `s` is below the group order, `R` and the public key are canonical and not of
-small order, and the equation is checked without the cofactor (RFC 8032, as
-`ed25519-dalek`'s `verify_strict` does). `compute_block_hash` keeps hashing the SCALE of the whole block.
+small order, and the equation is checked without the cofactor (RFC 8032). `ed25519-dalek`'s
+`verify_strict` does not check canonical encoding by itself, so an implementation built on
+it adds that check. `compute_block_hash` keeps hashing the SCALE of the whole block.
 
-With `n` authorities, the producer at height `h` is `authorities[h % n]`. MVP v0.2 uses
-`n = 1`. Larger sets follow the same rule, and are not tested by this RFC's first use.
+The producer of every block is `authorities[0]`, the only authority this schema allows.
 
 `--producer` needs `--producer-key-file`, a file holding a 32-byte Ed25519 seed as 64 hex
 characters, as the client key files do. Its key must be one of the authorities, or the
 node refuses to start. The only exception is `--dev`, where the flag is not used and the
-public dev authority key is taken automatically. At a height that is not its turn, `produce_block` returns
-`NotProducerTurn` and produces nothing.
+public dev authority key is taken automatically, and `--dev` with `--producer-key-file` is
+refused.
 
 **A producer builds a block in this order:** execute the transactions on an uncommitted
 view, compute `state_root`, fill the header with
 `timestamp = max(now, parent.timestamp)`, sign, then call `apply_block`, which validates
-it like any other block and commits it.
+it like any other block and commits it. A transaction that fails in the view is left out
+of the block, and does not fail it.
+
+**One block per height.** With no fork choice, two signed blocks at one height split a
+network for good, and honest failures can cause that as well as malice. So an authority
+node:
+
+- runs production and block application under one writer;
+- commits a block with a synced write **before** broadcasting it. A crash before the
+  commit leaves nothing that anyone has seen, so signing a different block at that height
+  afterwards is harmless;
+- after a start, produces nothing until it has reached the highest height its connected
+  peers report, and refuses to produce while any peer reports a higher one;
+- is the only running node holding that key. Nothing can enforce this: it is an operating
+  rule.
+
+These bind the producer. A receiving node cannot check them.
+
+**Recovery.** If two blocks exist at one height anyway, nodes stay on the first they saw,
+and no rule reconciles them. The operators pick one branch. Nodes on the other stop, clear
+their directories and resync. If no branch can be chosen, the network restarts from a new
+genesis.
 
 ### 4. State commitment
 
@@ -168,7 +194,8 @@ state_root(h) = BLAKE3("mbongo:state:v1" || state_root(h-1) || SCALE(changes))
 ```
 
 - `allocations` is `Vec<(Address, u128)>`, in file order.
-- `changes` is `Vec<(u8, [u8; 32], Vec<u8>)>`, sorted by the first element, then the second.
+- `changes` is `Vec<(u8, [u8; 32], Vec<u8>)>`, sorted ascending by kind, then by key,
+  compared bytewise.
 - Entries, one per key, hold the value after the whole block:
 
 | Kind | Key | Value | Present when |
@@ -178,20 +205,22 @@ state_root(h) = BLAKE3("mbongo:state:v1" || state_root(h-1) || SCALE(changes))
 | 2 | `task_id` | `SCALE(Receipt)` | The block anchors the receipt |
 
 A skipped transaction (section 6) contributes nothing. An empty block has empty `changes`.
+`SCALE(Account)` becomes a consensus input, so the `Account` encoding is locked in v0.5.
 
 The cost is proportional to the block, and storage needs no iteration. This detects
-divergence at the first differing block. **It is not a Merkle root:** it gives no
+divergence in what blocks change, at the first block where that differs. A difference in
+an account stays invisible until a block touches it. **It is not a Merkle root:** it gives no
 membership proof and no snapshot sync. A full state tree was considered and left out:
 it is much larger, and nothing in this version needs a proof.
 
 ### 5. New validity rules
 
-Evaluated in this order, after the existing height, parent and `transactions_root`
-checks, and before any transaction:
+Evaluated in this order, after the existing checks of height, then parent, then
+`transactions_root`, and before any transaction:
 
 | Rule | Check | Error |
 |---|---|---|
-| (t) | `header.producer == authorities[height % n]` | `UnauthorizedProducer` |
+| (t) | `header.producer == authorities[0]` | `UnauthorizedProducer` |
 | (u) | `producer_signature` verifies | `InvalidBlockSignature` |
 | (v) | `timestamp >= parent.timestamp` | `InvalidTimestamp` |
 
@@ -212,8 +241,14 @@ transfer path normative. **Where v0.4 behaviour differs from it, this section su
 it,** including in which transactions are accepted. v0.5 starts from a fresh genesis, so
 no chain is reinterpreted.
 
-A transaction already stored is **skipped**, as Lock §5 defines: it changes nothing, and
-is not *applied*. Everything below concerns applied transactions.
+**Stored** means committed by an earlier block. It never means the uncommitted view of the
+block being applied.
+
+A stored `Transfer` or `Stake` transaction is **skipped**, as Lock §5 defines: it changes
+nothing, and is not *applied*. A stored `ComputeTask` or `AnchorReceipt` transaction is
+refused, by its existing rule. A second copy within one block is not stored, so it is
+evaluated like any other transaction, and fails at its nonce. Everything below concerns
+applied transactions.
 
 Accounts are one mapping from address to state. Applying a `Transfer` or `Stake`
 transaction performs these steps, in order, each on the result of the one before:
@@ -245,8 +280,9 @@ bind every implementation:
 - **A new RPC version, `rpc_v0.4`,** because a result shape changes: block results gain
   `producer` and `producer_signature`, in the `0x`-prefixed hex of `rpc_v0.3`.
 - New method `get_chain_info`, no parameters, returning
-  `{"chain_id": "0x…", "genesis_hash": "0x…", "authorities": ["0x…"]}`. Clients need
-  `chain_id` to sign.
+  `{"chain_id": "0x…", "genesis_hash": "0x…", "authorities": ["0x…"]}`.
+- **A client takes `chain_id` from its own configuration,** and uses `get_chain_info` only
+  to compare. An endpoint must not choose the network a user signs for.
 
 ---
 
@@ -258,15 +294,17 @@ migration. A v0.5 network starts from a new genesis in an empty directory.
 - **Existing nodes:** v0.4 and v0.5 nodes do not negotiate.
 - **Existing data:** abandoned. Storage schema 3 → 4. Unlike earlier versions, a v0.5 node
   **refuses** a directory below schema 4, and does not stamp it. Schema 4 stores `chain_id`
-  and the genesis hash, and a node refuses a directory holding different ones. Only a
-  directory with no schema stamp, no chain identity and no block is treated as new, so a
-  crash during creation is recoverable. Any stamp below 4 is refused, block or no block.
+  and the genesis hash, and a node refuses a directory holding different ones. A
+  directory is new when it has no chain identity and no block, and its stamp is absent or
+  4, so a crash at any point during creation is recoverable. Any stamp below 4 is refused,
+  block or no block.
 - **Existing clients:** `@mbongo/sdk` needs a new version for signing, block decoding and
-  `get_chain_info`. 0.2.0 stays valid for v0.4 only. `mbongo-compute` signs transactions
-  too, in its client and worker, and changes with the node.
+  `get_chain_info`. 0.2.0 stays valid for v0.4 only. Every other transaction signer
+  changes with the node: `mbongo-wallet`, and in `mbongo-compute` its client, worker,
+  service and harnesses.
 - **Rollback:** nothing to roll back. An abandoned v0.5 directory leaves v0.4 and its tag
   as they are.
-- **`mvp-v0.1.0`:** unaffected. It stays pinned to its release and protocol.
+- **`mvp-v0.1.0`:** not changed by this RFC. It stays pinned to its release and protocol.
 - **Vectors:** see Testing.
 
 ---
@@ -280,8 +318,11 @@ migration. A v0.5 network starts from a new genesis in an empty directory.
 | Two nodes silently disagreeing on state | The differing block is refused by (w), and the node stays at the last agreed height. It may keep re-requesting that block |
 | A state transition that differs from section 6 | Refused by review and tests, not at runtime: nodes that agree pass rule (w) |
 | An authority key is stolen | **Not addressed.** Replacing it needs a new genesis |
-| An authority equivocates | **Not addressed.** Peers keep the first block seen. No fork choice, no slashing |
-| An authority censors or stops | **Not addressed.** With `n = 1` the chain halts |
+| An authority signs two blocks at one height by accident | Section 3 removes the known honest causes. Recovery is manual |
+| An authority equivocates on purpose | **Not addressed.** Peers keep the first block seen. No fork choice, no slashing |
+| An authority censors or stops | **Not addressed.** With one authority the chain halts |
+| A dev network | All `--dev` networks share one `chain_id`, so transactions replay between them. Nothing stops a genesis naming the public dev authority: an operator must not |
+| Off-chain signatures | Provider HTTP, lease and capability signatures are not bound to a network by this RFC |
 
 Authority keys become the most sensitive keys on a network. New denial-of-service path:
 signature verification on every block from any peer, bounded by the peer rate limits of
@@ -296,6 +337,12 @@ signature verification on every block from any peer, bounded by the peer rate li
   `anchor-receipt-v1`, `anchor-binding-v1` and `compute-task-rpc-v1`, wherever they hold a
   signature or a block. `receipt-v1` is unchanged. The v0.4 fixtures stay as records.
 - `apply_block` negative tests for (t) to (w), each asserting its own error.
+- Negative vectors for the strict definition: non-canonical `s`, `R` and key forms, and
+  small-order `R` and key, for blocks, transactions and receipts.
+- For each transaction type: a stored copy, and a second copy in one block, with a vector.
+- A genesis with more than one authority is refused.
+- Concurrent production gives one block per height. A crash before the commit, and a
+  restart behind a peer, each give no second block at a height.
 - Genesis: every malformed form refused, and a crash during creation leaves no partial state.
 - Two nodes with different genesis files refuse to sync, at negotiation.
 - A transaction signed for another `chain_id` is refused.
@@ -316,5 +363,6 @@ the vectors match their independent derivation in Rust and in TypeScript.
 3. Implementation, under the gates of `MVP_v0.2_NETWORK_READINESS.md`: conformance to
    section 6 first, as its own change, then `mbongo-core`, `mbongo-storage`, `mbongo-node`,
    `mbongo-network`, `mbongo-compute`, then the SDK.
-4. `PROTOCOL_LOCK_v0.5.md`, `rpc_v0.4.md`, and a `v0.5-devnet-stable` tag. v0.4 stays as a
+4. `PROTOCOL_LOCK_v0.5.md`, including the `Account` encoding, `rpc_v0.4.md`, an updated
+   `storage_invariants.md`, and a `v0.5-devnet-stable` tag. v0.4 stays as a
    historical lock. No coordination is needed: there is no network to upgrade.
