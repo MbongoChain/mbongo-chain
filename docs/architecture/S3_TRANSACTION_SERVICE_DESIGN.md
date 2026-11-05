@@ -200,8 +200,8 @@ proposed. The status is 404, and the client resubmits.
 | R7 | Peer serves a block that is refused | Block not applied, backoff, another peer tried | Same peer is asked again at once |
 | R8 | Process crash during block commit | Atomic batch: restart at the old or the new height. A host crash is not covered, and no power-loss durability is claimed | Storage batch is atomic; no crash test |
 | R9 | All nodes restart | Same height, head hash and balances on every node | No test |
-| R11 | Peer sends malformed or impossible sync data | Ignored, no crash, peer treated as failed | No test |
 | R10 | Provider restarts during a job | Job recovers as the durable store defines, and its receipt still anchors through the network | Provider restart tests exist, with no network |
+| R11 | Peer sends malformed or impossible sync data | Ignored, no crash, peer treated as failed | No test |
 
 **Fix for R3, R5 and R7:** redial configured bootnodes on `ConnectionClosed` and on failed
 dials, with capped backoff, and tell the orchestrator that the peer is gone. The
