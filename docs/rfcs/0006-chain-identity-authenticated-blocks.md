@@ -175,11 +175,11 @@ node:
   afterwards is harmless;
 - after a start, produces nothing until it is **caught up**: 30 seconds without progress,
   counted from the first answer from any peer, whether the authority dialed it or it dialed
-  the authority. Progress is a valid block applied, or the first answer from a peer
-  connected at that moment that shows a height above the tip. Peers that connect later, and
-  later answers, do not extend the period. So a slow honest catch-up is not cut off, a false
-  low height does not end one that another peer is serving, and a peer serving no valid
-  block can delay a start by at most one period. If no peer ever answers, the wait has no
+  the authority. Progress is a valid block applied, or the first answer, from any
+  peer, that shows a height above the tip. Peers that connect later, and later answers, do
+  not extend the period. So a slow honest catch-up is not cut off, a false low height does
+  not end one that another peer is serving, and peers serving no valid block can together
+  delay a start by at most one period. If no peer ever answers, the wait has no
   limit, and only an operator ends it, with `--producer-start-alone <height>`;
 - treats that flag as waiving only the need for an answer: the period then counts from the
   start, and blocks that arrive in it are applied first. Its value must equal the local height, or
@@ -356,7 +356,7 @@ migration. A v0.5 network starts from a new genesis in an empty directory.
 | A state transition that differs from section 6 | Refused by review and tests, not at runtime: nodes that agree pass rule (w) |
 | An authority key is stolen | **Not addressed.** Replacing it needs a new genesis |
 | An authority signs two blocks at one height by accident | Section 3 reduces this. It remains possible: a wiped or restored authority started with `--producer-start-alone`, one whose only answering peers are behind the true tip, or two nodes sharing the key. Recovery is manual |
-| A peer reports a false height | Does not stop a running authority: only a valid signed block does. At a start, a peer can delay catch-up by one period, and if it is the only peer that answers, a wiped or restored authority can resume behind the tip. If no peer answers at all, the wait is unbounded until an operator acts, so the chain stays halted rather than risk a fork |
+| A peer reports a false height | Does not stop a running authority: only a valid signed block does. At a start, peers can delay catch-up by one period, and if one is the only peer that answers, a wiped or restored authority can resume behind the tip. If no peer answers at all, the wait is unbounded until an operator acts, so the chain stays halted rather than risk a fork |
 | A peer keeps a signed block from an abandoned branch | It stops the authority until an operator removes that peer and restarts the node. This is the price of never extending a known fork |
 | An authority equivocates on purpose | **Not addressed.** Peers keep the first block seen. No fork choice, no slashing |
 | An authority censors or stops | **Not addressed.** With one authority the chain halts |
