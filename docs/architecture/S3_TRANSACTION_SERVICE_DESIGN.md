@@ -1,7 +1,7 @@
 # S3: Transaction Service and Recovery Design
 
-**Status: PROPOSED, design only.** Nothing here is implemented or authorized for
-implementation. Stage S3 of [`MVP_v0.2_NETWORK_READINESS.md`](../product/MVP_v0.2_NETWORK_READINESS.md),
+**Status: PROPOSED, with decisions D1 to D5 recorded in section 10.** Only PR 1 is authorized
+for implementation. Stage S3 of [`MVP_v0.2_NETWORK_READINESS.md`](../product/MVP_v0.2_NETWORK_READINESS.md),
 tracked in #207. The roadmap stays in #209, and this document holds no schedule.
 
 **Covers:** forwarding to the producer, explicit failure, mempool bounds and eviction,
@@ -27,7 +27,7 @@ Read from the code at `dev` `23832d43`. This is not a statement of test coverage
 | A block takes the first 1000 entries in insertion order, and is all or nothing. A failed block leaves all of them pending, so the next attempt selects the same entries | `peek_for_block`, `produce_block` |
 | An imported block does not clear the local mempool. Pushed blocks go through `handle_incoming_block`, while synced blocks call `apply_block` directly | `backend.rs`, `main.rs` |
 | A pending receipt may depend on another sender's pending task | `backend.rs`, rules (q)–(s) |
-| `apply_block` errors about a transaction carry its index. `Storage`, `BadParent` and `BadHeight` do not | `ApplyBlockError` |
+| `apply_block` errors about a transaction carry its index. `Storage`, `BadParent`, `BadHeight` and `TransactionsRootMismatch` do not | `ApplyBlockError` |
 | The orchestrator holds one peer, and asks it again straight after a refused block | `main.rs` |
 | The mempool is not persisted | `NodeBackend::new` |
 | `GET /transactions/:hash` reads storage only: a pending transaction is 404, and `block_hash` and `block_height` are always null | `backend.rs` |
@@ -92,8 +92,9 @@ refused explicitly.
 
 **Reachability:** the producer's RPC has to listen beyond loopback (`--rpc-host` exists).
 That RPC has no authentication and includes `produce_block`, and its CORS policy allows
-any origin. It stays on a private network, with access restricted to the followers by
-firewall. See decision D3.
+any origin. **It stays on a private network, with access restricted to the followers and
+the operator by firewall (D3).** Ordinary clients use a follower. A follower forwards
+`submit_transaction` only, and its own `produce_block` is refused.
 
 **After S1:** a follower compares `get_chain_info` with its own `chain_id` before its
 first forward and refuses on a mismatch. The producer also refuses transactions signed
@@ -101,10 +102,12 @@ for another chain, because the signature no longer verifies.
 
 ## 3. Explicit failure
 
-The error code stays `-32603`, and no failure is reported as success. Messages are not
-contract, so the class is carried in the standard JSON-RPC `error.data`, as
-`{"kind": "..."}`. Clients that ignore `data` see today's error shape. `BackendError` gets
-a variant carrying the class.
+The error code stays `-32603`, and no failure is reported as success. RFC 0006 section 7
+sets that rule for `rpc_v0.4`: a hash means the producer admitted the transaction or it is
+committed. Messages are not contract, so the class below is carried in the standard
+JSON-RPC `error.data`, as `{"kind": "..."}`. Clients that ignore `data` see today's error
+shape. `BackendError` gets a variant carrying the class. The `kind` values and the
+forwarding header are additive, and are specified in `rpc_v0.4.md` with PR 3.
 
 | `kind` | When | Reached the producer? | Client action |
 |---|---|---|---|
@@ -129,7 +132,7 @@ returns `already_included` rather than `rejected`.
 
 **Behaviour change, stated plainly:** a follower with no route accepts today and will
 refuse. Silent acceptance is the defect being removed, so no compatibility flag is
-proposed. This is a change to observable RPC behaviour, see D2.
+proposed (D4). This is a change to observable RPC behaviour, so it ships in `rpc_v0.4` (D2).
 
 ## 4. Mempool bounds and eviction
 
@@ -139,7 +142,7 @@ any effect on consensus.
 | Policy | Value |
 |---|---|
 | Global cap | 8192 entries, `--mempool-max-pending`, 1 to 65536 |
-| Memory | Cap times the largest admissible transaction, about 5 KiB, so about 40 MiB of payload at the default. Estimated, and asserted by M8 |
+| Memory | 5362 bytes of heap per entry for the largest admissible transaction, in every index, measured at caps of 1024, 8192 and 65536: about 42 MiB at the default and 335 MiB at the maximum. M8 asserts at most 6 KiB per entry |
 | Per-sender cap | 64, unchanged |
 | Expiry | 3600 s from admission, `--mempool-ttl-secs`, on a monotonic clock |
 | Sweep | After each committed block, and every 30 s |
@@ -150,16 +153,24 @@ no fair priority, and displacing the oldest would let a flood remove honest tran
 The cap check sits with the per-sender check, after the idempotent return, so a retry of a
 pending transaction still gets its hash.
 
-**Eviction of a live entry removes what depends on it.** Blocks follow insertion order. If
-only nonce `n` expired and was then resubmitted, it would sit after `n+1`, and every block
-containing both would fail. So `expired` and `block_failed` take with them:
+**Eviction removes what depends on the evicted entry, to a fixed point.** Blocks follow
+insertion order. If only nonce `n` expired and was then resubmitted, it would sit after
+`n+1`, and every block containing both would fail. So:
 
-- every pending entry of that sender above `n`;
-- for a `ComputeTask`, every pending `AnchorReceipt` bound to its `task_id`, whatever its
-  sender, and that sender's entries above it. Otherwise the receipt fails rule (q) in every
-  block, and a resubmitted task would sit behind it.
+| Reason | Sender's entries above it | Receipt bound to it, if a `ComputeTask` |
+|---|---|---|
+| `included` | Stay | Stays: the task is on chain |
+| `stale_nonce` | Stay: still valid | Goes, unless the task is registered |
+| `superseded`, `expired` | Go | Goes, unless the task is registered |
 
-`included` and `stale_nonce` remove the entry alone: entries above it are still valid.
+Whatever goes as `dependent` is treated the same way, so a receipt's sender loses its entries
+above the receipt, and a `ComputeTask` among those takes its own receipt. Otherwise the
+receipt fails rule (q) in every block, and a resubmitted task would sit behind it.
+
+**The hook revalidates a block's senders.** A block not built from this mempool can leave
+an entry at a current nonce unable to apply: its task registered, its receipt anchored, or
+its balance spent. Only the same sender can cause this, since nonces and debits are the
+sender's own, and a task or receipt id binds its sender. Those entries go as `superseded`.
 
 **Reasons:**
 
@@ -167,22 +178,21 @@ containing both would fail. So `expired` and `block_failed` take with them:
 |---|---|
 | `included` | The transaction is in a committed block, produced or imported |
 | `stale_nonce` | Its nonce is below the committed nonce |
+| `superseded` | A committed block made it unable to apply |
 | `expired` | Older than the TTL |
 | `dependent` | Something it depends on was evicted |
-| `block_failed` | See below |
 
-**One post-commit hook.** A single function updates the mempool, the block map and the
-counters after any commit. It is called on all three paths: produced, pushed and synced.
+**One post-commit hook.** A single function updates the mempool after any commit. It is
+called on all three paths: produced, pushed and synced. PR 4 adds the block map and counters
+to it.
 
 **Block failure.** Today one transaction that passes admission and fails application stops
-block production for as long as it stays pending. Proposed: when a produced block fails
-with an error that carries an index, evict `body[index]` as `block_failed`, with its
-dependants, and rebuild the block in the same production round. An error with no index
-(`Storage`, `BadParent`, `BadHeight`) blames no transaction, so nothing is evicted and the
-round ends. Production is serialised by a lock, because the timer and the `produce_block`
-RPC can otherwise race on the same parent. Every attempt goes through the unchanged
-`apply_block`. This edits `produce_block`, a Tier 0 function, so it is its own PR. It
-changes which transactions a producer proposes, not which blocks are valid.
+block production for as long as it stays pending. PR 1 removes the causes it can see, and
+the TTL clears the rest. RFC 0006 section 3 has the producer leave out a transaction that
+fails in its view, and serialises production. **That logic belongs to S1, and S3 does not
+repeat it.** PR 5 only applies mempool policy to what S1's block builder left out. Between a
+commit and its hook, production can still select an entry the block just included. In PR 1
+that fails one block and the next round succeeds. S1's single writer closes it.
 
 **Restart:** pending transactions are lost, as they are today. Persisting them is not
 proposed. The status is 404, and the client resubmits.
@@ -198,16 +208,16 @@ proposed. The status is 404, and the client resubmits.
 | R5 | Peer lost in the middle of a range | Another known peer or redial, no duplicate apply | Not handled: one peer is held |
 | R6 | Gap seen through a block announcement | Sync triggered, gap closed | Implemented, no test of failure paths |
 | R7 | Peer serves a block that is refused | Block not applied, backoff, another peer tried | Same peer is asked again at once |
-| R8 | Process crash during block commit | Atomic batch: restart at the old or the new height. A host crash is not covered, and no power-loss durability is claimed | Storage batch is atomic; no crash test |
+| R8 | Process crash during block commit | Atomic batch: restart at the old or the new height. A host crash is not covered, and no power-loss durability is claimed. RFC 0006 section 3 adds a synced commit on the authority, which S1 implements and must evidence | Storage batch is atomic; no crash test |
 | R9 | All nodes restart | Same height, head hash and balances on every node | No test |
 | R10 | Provider restarts during a job | Job recovers as the durable store defines, and its receipt still anchors through the network | Provider restart tests exist, with no network |
-| R11 | Peer sends malformed or impossible sync data | Ignored, no crash, peer treated as failed | No test |
+| R11 | Peer sends malformed or impossible sync data | Ignored, no crash, peer treated as failed. Sync state is held per peer, so one answer cannot replace another's | No test |
 
 **Fix for R3, R5 and R7:** redial configured bootnodes on `ConnectionClosed` and on failed
 dials, with capped backoff, and tell the orchestrator that the peer is gone. The
 orchestrator keeps the set of connected peers, and moves to another with backoff after a
-failure or a refused block. `--node-key-file` gives a stable identity, in the same format
-as other seed files, and is needed only for bootnode addresses with `/p2p/`. Protocol
+failure or a refused block. `--node-key-file` gives a stable identity, as RFC 0006 section 3
+requires, and is needed only for bootnode addresses with `/p2p/`. Protocol
 identifiers and message shapes do not change. R3 is tested with `--no-mdns`, with and
 without `/p2p/`.
 
@@ -254,9 +264,9 @@ not proposed.
 | Transaction and block encoding, signing | Unchanged |
 | P2P identifiers and message shapes | Unchanged. `p2p.rs` changes in behaviour only: failure events, redial, optional stable identity |
 | Storage schema | Unchanged |
-| RPC (B19, frozen) | **Touched.** Methods, params, result shapes and codes stay. `error.data.kind` and the header are additive. Refusal on an unrouted follower changes what a request returns. Needs a versioned spec revision, see D2 |
+| RPC (B19, frozen) | **Touched from PR 3, not by PR 1.** Methods, params, result shapes and codes stay. `error.data.kind` and the header are additive. Refusal on an unrouted follower changes what a request returns, so it ships in `rpc_v0.4` under RFC 0006 (D2). A full-pool refusal in PR 1 is `-32603`, the existing admission path |
 | REST | The Lock does not name it. Additive field, one new route |
-| `produce_block` | Tier 0 function, block selection only. No locked surface |
+| `produce_block` | Tier 0 function. PR 1 replaces its mempool removal with the hook, and nothing else. No locked surface |
 | Mempool policy, CLI flags, `main.rs` | Tier 1 or `NON_PROTOCOL` |
 | `backend.rs` outside validity rules, `server.rs`, `rpc.rs` | Tier 0 files or crates, no locked surface apart from the RPC row above |
 
@@ -294,15 +304,17 @@ blocks and is run at the end.
 | M4 | TTL passes | Entry and its suffix evicted, with reasons | U | 1 | |
 | M4b | Pending task expires with a receipt bound to it | Receipt and its sender's suffix evicted, next block valid | U | 1 | |
 | M4c | Block included up to the middle of a chain, or a stale entry removed | Valid entries above it stay | U | 1 | |
+| M4d | Dependants two hops away, across senders | All evicted, next block valid | U | 1 | |
+| M4e | Stale `ComputeTask` with a bound receipt | Receipt goes unless the task is registered | U | 1 | |
+| M4f | Task registered, receipt anchored, or balance spent by another transaction in an imported block | `superseded`, with its dependants, next block valid | U | 1 | |
 | M5 | Evicted nonce resubmitted | Next block is valid | U | 1 | |
-| M6 | Block pushed, and block synced | Included and stale entries removed on both paths | U | 1 | |
+| M6 | Block produced, pushed and synced | Included and stale entries removed on all three paths, through the real orchestrator | U | 1 | |
 | M7 | Random operations | Indexes, order and counters stay consistent | U | 1 | |
 | M8 | Largest transactions at the cap | Memory within the stated bound | U | 1 | |
 | M9 | Restart | Pool empty, resubmission included | I | 1 | AC9 |
 | M10 | Eviction | No change to storage or blocks | U | 1 | |
-| M11 | One entry fails application | Evicted as `block_failed` with its dependants, the rest included in that round | U | 5 | |
-| M12 | Error with no index | Nothing evicted | U | 5 | |
-| M13 | Timer and RPC production at once | One block per height, nothing evicted | U | 5 | |
+| M11 | S1's builder leaves an entry out | Evicted with its dependants, the rest included | U | 5 | |
+| M12 | A produced block fails with no transaction to blame | Nothing evicted | U | 5 | |
 | R1–R9 | Section 5 | As stated | I, H | 2, 6 | AC9 |
 | R11 | Section 5 | As stated | U | 2 | AC9 |
 | R3b | Bootnode unreachable for a long time | Backoff stays capped, reconnects when it returns | I | 2 | AC9 |
@@ -323,33 +335,31 @@ Each PR meets section 10 of the specification, in this order:
 
 | # | PR | Files | Tier | Needs |
 |---|---|---|---|---|
-| 1 | **Mempool bounds, eviction, post-commit hook** | `mempool.rs`, `backend.rs` admission, `main.rs` | Tier 0 file, no locked surface | Nothing from RFC 0006 |
-| 2 | Sync recovery: #147 refreshed, redial, peer rotation, stable identity, R1–R7 | `p2p.rs`, `main.rs` | Tier 0 file, no locked surface | Nothing from RFC 0006 |
-| 3 | Forwarding and explicit failure, with the RPC spec revision | `main.rs`, `backend.rs` admission, `server.rs`, `rpc.rs`, new `forwarder.rs` | Tier 0 files, RPC (D2) | PR 1, and D2 decided: bounds come before a reachable producer |
+| 1 | **Mempool bounds, eviction, post-commit hook** | `mempool.rs`, `main.rs`, and in `backend.rs` admission, `handle_incoming_block` and the removal in `produce_block` | Tier 0 file, no locked surface | Nothing from RFC 0006 |
+| 2 | Sync recovery: #147 refreshed, redial, per-peer state and rotation, stable identity, R1–R7, R11 | `p2p.rs`, `main.rs` | Tier 0 file, no locked surface | Nothing from RFC 0006 |
+| 3 | Forwarding and explicit failure, with the RPC spec revision | `main.rs`, `backend.rs` admission, `server.rs`, `rpc.rs`, new `forwarder.rs` | Tier 0 files, RPC (D2) | PR 1, S1 and `rpc_v0.4` (D2) |
 | 4 | Status and `/status` | `rest.rs`, `backend.rs` | Tier 0 file, no locked surface | PRs 1, 2 and 3: peer count needs the P2P events from PR 2 |
-| 5 | Block failure handling | `produce_block` | Tier 0 function, no locked surface | PR 1 |
-| 6 | Final acceptance on v0.5: F13, R7s, full R and AC runs | Harness, chain check | 1 | S0, S1 merged |
+| 5 | Eviction of what S1's builder leaves out. No block-building code | `mempool.rs`, hook | Tier 1 | PR 1, S1 |
+| 6 | Final acceptance on v0.5: F13, F14, R7s, full R and AC runs | Harness, chain check | 1 | S0, S1 merged |
 
 PR 1 comes first because it needs nothing else, and removes an unbounded resource before
 forwarding exposes the producer.
 
 **Overlap with S0 and S1:** S0 touches the transfer path only, so it does not meet these
-PRs. RFC 0006, under review in #211, asks a producer to serialise production, commit before
-broadcast, catch up before producing, and leave out a transaction that fails in its view.
-That overlaps PR 5: if the RFC is accepted in that form, S1 builds the block that way, and
-PR 5 shrinks to evicting what was left out. S1 rewrites parts of `backend.rs` and `main.rs`, and every PR above that lands first
-gives it a merge to resolve, or the reverse. The specification places S3 after S0, so PRs
-1 to 5 starting earlier is decision D1.
+PRs. S1 rewrites parts of `backend.rs` and `main.rs`, so whichever lands second has a merge
+to resolve. RFC 0006 requires reconnection, which PR 2 provides, on the same release SHA.
 
-## 10. Decisions requested
+## 10. Decisions
 
-| ID | Decision | Proposal |
+Maintainer decisions of 2026-11-05.
+
+| ID | Decision | Effect here |
 |---|---|---|
-| D1 | May PRs 1 to 5 be implemented before S0 merges? They do not depend on it, while the specification orders S3 after it | Yes for PR 1 now, the rest at their own gate |
-| D2 | How to govern the RPC changes. `rpc_v0.3` is frozen, and additive changes take a minor version under `RFC_PROCESS.md`. The unrouted refusal may not count as additive, though `-32603` already means admission rejection and admission is `NON_PROTOCOL` | Decide before PR 3. Either `rpc_v0.3.1` with the refusal classed as admission policy, or fold the changes into `rpc_v0.4`, which puts PR 3 after S1 |
-| D3 | Producer RPC exposure, including `produce_block` | Firewall only for MVP v0.2, recorded as a limit. Rate limits stay on #207 |
-| D4 | Refuse on a follower with no route, with no compatibility flag | Yes |
-| D5 | Default values in section 4 | As stated, tunable by flag |
+| D1 | PR 1 is authorized before S0 merges, on condition that no locked protocol surface changes. Other S3 PRs need separate approval | Section 9 |
+| D2 | Non-additive RPC behaviour goes into the `rpc_v0.4` contract planned with S1. Version labels do not bypass frozen-contract governance | PR 3 follows S1. The rule is in RFC 0006 section 7 |
+| D3 | The producer RPC stays private and firewalled. `produce_block` is not exposed to ordinary clients | Section 2 |
+| D4 | A follower with no valid producer route fails explicitly. No silent local admission, no compatibility fallback | Section 3 |
+| D5 | The configurable mempool limits are accepted provisionally, pending resource and invariant tests | Section 4, M7, M8 |
 
 ## 11. Limits
 
@@ -359,4 +369,5 @@ gives it a merge to resolve, or the reverse. The specification places S3 after S
 - The JSON-RPC transport carries no authentication. Confidentiality and access control
   come from the private network, or from `https` when an operator sets it up.
 - Section 1 is read from the code. R3 has not been run.
-- No number in section 4 has been measured.
+- Memory is measured on heap allocation by a counting allocator, for the transaction shape
+  stated, not on a running node. Deadline and concurrency values in section 2 are not measured.

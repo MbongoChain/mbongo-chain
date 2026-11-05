@@ -134,3 +134,8 @@ Append only. Never rewrite an entry: a change of mind is a new entry.
 | 2026-11-05 | G0: planning structure approved. RFC 0006 moves to its own PR | Maintainer |
 | 2026-11-05 | Private vulnerability tracking approved. No emergency exception is claimed | Maintainer |
 | 2026-11-05 | A protected state-transition change merges only after its governing RFC is accepted | Maintainer |
+| 2026-11-05 | S3 D1: PR 1 may be implemented before S0 merges if no locked surface changes. Other S3 PRs need separate approval | Maintainer |
+| 2026-11-05 | S3 D2: non-additive RPC behaviour goes into `rpc_v0.4`, planned with S1 | Maintainer |
+| 2026-11-05 | S3 D3: the producer RPC stays private and firewalled, and `produce_block` is not exposed to ordinary clients | Maintainer |
+| 2026-11-05 | S3 D4: a follower with no valid producer route fails explicitly, with no fallback | Maintainer |
+| 2026-11-05 | S3 D5: configurable mempool limits accepted provisionally, pending resource and invariant tests | Maintainer |
