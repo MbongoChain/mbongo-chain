@@ -169,12 +169,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  Name:     {name}");
     }
 
+    let mempool_config =
+        mempool::MempoolConfig::new(args.mempool_max_pending, args.mempool_ttl_secs)?;
+
     // Initialize storage
     let storage =
         RocksDbStorage::open(&args.data_dir).map_err(|e| format!("failed to open storage: {e}"))?;
 
-    let mempool_config =
-        mempool::MempoolConfig::new(args.mempool_max_pending, args.mempool_ttl_secs)?;
     let mut backend = NodeBackend::with_mempool_config(storage, args.producer, mempool_config);
 
     // Ensure genesis block exists (idempotent).
@@ -600,9 +601,12 @@ mod tests {
         assert_eq!(args.mempool_ttl_secs, 3600);
     }
 
-    /// A pending transaction, and the block that includes it, built on a
-    /// second node so that the first has to import it.
-    async fn node_with_a_pending_transaction_and_its_block() -> (
+    /// A node holding one pending transaction, and a block built on a second
+    /// node, which the first has to import. With `pending_amount` 5 the block
+    /// includes that transaction. With another amount it takes its nonce.
+    async fn node_with_a_pending_transaction_and_a_block(
+        pending_amount: u128,
+    ) -> (
         NodeBackend<mbongo_storage::InMemoryStorage>,
         mbongo_core::Hash,
         mbongo_core::Block,
@@ -613,16 +617,19 @@ mod tests {
 
         let sk = SigningKey::from_bytes(&[0x71u8; 32]);
         let sender = Address(sk.verifying_key().to_bytes());
-        let mut tx = Transaction {
-            tx_type: TransactionType::Transfer,
-            sender,
-            receiver: Address([1u8; 32]),
-            amount: 5,
-            nonce: 0,
-            payload: TransactionPayload::None,
-            signature: [0u8; 64],
+        let transfer = |amount| {
+            let mut tx = Transaction {
+                tx_type: TransactionType::Transfer,
+                sender,
+                receiver: Address([1u8; 32]),
+                amount,
+                nonce: 0,
+                payload: TransactionPayload::None,
+                signature: [0u8; 64],
+            };
+            tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+            tx
         };
-        tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
         let mut account = Account::new(sender);
         account.balance = 100;
 
@@ -633,11 +640,12 @@ mod tests {
             node
         };
         let producer = build();
-        producer.submit_transaction(tx.clone()).await.unwrap();
+        producer.submit_transaction(transfer(5)).await.unwrap();
         producer.produce_block().await.unwrap();
         let block = producer.storage.get_block_by_height(1).unwrap().unwrap();
 
         let follower = build();
+        let tx = transfer(pending_amount);
         follower.submit_transaction(tx.clone()).await.unwrap();
         let hash = backend::compute_tx_hash(&tx);
         assert!(follower.is_pending(&hash).await);
@@ -657,9 +665,8 @@ mod tests {
         panic!("the transaction stayed pending");
     }
 
-    #[tokio::test]
-    async fn the_orchestrator_clears_the_mempool_on_a_pushed_block() {
-        let (node, hash, block) = node_with_a_pending_transaction_and_its_block().await;
+    async fn pushed_block_clears(pending_amount: u128) {
+        let (node, hash, block) = node_with_a_pending_transaction_and_a_block(pending_amount).await;
         let (block_tx, block_rx) = tokio::sync::mpsc::unbounded_channel();
         let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
         let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -675,9 +682,8 @@ mod tests {
         task.abort();
     }
 
-    #[tokio::test]
-    async fn the_orchestrator_clears_the_mempool_on_a_synced_block() {
-        let (node, hash, block) = node_with_a_pending_transaction_and_its_block().await;
+    async fn synced_block_clears(pending_amount: u128) {
+        let (node, hash, block) = node_with_a_pending_transaction_and_a_block(pending_amount).await;
         let (_block_tx, block_rx) = tokio::sync::mpsc::unbounded_channel();
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
         let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -699,5 +705,25 @@ mod tests {
         wait_until_not_pending(&node, &hash).await;
         assert_eq!(node.latest_height().unwrap(), 1);
         task.abort();
+    }
+
+    #[tokio::test]
+    async fn the_orchestrator_removes_an_included_transaction_on_a_pushed_block() {
+        pushed_block_clears(5).await;
+    }
+
+    #[tokio::test]
+    async fn the_orchestrator_removes_a_stale_transaction_on_a_pushed_block() {
+        pushed_block_clears(6).await;
+    }
+
+    #[tokio::test]
+    async fn the_orchestrator_removes_an_included_transaction_on_a_synced_block() {
+        synced_block_clears(5).await;
+    }
+
+    #[tokio::test]
+    async fn the_orchestrator_removes_a_stale_transaction_on_a_synced_block() {
+        synced_block_clears(6).await;
     }
 }

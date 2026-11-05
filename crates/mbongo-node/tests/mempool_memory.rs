@@ -100,6 +100,10 @@ fn measure(cap: usize) -> usize {
     let held = usize::try_from(live() - before).unwrap();
     let per_entry = held / cap;
     println!("cap {cap}: {held} bytes held, {per_entry} per entry");
+    assert!(
+        per_entry >= LARGEST_METADATA,
+        "the counter missed the payload: {per_entry}"
+    );
     assert!(per_entry <= BYTES_PER_ENTRY_BOUND, "{per_entry} per entry");
 
     let evicted = pool.sweep_expired(

@@ -5792,9 +5792,8 @@ mod tests {
         evicted
     }
 
-    /// Other entries were admitted a moment ago, so a sweep exactly one TTL
-    /// after `long_ago` reaches only the entry moved back. The test TTL is
-    /// long enough that they cannot have aged into it.
+    /// The test TTL. `expire` sweeps exactly one TTL after the moment it gives
+    /// `hash`, and `keep_fresh` puts the entries that must survive after it.
     fn pool_ttl(_: &Mempool) -> std::time::Duration {
         std::time::Duration::from_secs(TEST_TTL_SECS)
     }
@@ -6138,32 +6137,42 @@ mod tests {
         assert!(backend.storage.get_transaction(&compute_tx_hash(&tx)).unwrap().is_none());
     }
 
+    /// A real store, closed and reopened: committed state survives, nothing
+    /// pending does, and resubmission includes the transaction once.
     #[tokio::test]
-    async fn a_restart_empties_the_pool_and_a_resubmission_is_included_once() {
-        let backend = bounded_backend(16, TEST_TTL_SECS);
+    async fn a_reopened_store_keeps_committed_state_and_a_resubmission_is_included_once() {
+        use mbongo_storage::RocksDbStorage;
+        let dir = std::env::temp_dir().join(format!("mbongo-s3-restart-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
         let sk = SigningKey::from_bytes(&[0x61u8; 32]);
-        let addr = fund(&backend, &sk, 1000);
+        let addr = Address(sk.verifying_key().to_bytes());
         let included = signed_transfer(&sk, Address([1u8; 32]), 10, 0);
-        backend.submit_transaction(included.clone()).await.unwrap();
-        backend.produce_block().await.unwrap();
         let pending = signed_transfer(&sk, Address([1u8; 32]), 10, 1);
-        backend.submit_transaction(pending.clone()).await.unwrap();
+        {
+            let backend = NodeBackend::new(RocksDbStorage::open(&dir).unwrap(), true);
+            backend.ensure_genesis().unwrap();
+            let mut funded = Account::new(addr);
+            funded.balance = 1000;
+            backend.storage.put_account(&addr, &funded).unwrap();
+            backend.submit_transaction(included.clone()).await.unwrap();
+            backend.produce_block().await.unwrap();
+            backend.submit_transaction(pending.clone()).await.unwrap();
+            assert_eq!(backend.mempool.read().await.len(), 1);
+        }
 
-        // Same storage, new process: nothing pending survives.
-        let restarted = NodeBackend {
-            storage: Arc::clone(&backend.storage),
-            mempool: Arc::new(RwLock::new(Mempool::new())),
-            broadcaster: None,
-            is_producer: true,
-        };
-        assert!(!restarted.is_pending(&compute_tx_hash(&pending)).await);
-        restarted.mempool.read().await.assert_consistent();
+        let restarted = NodeBackend::new(RocksDbStorage::open(&dir).unwrap(), true);
+        restarted.ensure_genesis().unwrap();
+        assert_eq!(restarted.latest_height().unwrap(), 1);
 
+        // The included one answers from storage and is not admitted again.
         restarted.submit_transaction(included).await.unwrap();
-        assert_eq!(restarted.mempool.read().await.len(), 0, "already included");
+        assert_eq!(restarted.mempool.read().await.len(), 0);
         restarted.submit_transaction(pending).await.unwrap();
         restarted.produce_block().await.unwrap();
-        assert_eq!(account(&restarted, addr).nonce, 2);
-        assert_eq!(account(&restarted, addr).balance, 980);
+        let after = restarted.storage.get_account(&addr).unwrap().unwrap();
+        assert_eq!((after.nonce, after.balance), (2, 980));
+        restarted.mempool.read().await.assert_consistent();
+        drop(restarted);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

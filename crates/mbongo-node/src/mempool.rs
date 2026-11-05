@@ -68,8 +68,8 @@ pub enum EvictionReason {
     /// Its nonce is below the committed nonce of its sender.
     StaleNonce,
     /// A committed block made it unable to apply: its task was registered or
-    /// its receipt anchored through another transaction, or the balance it
-    /// needs was spent.
+    /// its receipt anchored through another transaction, the balance it needs
+    /// was spent, or its nonce no longer follows the committed one.
     Superseded,
     /// It stayed pending longer than the configured time.
     Expired,
@@ -449,9 +449,9 @@ impl Mempool {
         task_registered: impl Fn(&[u8; 32]) -> bool,
     ) -> Vec<Eviction> {
         let mut removals = Vec::new();
-        let mut senders: HashSet<Address> = HashSet::new();
+        let mut views: HashMap<Address, Option<(u64, u128)>> = HashMap::new();
         for (hash, tx) in block_txs {
-            senders.insert(tx.sender);
+            views.entry(tx.sender).or_insert_with(|| committed(&tx.sender));
             if self.by_hash.contains_key(hash) {
                 removals.push(Removal {
                     hash: *hash,
@@ -460,13 +460,12 @@ impl Mempool {
                 });
             }
         }
-        for sender in &senders {
-            let (Some((nonce_now, _)), Some(nonces)) =
-                (committed(sender), self.pending_by_sender.get(sender))
+        for (sender, view) in &views {
+            let (Some((nonce_now, _)), Some(nonces)) = (view, self.pending_by_sender.get(sender))
             else {
                 continue;
             };
-            for nonce in nonces.range(..nonce_now) {
+            for nonce in nonces.range(..*nonce_now) {
                 if let Some(hash) = self.by_sender_nonce.get(&(*sender, *nonce)) {
                     removals.push(Removal {
                         hash: *hash,
@@ -492,14 +491,17 @@ impl Mempool {
         }
         let mut evicted = self.remove_with_dependents(removals, &task_registered);
 
-        // What is left must still be affordable, in nonce order.
+        // What is left must start at the committed nonce, run without a gap,
+        // and be affordable. The first entry that breaks this goes, with what
+        // follows it: it would otherwise fail every block.
         let mut removals = Vec::new();
-        for sender in &senders {
-            let (Some((_, balance)), Some(nonces)) =
-                (committed(sender), self.pending_by_sender.get(sender))
+        for (sender, view) in &views {
+            let (Some((nonce_now, balance)), Some(nonces)) =
+                (view, self.pending_by_sender.get(sender))
             else {
                 continue;
             };
+            let mut expected = *nonce_now;
             let mut debit: u128 = 0;
             for nonce in nonces {
                 let Some(hash) = self.by_sender_nonce.get(&(*sender, *nonce)) else {
@@ -507,7 +509,7 @@ impl Mempool {
                 };
                 let amount = self.by_hash.get(hash).map_or(0, |tx| tx.amount);
                 debit = debit.saturating_add(amount);
-                if debit > balance {
+                if *nonce != expected || debit > *balance {
                     removals.push(Removal {
                         hash: *hash,
                         reason: EvictionReason::Superseded,
@@ -515,6 +517,7 @@ impl Mempool {
                     });
                     break;
                 }
+                expected = expected.saturating_add(1);
             }
         }
         evicted.extend(self.remove_with_dependents(removals, &task_registered));
@@ -549,7 +552,7 @@ impl Mempool {
     /// removing them.
     ///
     /// Block production peeks, applies, and only then calls
-    /// [`Mempool::remove_included`]. A destructive drain before application
+    /// [`Mempool::after_commit`]. A destructive drain before application
     /// would lose every transaction in the batch when application fails,
     /// and issue #100 turns that from one transaction into a sender's whole
     /// pending chain. There is deliberately no destructive drain to reach
@@ -1277,14 +1280,140 @@ mod tests {
         assert_eq!(nonces, vec![0, 1]);
     }
 
-    /// A deterministic run of admissions, commits and sweeps. After every
-    /// step all indexes agree and the bound holds.
     #[test]
-    fn generated_operations_keep_every_index_consistent() {
-        const STEPS: u64 = 20_000;
-        let mut pool = bounded(16, 60);
+    fn a_chain_that_no_longer_follows_the_committed_nonce_goes() {
+        let mut pool = bounded(8, 60);
+        let (ahead, tx) = make_tx_with_hash(1, 6, 10);
+        pool.insert(ahead, tx).unwrap();
+        let (above, tx) = make_tx_with_hash(1, 7, 11);
+        pool.insert(above, tx).unwrap();
+        let (block_hash, block_tx) = make_tx_with_hash(1, 5, 12);
+
+        // The block did not move the committed nonce past 5.
+        let evicted =
+            pool.after_commit(&[(block_hash, block_tx)], |_| Some((5, u128::MAX)), no_task);
+        assert_eq!(evicted.len(), 2, "{evicted:?}");
+        assert_eq!(evicted[0].reason, EvictionReason::Superseded);
+        assert_eq!(evicted[1].reason, EvictionReason::Dependent);
+        pool.assert_consistent();
+    }
+
+    /// The model of committed state that the generated run drives.
+    struct Chain {
+        nonces: [u64; 8],
+        balances: [u128; 8],
+        registered: HashSet<[u8; 32]>,
+    }
+
+    impl Chain {
+        fn view(&self, a: &Address) -> Option<(u64, u128)> {
+            let i = usize::from(a.0[0] - 1);
+            Some((self.nonces[i], self.balances[i]))
+        }
+    }
+
+    fn transfer(sender: Address, nonce: u64, amount: u128) -> Transaction {
+        Transaction {
+            tx_type: TransactionType::Transfer,
+            sender,
+            receiver: Address([99u8; 32]),
+            amount,
+            nonce,
+            payload: TransactionPayload::None,
+            signature: [0u8; 64],
+        }
+    }
+
+    fn task(sender: Address, nonce: u64, salt: u64) -> Transaction {
+        let mut bytes = [0u8; 32];
+        bytes[..8].copy_from_slice(&salt.to_le_bytes());
+        let payload = ComputeTask {
+            version: 1,
+            submitter: sender,
+            executor: Address([7u8; 32]),
+            salt: bytes,
+            input_commitment: [1u8; 32],
+            execution_spec: Vec::new(),
+        };
+        Transaction {
+            tx_type: TransactionType::ComputeTask,
+            sender,
+            receiver: Address::zero(),
+            amount: 0,
+            nonce,
+            payload: TransactionPayload::ComputeTask(Box::new(payload)),
+            signature: [0u8; 64],
+        }
+    }
+
+    fn receipt(sender: Address, nonce: u64, task_id: [u8; 32]) -> Transaction {
+        let payload = mbongo_core::Receipt {
+            version: 1,
+            task_id,
+            input_commitment: [1u8; 32],
+            output_commitment: [2u8; 32],
+            executor: sender,
+            metadata: Vec::new(),
+            signature: [0u8; 64],
+        };
+        Transaction {
+            tx_type: TransactionType::AnchorReceipt,
+            sender,
+            receiver: Address::zero(),
+            amount: 0,
+            nonce,
+            payload: TransactionPayload::AnchorReceipt(Box::new(payload)),
+            signature: [0u8; 64],
+        }
+    }
+
+    fn hash_of(step: u64, salt: u8) -> Hash {
+        let mut bytes = [salt; 32];
+        bytes[..8].copy_from_slice(&step.to_le_bytes());
+        Hash(bytes)
+    }
+
+    /// After a commit or a sweep: indexes agree, every chain starts at its
+    /// committed nonce with no gap, is affordable, and every pending receipt
+    /// still has its task, pending or registered.
+    fn assert_applicable(pool: &Mempool, chain: &Chain) {
+        pool.assert_consistent();
+        for i in 0..8u8 {
+            let who = Address([i + 1; 32]);
+            let (nonce, balance) = chain.view(&who).unwrap();
+            let walked = pool.sender_pending(&who, nonce);
+            let held = u64::try_from(walked.len).unwrap();
+            assert_eq!(
+                walked.expected_nonce,
+                Some(nonce + held),
+                "chain of {i} has a gap"
+            );
+            assert!(
+                walked.pending_debit <= balance,
+                "chain of {i} is not affordable"
+            );
+        }
+        for task_id in pool.by_task_id.keys() {
+            assert!(
+                pool.by_compute_task_id.contains_key(task_id) || chain.registered.contains(task_id),
+                "a receipt lost its task"
+            );
+        }
+    }
+
+    /// A deterministic run of admissions, own and foreign blocks, and sweeps,
+    /// over transfers, tasks and receipts. Every eviction reason has to occur.
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn generated_operations_keep_the_pool_consistent_and_applicable() {
+        const STEPS: u64 = 30_000;
+        let mut pool = bounded(24, 60);
         let start = Instant::now();
-        let mut committed = [0u64; 8];
+        let mut chain = Chain {
+            nonces: [0; 8],
+            balances: [1_000_000; 8],
+            registered: HashSet::new(),
+        };
         let mut clock = 0u64;
         let mut seed = 0x5EED_u64;
         let mut next = |bound: u64| {
@@ -1293,58 +1422,126 @@ mod tests {
                 .wrapping_add(1_442_695_040_888_963_407);
             (seed >> 33) % bound
         };
-        let (mut admitted, mut full, mut commits, mut evicted) = (0u64, 0u64, 0u64, 0usize);
+        let mut seen: HashMap<String, u64> = HashMap::new();
+        let mut full = 0u64;
         for step in 0..STEPS {
-            let sender = u8::try_from(next(8)).unwrap();
-            let index = usize::from(sender);
-            let address = Address([sender + 1; 32]);
-            clock += next(3);
+            let i = usize::try_from(next(8)).unwrap();
+            let who = Address([u8::try_from(i).unwrap() + 1; 32]);
+            clock += next(2);
             let now = start + Duration::from_secs(clock);
-            match next(10) {
-                0..=6 => {
-                    let nonce =
-                        pool.sender_pending(&address, committed[index]).expected_nonce.unwrap();
-                    let mut bytes = [0u8; 32];
-                    bytes[..8].copy_from_slice(&step.to_le_bytes());
-                    let (_, tx) = make_tx(sender + 1, nonce);
-                    match pool.insert_at(Hash(bytes), tx, now) {
-                        Ok(()) => admitted += 1,
-                        Err(MempoolError::PoolFull) => full += 1,
-                        Err(e) => panic!("unexpected refusal: {e}"),
+            let walked = pool.sender_pending(&who, chain.nonces[i]);
+            let nonce = walked.expected_nonce.unwrap();
+            let mut evicted = Vec::new();
+            match next(12) {
+                0..=3 => {
+                    let amount = u128::from(next(1000));
+                    if walked.pending_debit + amount <= chain.balances[i] {
+                        match pool.insert_at(hash_of(step, 1), transfer(who, nonce, amount), now) {
+                            Ok(()) | Err(MempoolError::DuplicateSenderNonce) => {}
+                            Err(MempoolError::PoolFull) => full += 1,
+                            Err(e) => panic!("{e}"),
+                        }
+                    }
+                }
+                4 => {
+                    let tx = task(who, nonce, next(64));
+                    if !chain.registered.contains(&compute_task_id_of(&tx).unwrap()) {
+                        match pool.insert_at(hash_of(step, 2), tx, now) {
+                            Ok(()) | Err(MempoolError::DuplicateComputeTask) => {}
+                            Err(MempoolError::PoolFull) => full += 1,
+                            Err(e) => panic!("{e}"),
+                        }
+                    }
+                }
+                5 | 6 => {
+                    let pending: Vec<[u8; 32]> = pool.by_compute_task_id.keys().copied().collect();
+                    if !pending.is_empty() {
+                        let index = usize::try_from(next(pending.len() as u64)).unwrap();
+                        let tx = receipt(who, nonce, pending[index]);
+                        match pool.insert_at(hash_of(step, 3), tx, now) {
+                            Ok(()) | Err(MempoolError::DuplicateTaskId) => {}
+                            Err(MempoolError::PoolFull) => full += 1,
+                            Err(e) => panic!("{e}"),
+                        }
                     }
                 }
                 7 | 8 => {
-                    let walked =
-                        pool.sender_pending(&address, committed[index]).expected_nonce.unwrap();
-                    if walked > committed[index] {
-                        let head = committed[index];
-                        let hash = pool.by_sender_nonce[&(address, head)];
+                    // A block from this pool: the head of one chain.
+                    if let Some(hash) = pool.by_sender_nonce.get(&(who, chain.nonces[i])).copied() {
                         let tx = pool.by_hash[&hash].clone();
-                        committed[index] = head + 1;
-                        let nonces = committed;
-                        evicted += pool
-                            .after_commit(
-                                &[(hash, tx)],
-                                |a| Some((nonces[usize::from(a.0[0] - 1)], u128::MAX)),
-                                no_task,
-                            )
-                            .len();
-                        commits += 1;
+                        chain.nonces[i] += 1;
+                        chain.balances[i] -= tx.amount;
+                        if let Some(tid) = compute_task_id_of(&tx) {
+                            chain.registered.insert(tid);
+                        }
+                        let view = |a: &Address| chain.view(a);
+                        let known = |t: &[u8; 32]| chain.registered.contains(t);
+                        evicted = pool.after_commit(&[(hash, tx)], view, known);
                     }
                 }
-                _ => evicted += pool.sweep_expired(now, no_task).len(),
+                9 | 10 => {
+                    // A block from elsewhere, at this sender's committed nonce.
+                    let at = chain.nonces[i];
+                    let tx = if next(2) == 0 {
+                        let spend = u128::from(next(1000)) * 50;
+                        transfer(who, at, spend.min(chain.balances[i]))
+                    } else {
+                        let rival = pool
+                            .by_hash
+                            .values()
+                            .find(|t| t.sender == who && compute_task_id_of(t).is_some());
+                        match rival.and_then(compute_task_salt) {
+                            Some(salt) => task(who, at, salt),
+                            None => transfer(who, at, 0),
+                        }
+                    };
+                    chain.nonces[i] += 1;
+                    chain.balances[i] -= tx.amount;
+                    if let Some(tid) = compute_task_id_of(&tx) {
+                        chain.registered.insert(tid);
+                    }
+                    let view = |a: &Address| chain.view(a);
+                    let known = |t: &[u8; 32]| chain.registered.contains(t);
+                    evicted = pool.after_commit(&[(hash_of(step, 4), tx)], view, known);
+                }
+                _ => {
+                    let known = |t: &[u8; 32]| chain.registered.contains(t);
+                    evicted = pool.sweep_expired(now, known);
+                }
             }
-            pool.assert_consistent();
-            for (i, nonce) in committed.iter().enumerate() {
-                let who = Address([u8::try_from(i).unwrap() + 1; 32]);
-                let walked = pool.sender_pending(&who, *nonce);
-                let held = u64::try_from(walked.len).unwrap();
-                assert_eq!(walked.expected_nonce, Some(nonce + held), "a gap appeared");
+            for eviction in &evicted {
+                *seen.entry(format!("{:?}", eviction.reason)).or_insert(0) += 1;
+            }
+            if !evicted.is_empty() {
+                assert_applicable(&pool, &chain);
+            } else {
+                pool.assert_consistent();
             }
         }
-        assert!(
-            admitted > 1000 && full > 100 && commits > 500 && evicted > 500,
-            "{admitted} {full} {commits} {evicted}"
-        );
+        println!("{seen:?} full={full}");
+        for reason in [
+            "Included",
+            "StaleNonce",
+            "Superseded",
+            "Expired",
+            "Dependent",
+        ] {
+            assert!(
+                seen.get(reason).copied().unwrap_or(0) > 20,
+                "{reason}: {seen:?}"
+            );
+        }
+        assert!(full > 20, "{full}");
+    }
+
+    fn compute_task_salt(tx: &Transaction) -> Option<u64> {
+        match &tx.payload {
+            TransactionPayload::ComputeTask(task) => {
+                let mut bytes = [0u8; 8];
+                bytes.copy_from_slice(&task.salt[..8]);
+                Some(u64::from_le_bytes(bytes))
+            }
+            TransactionPayload::None | TransactionPayload::AnchorReceipt(_) => None,
+        }
     }
 }
