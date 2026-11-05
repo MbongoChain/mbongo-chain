@@ -8,8 +8,11 @@
 //!
 //! Exit code 0 on PASS. On failure, prints what the processes wrote.
 
+use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use mbongo_compute::chain::{ChainClient, RpcChainClient};
@@ -32,10 +35,14 @@ const MEMORY_CEILING_MIB: u64 = 512;
 /// Processes and threads in one job, in the contained run.
 const MAX_PIDS: u64 = 256;
 /// Every way a contained start must be refused.
-const REFUSALS: usize = 17;
+const REFUSALS: usize = 23;
 /// Two key files, two directories, the journal, the lock, two `/proc` entries.
 const PROBED_PATHS: u64 = 8;
 const NO_CAPABILITIES: &str = "0000000000000000";
+/// The launcher's table.
+const NFT_TABLE: &str = "inet mbongo_runner";
+/// An address outside the host, tried only if the harness itself can reach it.
+const OUTSIDE: &str = "1.1.1.1:443";
 /// `CAP_SETGID` and `CAP_SETUID`.
 const SERVICE_CAPABILITIES: &str = "00000000000000c0";
 
@@ -569,6 +576,8 @@ fn prove_refusals(c: &Contained, config: &Value) -> Result<(), String> {
         Launcher,
         NoCapabilities,
         AsRoot,
+        /// Without the launcher, so that only the service stands in the way.
+        Direct,
         /// With a probe's tool replaced, in a private mount namespace, by a
         /// script reporting what a broken deployment would report.
         BrokenProbe(&'static str, &'static str),
@@ -576,6 +585,8 @@ fn prove_refusals(c: &Contained, config: &Value) -> Result<(), String> {
     let base = c.base.display();
     let root = c.cgroup.display();
     let (provider, runner) = (c.provider_uid, c.runner_gid);
+    let runner_uid = c.runner_uid;
+    let repair = format!("bash {} prepare {base} > /dev/null", c.launcher.display());
     let cases: Vec<(&str, &str, String, String, Value, Start)> = vec![
         (
             "executor key world-readable",
@@ -674,6 +685,60 @@ fn prove_refusals(c: &Contained, config: &Value) -> Result<(), String> {
             Start::AsRoot,
         ),
         (
+            "runner account in use by another process",
+            "RUNNER_UID_SHARED",
+            format!(
+                "setsid setpriv --reuid={runner_uid} --regid={runner} --clear-groups \
+                 /bin/sleep 60 > /dev/null 2>&1 & sleep 0.3"
+            ),
+            format!("pkill -KILL -u {runner_uid}; sleep 0.3"),
+            json!({}),
+            Start::Launcher,
+        ),
+        (
+            "network policy absent",
+            "NETWORK_POLICY_INEFFECTIVE",
+            format!("nft delete table {NFT_TABLE}"),
+            repair.clone(),
+            json!({}),
+            Start::Direct,
+        ),
+        (
+            "network policy naming another account",
+            "NETWORK_POLICY_INEFFECTIVE",
+            format!(
+                "nft flush chain {NFT_TABLE} output && \
+                 nft add rule {NFT_TABLE} output meta skuid 54321 counter reject"
+            ),
+            repair.clone(),
+            json!({}),
+            Start::Direct,
+        ),
+        (
+            "network policy letting loopback through",
+            "NETWORK_POLICY_INEFFECTIVE",
+            format!("nft insert rule {NFT_TABLE} output oif lo accept"),
+            repair.clone(),
+            json!({}),
+            Start::Launcher,
+        ),
+        (
+            "network policy letting IPv6 through",
+            "NETWORK_POLICY_INEFFECTIVE",
+            format!("nft insert rule {NFT_TABLE} output meta nfproto ipv6 accept"),
+            repair.clone(),
+            json!({}),
+            Start::Launcher,
+        ),
+        (
+            "network probe reports success without connecting",
+            "NETWORK_PROBE_INCONCLUSIVE",
+            "true".to_owned(),
+            "true".to_owned(),
+            json!({}),
+            Start::BrokenProbe("bash", "exit 0"),
+        ),
+        (
             "identity probe reports the wrong account",
             "PROBE_IDENTITY",
             "true".to_owned(),
@@ -730,6 +795,11 @@ fn prove_refusals(c: &Contained, config: &Value) -> Result<(), String> {
         shell(breaks)?;
         let enter = format!("echo $$ > {root}/service/cgroup.procs; umask 027");
         let (service, shown) = (c.service.display(), file.display());
+        let direct = format!(
+            "{enter}; exec setpriv --reuid={provider} --regid={provider} --clear-groups \
+             --bounding-set=-all,+setuid,+setgid --inh-caps=-all,+setuid,+setgid \
+             --ambient-caps=-all,+setuid,+setgid --no-new-privs {service} --config {shown}"
+        );
         let mut command = match start {
             Start::Launcher => service_command(Some(c), &file),
             Start::NoCapabilities => {
@@ -745,15 +815,19 @@ fn prove_refusals(c: &Contained, config: &Value) -> Result<(), String> {
                 command.arg("-c").arg(format!("{enter}; exec {service} --config {shown}"));
                 command
             }
+            Start::Direct => {
+                let mut command = Command::new("sh");
+                command.arg("-c").arg(&direct);
+                command
+            }
             Start::BrokenProbe(tool, body) => {
                 let fake = c.base.join("bin").join(format!("broken-{tool}"));
                 std::fs::write(&fake, format!("#!/bin/sh\n{body}\n")).map_err(|e| e.to_string())?;
                 shell(&format!("chmod 0755 {}", fake.display()))?;
                 let mut command = Command::new("unshare");
                 command.args(["-m", "sh", "-c"]).arg(format!(
-                    "mount --bind {} /bin/{tool} && exec bash {} run {base} {service} {shown}",
+                    "mount --bind {} /bin/{tool} && {direct}",
                     fake.display(),
-                    c.launcher.display(),
                 ));
                 command
             }
@@ -773,6 +847,20 @@ fn prove_refusals(c: &Contained, config: &Value) -> Result<(), String> {
             "refused starts left {groups} job cgroups: {pids:?}"
         ));
     }
+    // The launcher checks too, before it starts anything.
+    shell(&format!("nft delete table {NFT_TABLE}"))?;
+    let run = service_command(Some(c), &file).output().map_err(|e| e.to_string());
+    c.prepare()?;
+    let run = run?;
+    let err = String::from_utf8_lossy(&run.stderr);
+    if run.status.success() || !err.contains("network policy is not installed") {
+        return Err(format!(
+            "launcher without a policy: {} {}",
+            run.status,
+            err.trim()
+        ));
+    }
+    println!("  refused, by the launcher, no network policy installed");
     Ok(())
 }
 
@@ -806,6 +894,7 @@ async fn prove_service_identity(
     }
     let text = std::fs::read_to_string(log).unwrap_or_default();
     for line in [
+        "RUNNER_NETWORK=DENIED".to_owned(),
         format!("ISOLATION_PROBE_PATHS={PROBED_PATHS}"),
         "KEY_ISOLATION_ENFORCED=YES".to_owned(),
         "MEMORY_LIMIT_ENFORCED=YES".to_owned(),
@@ -822,6 +911,7 @@ async fn prove_service_identity(
         .map_err(|e| e.to_string())?;
     if capabilities["key_isolation_enforced"] != true
         || capabilities["memory_limit_enforced"] != true
+        || capabilities["runner_network_denied"] != true
     {
         return Err(format!("capabilities: {capabilities}"));
     }
@@ -961,6 +1051,267 @@ async fn prove_descendants(c: &Contained, stack: &Stack) -> Result<(), String> {
             return Err(format!("{name}: the heartbeat continued"));
         }
         println!("  {name}: descendant alive for {count} heartbeats, then dead");
+    }
+    Ok(())
+}
+
+/// A real endpoint, counting what reaches it, so that a denial is judged at the
+/// receiving end and not by what the runner reports.
+struct Sink {
+    name: &'static str,
+    proto: &'static str,
+    host: String,
+    port: u16,
+    hits: Arc<AtomicUsize>,
+}
+
+impl Sink {
+    fn tcp(name: &'static str, bind: &str, host: &str) -> Result<Self, String> {
+        let listener = TcpListener::bind(bind).map_err(|e| format!("{name}: {e}"))?;
+        let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&hits);
+        std::thread::spawn(move || {
+            for _ in listener.incoming() {
+                counter.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        Ok(Self {
+            name,
+            proto: "tcp",
+            host: host.to_owned(),
+            port,
+            hits,
+        })
+    }
+
+    fn udp(name: &'static str, bind: &str, host: &str) -> Result<Self, String> {
+        let socket = UdpSocket::bind(bind).map_err(|e| format!("{name}: {e}"))?;
+        let port = socket.local_addr().map_err(|e| e.to_string())?.port();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&hits);
+        std::thread::spawn(move || {
+            let mut buffer = [0; 16];
+            while socket.recv_from(&mut buffer).is_ok() {
+                counter.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        Ok(Self {
+            name,
+            proto: "udp",
+            host: host.to_owned(),
+            port,
+            hits,
+        })
+    }
+
+    fn target(&self) -> Value {
+        json!({"name": self.name, "proto": self.proto, "host": self.host, "port": self.port})
+    }
+
+    fn hits(&self) -> usize {
+        self.hits.load(Ordering::SeqCst)
+    }
+}
+
+/// This host's address on its way out, if it has one. Sends nothing.
+fn host_address() -> Option<String> {
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect(OUTSIDE).ok()?;
+    let ip = socket.local_addr().ok()?.ip();
+    (!ip.is_loopback()).then(|| ip.to_string())
+}
+
+async fn stop_service(provider: &mut Process) -> Result<(), String> {
+    shell(&format!("kill -TERM {}", provider.0.id()))?;
+    let started = Instant::now();
+    loop {
+        if let Some(status) = provider.0.try_wait().map_err(|e| e.to_string())? {
+            return if status.success() {
+                Ok(())
+            } else {
+                Err(format!("the service stopped with {status}"))
+            };
+        }
+        if started.elapsed() > Duration::from_secs(30) {
+            return Err("the service did not stop".to_owned());
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+async fn start_service(
+    stack: &Stack,
+    provider: &mut Process,
+    log: &Path,
+    config_file: &Path,
+    config: &Value,
+    network: &str,
+) -> Result<(), String> {
+    let mut config = config.clone();
+    config["bind"] = json!(stack.provider.trim_start_matches("http://"));
+    config["isolation"]["network"] = json!(network);
+    std::fs::write(config_file, config.to_string()).map_err(|e| e.to_string())?;
+    let mut command = service_command(stack.contained.as_ref(), config_file);
+    command.env("MBONGO_RUNNER_NETWORK", network);
+    *provider = spawn_logged(command, log)?;
+    wait_for_bind(log, provider).await.map(|_| ())
+}
+
+/// From inside a job, and from a detached descendant: every address family,
+/// the node, the service, and the IPv6 forms of an IPv4 address. Nothing may
+/// arrive. Then the same job without the rule, where all of it must arrive.
+async fn prove_network(
+    stack: &Stack,
+    provider: &mut Process,
+    log: &Path,
+    config_file: &Path,
+    config: &Value,
+) -> Result<(), String> {
+    let c = stack.contained.as_ref().ok_or("not contained")?;
+    let mut sinks = vec![
+        Sink::tcp("tcp-loopback-v4", "127.0.0.1:0", "127.0.0.1")?,
+        Sink::tcp("tcp-loopback-v6", "[::1]:0", "::1")?,
+        Sink::tcp("tcp-v4-mapped-in-v6", "127.0.0.1:0", "::ffff:127.0.0.1")?,
+        Sink::udp("udp-loopback-v4", "127.0.0.1:0", "127.0.0.1")?,
+        Sink::udp("udp-loopback-v6", "[::1]:0", "::1")?,
+    ];
+    if let Some(host) = host_address() {
+        sinks.push(Sink::tcp("tcp-host-address", &format!("{host}:0"), &host)?);
+    } else {
+        println!("  this host has no outward address: not tested");
+    }
+    let provider_port: u16 = stack
+        .provider
+        .rsplit(':')
+        .next()
+        .and_then(|p| p.parse().ok())
+        .ok_or("provider port")?;
+    let mut targets: Vec<Value> = sinks.iter().map(Sink::target).collect();
+    targets
+        .push(json!({"name": "node-rpc", "proto": "tcp", "host": "127.0.0.1", "port": RPC_PORT}));
+    targets
+        .push(json!({"name": "node-rest", "proto": "tcp", "host": "127.0.0.1", "port": REST_PORT}));
+    targets.push(
+        json!({"name": "provider", "proto": "tcp", "host": "127.0.0.1", "port": provider_port}),
+    );
+    let outside: SocketAddr = OUTSIDE.parse().map_err(|_| "outside address")?;
+    let reachable = TcpStream::connect_timeout(&outside, Duration::from_secs(2)).is_ok();
+    if reachable {
+        let (host, port) = (outside.ip().to_string(), outside.port());
+        targets.push(json!({"name": "outside", "proto": "tcp", "host": host, "port": port}));
+    } else {
+        println!("  no address outside the host is reachable from here: not tested");
+    }
+    let spec = fixture_spec(
+        json!({"mode": "net", "targets": targets}),
+        65_536,
+        json!({"max_wall_ms": 60_000, "max_memory_mib": 256}),
+    )?;
+    let run = |name: &str| -> Result<Value, String> {
+        let output = verified_output(stack, name, &spec)?;
+        serde_json::from_slice(&output).map_err(|e| e.to_string())
+    };
+
+    let denied = run("network-denied")?;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let attempts = denied.as_object().ok_or("results")?;
+    if attempts.len() != targets.len() {
+        return Err(format!(
+            "{} results for {} targets",
+            attempts.len(),
+            targets.len()
+        ));
+    }
+    for (name, outcome) in attempts {
+        if outcome["main"] == "OK" || outcome["descendant"] != "DENIED" {
+            return Err(format!("denied: {name} {outcome}"));
+        }
+    }
+    for sink in &sinks {
+        if sink.hits() != 0 {
+            return Err(format!(
+                "denied: {} reached {} times",
+                sink.name,
+                sink.hits()
+            ));
+        }
+    }
+    println!(
+        "  {} targets, from the runner and a detached descendant: all refused, nothing arrived",
+        targets.len()
+    );
+
+    // The control: same job, same endpoints, no rule.
+    stop_service(provider).await?;
+    shell(&format!("nft delete table {NFT_TABLE}"))?;
+    start_service(stack, provider, log, config_file, config, "open").await?;
+    let open = run("network-open")?;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    for (name, outcome) in open.as_object().ok_or("results")? {
+        if name != "outside" && (outcome["main"] != "OK" || outcome["descendant"] != "OK") {
+            return Err(format!("control: {name} {outcome}"));
+        }
+    }
+    for sink in &sinks {
+        if sink.hits() == 0 {
+            return Err(format!("control: nothing reached {}", sink.name));
+        }
+    }
+    println!("  the same job without the rule: every endpoint reached");
+    stop_service(provider).await?;
+    c.prepare()?;
+    start_service(stack, provider, log, config_file, config, "denied").await
+}
+
+/// A policy removed or changed while the service runs: the next job does not
+/// start, nor does any after it, until a restart proves the policy again.
+async fn prove_policy_loss(
+    stack: &Stack,
+    provider: &mut Process,
+    log: &Path,
+    config_file: &Path,
+    config: &Value,
+) -> Result<(), String> {
+    let c = stack.contained.as_ref().ok_or("not contained")?;
+    let changes = [
+        ("removed", format!("nft delete table {NFT_TABLE}")),
+        (
+            "changed",
+            format!("nft insert rule {NFT_TABLE} output oif lo accept"),
+        ),
+    ];
+    for (name, change) in &changes {
+        shell(change)?;
+        let marker = c.scratch.join(format!("policy-{name}"));
+        let spec = fixture_spec(
+            json!({"mode": "slow", "delay_ms": 0, "marker": marker}),
+            64,
+            json!({"max_wall_ms": 5_000, "max_memory_mib": 256}),
+        )?;
+        refused_job(
+            stack,
+            &format!("policy-{name}"),
+            &spec,
+            "JOB_RUNTIME_FAILED",
+        )?;
+        let text = std::fs::read_to_string(log).unwrap_or_default();
+        if !text.contains("NETWORK_POLICY_LOST") {
+            return Err(format!("policy {name}: not recorded"));
+        }
+        c.prepare()?;
+        refused_job(
+            stack,
+            &format!("policy-{name}-repaired"),
+            &spec,
+            "JOB_RUNTIME_FAILED",
+        )?;
+        if marker.exists() {
+            return Err(format!("policy {name}: a runner started"));
+        }
+        println!("  policy {name} after startup: no runner started, even once repaired");
+        stop_service(provider).await?;
+        start_service(stack, provider, log, config_file, config, "denied").await?;
     }
     Ok(())
 }
@@ -1261,6 +1612,7 @@ async fn run(base: &Path, contain: bool) -> Result<(), String> {
                 "cgroup_root": c.cgroup,
                 "max_memory_mib": MEMORY_CEILING_MIB,
                 "max_pids": MAX_PIDS,
+                "network": "denied",
             }),
             None => json!({"mode": "none"}),
         };
@@ -1305,6 +1657,8 @@ async fn run(base: &Path, contain: bool) -> Result<(), String> {
             prove_descendants(c, &stack).await?;
             prove_memory(c, &stack, &provider_log)?;
             prove_process_limit(c, &stack).await?;
+            prove_network(&stack, &mut provider, &provider_log, &config_file, &config).await?;
+            prove_policy_loss(&stack, &mut provider, &provider_log, &config_file, &config).await?;
         }
         prove_vectors(&stack, &chain).await?;
         prove_failure(&stack)?;
