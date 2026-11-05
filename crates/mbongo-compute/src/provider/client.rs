@@ -332,7 +332,7 @@ pub struct JobReport {
 /// How long and how often to wait.
 #[derive(Debug, Clone, Copy)]
 pub struct WaitPolicy {
-    /// Give up after this long.
+    /// Give up after this long, a request in flight included.
     pub timeout: Duration,
     /// Time between polls.
     pub poll: Duration,
@@ -360,6 +360,19 @@ fn check_receipt(receipt: &Receipt, task: &ComputeTask) -> Result<(), JobClientE
     Ok(())
 }
 
+/// One request, for what is left of the wait. Abandoning it repeats nothing: a
+/// request cut off here is never sent again by this code.
+async fn within<T>(
+    wait: WaitPolicy,
+    started: Instant,
+    request: impl std::future::Future<Output = Result<T, JobClientError>>,
+) -> Result<T, JobClientError> {
+    let left = wait.timeout.saturating_sub(started.elapsed());
+    tokio::time::timeout(left, request)
+        .await
+        .unwrap_or(Err(JobClientError::TimedOut("the provider did not answer")))
+}
+
 async fn wait_completed(
     client: &ProviderClient,
     task_id: [u8; 32],
@@ -367,7 +380,7 @@ async fn wait_completed(
     started: Instant,
 ) -> Result<JobStatus, JobClientError> {
     loop {
-        let status = match client.status(task_id).await {
+        let status = match within(wait, started, client.status(task_id)).await {
             Ok(status) => status,
             // A provider restarting is not a failed job.
             Err(e) if e.is_transient() && started.elapsed() < wait.timeout => {
@@ -400,7 +413,7 @@ async fn fetch_result(
     started: Instant,
 ) -> Result<Vec<u8>, JobClientError> {
     loop {
-        match client.result(task_id).await {
+        match within(wait, started, client.result(task_id)).await {
             Err(e) if e.is_transient() && started.elapsed() < wait.timeout => {
                 tokio::time::sleep(wait.poll).await;
             }
@@ -411,7 +424,11 @@ async fn fetch_result(
 
 /// Submits a job, waits, and verifies the result up to T1.
 ///
-/// What is retried, until `wait.timeout`, is what repeats safely: tracking, and
+/// `wait.timeout` bounds every request, to the provider and to the chain, so
+/// one that hangs ends the job with `TimedOut`. A task whose submission was cut
+/// off may still reach the chain: it is not submitted again.
+///
+/// What is retried, until then, is what repeats safely: tracking, and
 /// registration, which the service treats as idempotent. Each retry is a fresh
 /// signature. The job spec, the input and the on-chain task are sent once: a
 /// failure there ends the job, and nothing submits it again.
@@ -426,12 +443,12 @@ pub async fn run_job<C: ChainClient>(
     let started = Instant::now();
     let spec = JobSpec::from_canonical_bytes(job_spec)
         .map_err(|e| JobClientError::Verification(e.to_string()))?;
-    let declared = client.capabilities().await?;
+    let declared = within(wait, started, client.capabilities()).await?;
     if declared.executor != hex::encode(client.recipient.0) {
         return Err(JobClientError::WrongProvider);
     }
     // Refused here, before anything reaches the chain, if it cannot run.
-    let execution_spec = client.put_job_spec(job_spec).await?;
+    let execution_spec = within(wait, started, client.put_job_spec(job_spec)).await?;
 
     let task = ComputeTask {
         version: COMPUTE_TASK_VERSION,
@@ -442,16 +459,26 @@ pub async fn run_job<C: ChainClient>(
         execution_spec: execution_spec.clone(),
     };
     let task_id = task.task_id();
-    let upload = client.upload(task_id, input).await?;
+    let upload = within(wait, started, client.upload(task_id, input)).await?;
     if upload.input_commitment != hex::encode(task.input_commitment) {
         return Err(JobClientError::Verification(
             "the provider computed another input commitment".to_owned(),
         ));
     }
-    let start_height = chain.latest_height().await.map_err(chain_error)?;
-    submit_task(chain, key, &task).await.map_err(chain_error)?;
+    let start_height = within(wait, started, async {
+        chain.latest_height().await.map_err(chain_error)
+    })
+    .await?;
+    within(wait, started, async {
+        submit_task(chain, key, &task).await.map_err(chain_error)
+    })
+    .await?;
     let task_height = loop {
-        if let Some(t) = find_task(chain, task_id, start_height).await.map_err(chain_error)? {
+        let found = within(wait, started, async {
+            find_task(chain, task_id, start_height).await.map_err(chain_error)
+        })
+        .await?;
+        if let Some(t) = found {
             break t.height;
         }
         if started.elapsed() > wait.timeout {
@@ -460,7 +487,7 @@ pub async fn run_job<C: ChainClient>(
         tokio::time::sleep(wait.poll).await;
     };
     loop {
-        match client.register(task_id, &upload.object_ref).await {
+        match within(wait, started, client.register(task_id, &upload.object_ref)).await {
             Ok(_) => break,
             Err(JobClientError::Rejected { code, .. })
                 if code == "TASK_NOT_ON_CHAIN" && started.elapsed() < wait.timeout =>
@@ -476,11 +503,16 @@ pub async fn run_job<C: ChainClient>(
     let status = wait_completed(client, task_id, wait, started).await?;
 
     let output = fetch_result(client, task_id, wait, started).await?;
-    let latest = chain.latest_height().await.map_err(chain_error)?;
-    let (receipt_height, receipt) = find_receipt(chain, task_id, task_height, latest)
-        .await
-        .map_err(chain_error)?
-        .ok_or_else(|| JobClientError::Verification("no anchored receipt".to_owned()))?;
+    let latest = within(wait, started, async {
+        chain.latest_height().await.map_err(chain_error)
+    })
+    .await?;
+    let found = within(wait, started, async {
+        find_receipt(chain, task_id, task_height, latest).await.map_err(chain_error)
+    })
+    .await?;
+    let (receipt_height, receipt) =
+        found.ok_or_else(|| JobClientError::Verification("no anchored receipt".to_owned()))?;
     check_receipt(&receipt, &task)?;
     let level = verify_result(&spec, &output, &receipt.output_commitment)
         .map_err(|e| JobClientError::Verification(e.to_string()))?;

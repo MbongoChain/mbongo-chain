@@ -165,6 +165,7 @@ enum Fault {
     Redirect(String),
     Respond(Vec<u8>),
     AddQuery,
+    Hang,
 }
 
 struct Rule {
@@ -240,6 +241,10 @@ async fn forward(State(gateway): State<Arc<Gateway>>, request: Request) -> Respo
         }
         Some(Fault::Respond(bytes)) => return Response::new(Body::from(bytes)),
         Some(Fault::AddQuery) => target.push_str("?injected=1"),
+        Some(Fault::Hang) => {
+            tokio::time::sleep(Duration::from_secs(300)).await;
+            return Response::new(Body::empty());
+        }
         None => {}
     }
     let mut forwarded = gateway.http.request(parts.method, target).body(bytes.to_vec());
@@ -630,7 +635,8 @@ async fn gives_up_at_its_bound(seed: u8, method: &'static str, path: &'static st
     };
     let started = Instant::now();
     let outcome = s.job(&client, wait).await;
-    assert!(gateway_failure(&outcome, 503), "{outcome:?}");
+    let timed_out = matches!(outcome, Err(JobClientError::TimedOut(_)));
+    assert!(timed_out || gateway_failure(&outcome, 503), "{outcome:?}");
     let elapsed = started.elapsed();
     assert!(
         elapsed >= wait.timeout && elapsed < Duration::from_secs(10),
@@ -650,6 +656,49 @@ async fn tracking_gives_up_at_its_bound() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn registration_gives_up_at_its_bound() {
     gives_up_at_its_bound(0xCB, "POST", "/register").await;
+}
+
+/// A request that never answers ends the job at the wait, and is not repeated.
+async fn a_hung_request_stops_at_the_wait(seed: u8, method: &'static str, path: &'static str) {
+    let s = start(seed).await;
+    let (_front, client) = s.secure().await;
+    s.gateway.add_forever(method, path, Fault::Hang);
+    let wait = WaitPolicy {
+        timeout: Duration::from_secs(2),
+        poll: Duration::from_millis(50),
+    };
+    let started = Instant::now();
+    let outcome = s.job(&client, wait).await;
+    assert!(
+        matches!(outcome, Err(JobClientError::TimedOut(_))),
+        "{outcome:?}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        s.gateway.count(method, path),
+        1,
+        "the request was sent again"
+    );
+    assert!(s.tasks_on_chain().await <= 1, "the job was submitted again");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_hung_upload_stops_at_the_wait() {
+    a_hung_request_stops_at_the_wait(0xCC, "PUT", "/v1/inputs").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_hung_registration_stops_at_the_wait() {
+    a_hung_request_stops_at_the_wait(0xCD, "POST", "/register").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_hung_status_stops_at_the_wait() {
+    a_hung_request_stops_at_the_wait(0xCE, "GET", "/v1/tasks/").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -151,7 +151,7 @@ No failure falls back to a weaker path, and none sends the input.
 | Backend down: 502, 503, 504, on tracking, the result or registration | `Rejected`, treated as transient | Until the timeout, each with a fresh signature |
 | The same, on the job spec or the input | `Rejected` | No. The job ends, and nothing reaches the chain |
 | Replay refused | `Rejected` | Only with a new identifier |
-| Timeout | `TimedOut` | The task stays on-chain. Recovery is P5 |
+| Timeout, including a request that never answers | `TimedOut`, at the client's wait, not later | The task stays on-chain. Recovery is P5 |
 
 Errors carry codes, not content. The client's key never leaves it, and neither key
 material nor input reaches a log.
