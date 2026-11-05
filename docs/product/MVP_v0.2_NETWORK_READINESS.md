@@ -139,3 +139,4 @@ Append only. Never rewrite an entry: a change of mind is a new entry.
 | 2026-11-05 | S3 D3: the producer RPC stays private and firewalled, and `produce_block` is not exposed to ordinary clients | Maintainer |
 | 2026-11-05 | S3 D4: a follower with no valid producer route fails explicitly, with no fallback | Maintainer |
 | 2026-11-05 | S3 D5: configurable mempool limits accepted provisionally, pending resource and invariant tests | Maintainer |
+| 2026-11-05 | The protocol v0.5 lock and `rpc_v0.4` belong at G4, after implementation and verification, not at G3 | Maintainer |
