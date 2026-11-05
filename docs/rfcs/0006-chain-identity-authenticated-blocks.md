@@ -176,8 +176,8 @@ node:
 - after a start, produces nothing until it is **caught up**: 30 seconds without progress,
   counted from the first answer from any peer, whether the authority dialed it or it dialed
   the authority. Progress is a valid block applied, or the first answer, from any
-  peer, that shows a height above the tip. Peers that connect later, and later answers, do
-  not extend the period. So a slow honest catch-up is not cut off, a false low height does
+  peer, that shows a height above the tip. After that answer, neither new peers nor further
+  answers extend the period. So a slow honest catch-up is not cut off, a false low height does
   not end one that another peer is serving, and peers serving no valid block can together
   delay a start by at most one period. If no peer ever answers, the wait has no
   limit, and only an operator ends it, with `--producer-start-alone <height>`;
