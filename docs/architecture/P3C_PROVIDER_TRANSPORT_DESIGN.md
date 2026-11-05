@@ -1,8 +1,11 @@
 # P3-C: Secure Transport Between Clients and Providers
 
-**Status: PROPOSED, for review.** Nothing here is implemented or authorized for
-implementation. The service stays loopback-only. No provider is exposed, and
-P3-D is not started.
+**Status: design approved (2026-11-05).** C1 is authorized once this is merged.
+C2 needs separate approval. The service stays loopback-only. No provider is
+exposed, and P3-D is not started.
+
+These choices define the **reference implementation**. They are not exclusive
+requirements for every future compatible provider.
 
 **Goal:** an independently operated client reaches an independently operated
 provider confidentially, reaches the provider it meant to, and fails safely
@@ -213,16 +216,17 @@ P3-C does not change any of these, and claims nothing about them:
 - A cryptographic link between certificate and executor (P4).
 - Availability: rate limiting and denial of service are the provider's.
 - **The client's link to its node.** T1 relies on what the node reports about
-  inclusion. A remote node needs its own protection. Out of scope here (decision 6).
+  inclusion, so a client must trust its node, or run its own. A remote node needs
+  its own protection. Out of scope here (decision 6).
 
-## 12. Decisions required
+## 12. Decisions (2026-11-05)
 
-| # | Decision | Recommendation |
-|---|---|---|
-| 1 | Reference terminator: nginx, or a plain TLS tunnel | nginx |
-| 2 | Client TLS: `rustls` through `reqwest`, the same on every platform, or the native stack per platform | `rustls` |
-| 3 | Trust: per-provider anchors with system roots off, or leaf pinning | Per-provider anchors |
-| 4 | Minimum version: TLS 1.3 only | Yes |
-| 5 | Inbound: host policy with a mandatory port list, owned by the launcher, proven by tests but not at runtime | Yes |
-| 6 | The client's link to its node stays out of P3-C, as a named open item | Yes |
-| 7 | Stages C1 then C2, each with its own implementation approval | Yes |
+| # | Decision |
+|---|---|
+| 1 | nginx is the reference TLS terminator |
+| 2 | `rustls` is the reference Rust client's TLS |
+| 3 | Provider-specific trust anchors, not system roots, in the reference configuration |
+| 4 | TLS 1.3 is required for the reference transport |
+| 5 | A launcher-managed inbound host firewall policy is required for the supported Linux reference configuration |
+| 6 | Client-to-node transport stays outside P3-C, with its separate trust requirements documented |
+| 7 | Implementation is split into C1 and C2, each needing separate approval |
