@@ -1,8 +1,7 @@
 # P3: Provider Network Security and Interoperability
 
-**Status: architecture approved in principle (2026-11-04).** P3-A and P3-B are
-implemented. P3-C and P3-D each need separate authorization after the stage
-before them.
+**Status: architecture approved in principle (2026-11-04).** P3-A, P3-B and P3-C
+are implemented. P3-D needs separate authorization.
 The service stays loopback-only: no infrastructure is purchased, and no provider
 is exposed publicly. This replaces the P3 row of
 [`G2_MBONGO_JOB_V1_PLAN.md`](G2_MBONGO_JOB_V1_PLAN.md) §10.

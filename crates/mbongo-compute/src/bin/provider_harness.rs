@@ -19,6 +19,7 @@ use mbongo_compute::chain::{ChainClient, RpcChainClient};
 use mbongo_compute::data_plane::LocalKey;
 use mbongo_compute::job::{job_spec_digest, JobSpec};
 use mbongo_compute::mvp::client::find_anchored_receipt;
+use mbongo_compute::provider::auth::{sign_request, SignedRequest};
 use mbongo_core::{Address, Transaction, TransactionPayload, TransactionType};
 use serde_json::{json, Value};
 
@@ -41,6 +42,18 @@ const PROBED_PATHS: u64 = 8;
 const NO_CAPABILITIES: &str = "0000000000000000";
 /// The launcher's table.
 const NFT_TABLE: &str = "inet mbongo_runner";
+/// A second network namespace stands in for a remote client. One host: this
+/// proves traffic crosses an interface, and nothing about separate hosts.
+const REMOTE_NS: &str = "mbongo-remote";
+const VETH: &str = "mbv0";
+const VETH_PEER: &str = "mbv1";
+const HOST_IP: &str = "10.203.0.1";
+const REMOTE_IP: &str = "10.203.0.2";
+const SERVER_NAME: &str = "provider.test";
+/// Below the ephemeral range, like the other harness ports.
+const TLS_PORT: u16 = 24443;
+const RUNNER_LISTEN_PORT: u16 = 24555;
+const CLOSED_PORT: u16 = 24556;
 /// An address outside the host, tried only if the harness itself can reach it.
 const OUTSIDE: &str = "1.1.1.1:443";
 /// `CAP_SETGID` and `CAP_SETUID`.
@@ -861,7 +874,7 @@ fn prove_refusals(c: &Contained, config: &Value) -> Result<(), String> {
         ));
     }
     println!("  refused, by the launcher, no network policy installed");
-    Ok(())
+    prove_inbound_refusals(c, &file)
 }
 
 /// The service is what the launcher promised, and says so.
@@ -1244,7 +1257,7 @@ async fn prove_network(
 
     // The control: same job, same endpoints, no rule.
     stop_service(provider).await?;
-    shell(&format!("nft delete table {NFT_TABLE}"))?;
+    shell(&format!("nft delete chain {NFT_TABLE} output"))?;
     start_service(stack, provider, log, config_file, config, "open").await?;
     let open = run("network-open")?;
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -1314,6 +1327,540 @@ async fn prove_policy_loss(
         start_service(stack, provider, log, config_file, config, "denied").await?;
     }
     Ok(())
+}
+
+/// The launcher refuses a missing or malformed inbound list, and any installed
+/// policy that is not the one asked for.
+fn prove_inbound_refusals(c: &Contained, file: &Path) -> Result<(), String> {
+    let prepare = |allow: Option<&str>| -> Result<(bool, String), String> {
+        let mut command = Command::new("bash");
+        command
+            .arg(&c.launcher)
+            .arg("prepare")
+            .arg(&c.base)
+            .env_remove("MBONGO_INBOUND_ALLOW");
+        if let Some(allow) = allow {
+            command.env("MBONGO_INBOUND_ALLOW", allow);
+        }
+        let run = command.output().map_err(|e| e.to_string())?;
+        Ok((
+            run.status.success(),
+            String::from_utf8_lossy(&run.stderr).into_owned(),
+        ))
+    };
+    let lists = [
+        (None, "is required"),
+        (Some(""), "is required"),
+        (Some("22;reboot"), "malformed"),
+        (Some("abc"), "malformed"),
+        (Some("22,,80"), "malformed"),
+        (Some(",22"), "malformed"),
+        (Some("22,"), "malformed"),
+        (Some("22 80"), "malformed"),
+        (Some("0"), "malformed"),
+        (Some("0022"), "malformed"),
+        (Some("70000"), "out of range"),
+        (Some("123456"), "out of range"),
+    ];
+    for (allow, reason) in lists {
+        let (ok, err) = prepare(allow)?;
+        if ok || !err.contains(reason) {
+            return Err(format!("inbound list {allow:?}: {ok} {err}"));
+        }
+    }
+    println!(
+        "  refused, by the launcher: {} missing or malformed inbound lists",
+        lists.len()
+    );
+    let changes = [
+        (
+            "no inbound chain",
+            format!("nft delete chain {NFT_TABLE} input"),
+            "inbound policy is not installed",
+        ),
+        (
+            "inbound policy set to accept",
+            format!("nft 'chain {NFT_TABLE} input {{ policy accept; }}'"),
+            "inbound policy is not installed",
+        ),
+        (
+            "a port nobody listed",
+            format!("nft add rule {NFT_TABLE} input tcp dport 9999 ct state new accept"),
+            "does not match",
+        ),
+        (
+            "a UDP port nobody listed",
+            format!("nft add rule {NFT_TABLE} input udp dport 53 accept"),
+            "does not match",
+        ),
+        (
+            "every TCP port accepted",
+            format!("nft add rule {NFT_TABLE} input meta l4proto tcp accept"),
+            "does not match",
+        ),
+        (
+            "everything accepted",
+            format!("nft add rule {NFT_TABLE} input accept"),
+            "does not match",
+        ),
+    ];
+    for (name, change, reason) in &changes {
+        shell(change)?;
+        let run = service_command(Some(c), file).output().map_err(|e| e.to_string());
+        c.prepare()?;
+        let run = run?;
+        let err = String::from_utf8_lossy(&run.stderr);
+        if run.status.success() || !err.contains(reason) {
+            return Err(format!("{name}: {} {}", run.status, err.trim()));
+        }
+        println!("  refused, by the launcher: {name}");
+    }
+    let run = service_command(Some(c), file)
+        .env("MBONGO_INBOUND_ALLOW", "22")
+        .output()
+        .map_err(|e| e.to_string())?;
+    let err = String::from_utf8_lossy(&run.stderr);
+    if run.status.success() || !err.contains("does not match") {
+        return Err(format!(
+            "another list at run: {} {}",
+            run.status,
+            err.trim()
+        ));
+    }
+    let run = service_command(Some(c), file)
+        .env("MBONGO_RUNNER_NETWORK", "deny")
+        .output()
+        .map_err(|e| e.to_string())?;
+    let err = String::from_utf8_lossy(&run.stderr);
+    if run.status.success() || !err.contains("must be denied or open") {
+        return Err(format!("a misspelled mode: {} {}", run.status, err.trim()));
+    }
+    println!("  refused, by the launcher: another list at run, and a misspelled network mode");
+    Ok(())
+}
+
+fn remote(script: &str) -> Command {
+    let mut command = Command::new("ip");
+    command.args(["netns", "exec", REMOTE_NS, "sh", "-c", script]);
+    command
+}
+
+/// Whether the remote namespace can open a connection to this host.
+fn reachable(port: u16) -> Result<bool, String> {
+    let script = format!("timeout 3 bash -c 'exec 3<>/dev/tcp/{HOST_IP}/{port}'");
+    let status = remote(&script).status().map_err(|e| e.to_string())?;
+    Ok(status.success())
+}
+
+/// One request through nginx from the remote namespace. Returns the status and
+/// the body.
+fn curl(
+    tls: &Path,
+    method: &str,
+    path: &str,
+    headers: &[(&str, String)],
+    body: &Path,
+) -> Result<(u16, String), String> {
+    let mut script = format!(
+        "curl -s -m 10 -o - -w '\\n%{{http_code}}' --cacert {}/ca.pem -X {method} --data-binary @{}",
+        tls.display(),
+        body.display()
+    );
+    for (name, value) in headers {
+        script.push_str(&format!(" -H '{name}: {value}'"));
+    }
+    script.push_str(&format!(" 'https://{SERVER_NAME}:{TLS_PORT}{path}'"));
+    let out = remote(&script).output().map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let (body, code) = text.rsplit_once('\n').ok_or(format!("curl: {text}"))?;
+    let code = code.trim().parse().map_err(|_| format!("curl: {text}"))?;
+    Ok((code, body.to_owned()))
+}
+
+fn signed(method: &str, path: &str, body: &[u8]) -> Result<Vec<(&'static str, String)>, String> {
+    let executor = LocalKey::from_seed(&EXECUTOR_SEED).address();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+
+    let headers = sign_request(
+        &LocalKey::from_seed(&CLIENT_SEED),
+        &SignedRequest {
+            recipient: executor,
+            method,
+            path,
+            body,
+            issued_at: now,
+            expires_at: now + 60,
+            request_id: mbongo_compute::mvp::client::random_bytes::<16>(),
+        },
+    );
+    Ok(headers.to_vec())
+}
+
+/// Removes the namespace and the interface when dropped.
+struct RemoteNamespace;
+
+impl Drop for RemoteNamespace {
+    fn drop(&mut self) {
+        let _ = shell(&format!(
+            "ip netns del {REMOTE_NS} 2>/dev/null; ip link del {VETH} 2>/dev/null; \
+             rm -rf /etc/netns/{REMOTE_NS}"
+        ));
+    }
+}
+
+fn set_up_remote() -> Result<RemoteNamespace, String> {
+    drop(RemoteNamespace);
+    shell(&format!(
+        "ip netns add {REMOTE_NS} && \
+         ip link add {VETH} type veth peer name {VETH_PEER} && \
+         ip link set {VETH_PEER} netns {REMOTE_NS} && \
+         ip addr add {HOST_IP}/30 dev {VETH} && ip link set {VETH} up && \
+         ip netns exec {REMOTE_NS} ip addr add {REMOTE_IP}/30 dev {VETH_PEER} && \
+         ip netns exec {REMOTE_NS} ip link set {VETH_PEER} up && \
+         ip netns exec {REMOTE_NS} ip link set lo up && \
+         mkdir -p /etc/netns/{REMOTE_NS} && \
+         echo '{HOST_IP} {SERVER_NAME}' > /etc/netns/{REMOTE_NS}/hosts"
+    ))?;
+    Ok(RemoteNamespace)
+}
+
+/// A private authority and a certificate for the server name, made here.
+fn make_certificates(tls: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(tls).map_err(|e| e.to_string())?;
+    let dir = tls.display();
+    shell(&format!(
+        "cd {dir} && \
+         openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 2 \
+           -keyout ca.key -out ca.pem -subj /CN=mbongo-test-authority \
+           -addext basicConstraints=critical,CA:TRUE 2> /dev/null && \
+         openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+           -keyout leaf.key -out leaf.csr -subj /CN={SERVER_NAME} 2> /dev/null && \
+         echo subjectAltName=DNS:{SERVER_NAME} > leaf.ext && \
+         openssl x509 -req -in leaf.csr -CA ca.pem -CAkey ca.key -CAcreateserial -days 2 \
+           -extfile leaf.ext -out leaf.pem 2> /dev/null"
+    ))
+}
+
+/// The reference configuration, with its values filled in. Nothing else
+/// changes: this is what is tested.
+fn start_nginx(tls: &Path, backend: &str) -> Result<Process, String> {
+    let template =
+        std::fs::read_to_string(repo_root().join("scripts/provider-nginx.conf.template"))
+            .map_err(|e| e.to_string())?;
+    let dir = tls.display().to_string();
+    let conf = template
+        .replace("@PREFIX@", &dir)
+        .replace("@LISTEN@", &format!("{HOST_IP}:{TLS_PORT}"))
+        .replace("@SERVER_NAME@", SERVER_NAME)
+        .replace("@CERTIFICATE@", &format!("{dir}/leaf.pem"))
+        .replace("@CERTIFICATE_KEY@", &format!("{dir}/leaf.key"))
+        .replace("@BACKEND@", backend);
+    if conf.contains('@') {
+        return Err("a value of the nginx template was left unfilled".to_owned());
+    }
+    let file = tls.join("nginx.conf");
+    std::fs::write(&file, conf).map_err(|e| e.to_string())?;
+    let mut command = Command::new("nginx");
+    command
+        .args(["-p", &dir, "-e", "stderr", "-c"])
+        .arg(&file)
+        .args(["-g", "daemon off;"]);
+    let process = spawn_logged(command, &tls.join("nginx.log"))?;
+    let started = Instant::now();
+    while !reachable(TLS_PORT)? {
+        if started.elapsed() > Duration::from_secs(10) {
+            return Err(format!(
+                "nginx did not start: {}",
+                tail(&tls.join("nginx.log"))
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Ok(process)
+}
+
+fn remote_job(
+    stack: &Stack,
+    tls: &Path,
+    name: &str,
+    spec: &[u8],
+    input: &[u8],
+) -> Result<Command, String> {
+    let spec_file = stack.base.join(format!("{name}.job.json"));
+    let input_file = stack.base.join(format!("{name}.input"));
+    std::fs::write(&spec_file, spec).map_err(|e| e.to_string())?;
+    std::fs::write(&input_file, input).map_err(|e| e.to_string())?;
+    let mut command = Command::new("ip");
+    command
+        .args(["netns", "exec", REMOTE_NS])
+        .arg(sibling("job_client"))
+        .arg("--provider-endpoint")
+        .arg(tls.join("endpoint.json"))
+        .arg("--job-spec")
+        .arg(&spec_file)
+        .arg("--input")
+        .arg(&input_file)
+        .arg("--key-file")
+        .arg(stack.base.join("client.key"))
+        .args(["--rpc-url", &format!("http://{HOST_IP}:{RPC_PORT}/rpc")])
+        .args(["--rest-url", &format!("http://{HOST_IP}:{REST_PORT}")])
+        .args(["--timeout-secs", "90"]);
+    Ok(command)
+}
+
+fn t1_report(run: &std::process::Output, name: &str) -> Result<Value, String> {
+    if !run.status.success() {
+        return Err(format!(
+            "{name}: {}",
+            String::from_utf8_lossy(&run.stderr).trim()
+        ));
+    }
+    let report: Value = serde_json::from_slice(&run.stdout).map_err(|e| e.to_string())?;
+    if report["technical_level"] != "T1" || report["receipt_height"].as_u64().unwrap_or(0) == 0 {
+        return Err(format!("{name}: {report}"));
+    }
+    Ok(report)
+}
+
+/// From the remote namespace: what reaches this host, a job through nginx, and
+/// what nginx does to signed requests.
+async fn prove_transport(
+    stack: &Stack,
+    provider: &mut Process,
+    log: &Path,
+    config_file: &Path,
+    config: &Value,
+) -> Result<(), String> {
+    let c = stack.contained.as_ref().ok_or("not contained")?;
+    let tls = stack.base.join("tls");
+    make_certificates(&tls)?;
+    let _namespace = set_up_remote()?;
+    std::env::set_var(
+        "MBONGO_INBOUND_ALLOW",
+        format!("{TLS_PORT},{RPC_PORT},{REST_PORT}"),
+    );
+    c.prepare()?;
+    let backend = stack.provider.trim_start_matches("http://").to_owned();
+    let backend_port: u16 =
+        backend.rsplit(':').next().and_then(|p| p.parse().ok()).ok_or("backend")?;
+    let _nginx = start_nginx(&tls, &backend)?;
+    let executor = hex::encode(LocalKey::from_seed(&EXECUTOR_SEED).address().0);
+    std::fs::write(
+        tls.join("endpoint.json"),
+        json!({
+            "schema": "provider-endpoint-v1",
+            "executor": executor,
+            "url": format!("https://{SERVER_NAME}:{TLS_PORT}"),
+            "trust_anchors": "ca.pem",
+        })
+        .to_string(),
+    )
+    .map_err(|e| e.to_string())?;
+
+    // What the firewall lets through, and what it does not.
+    let closed = TcpListener::bind((HOST_IP, CLOSED_PORT)).map_err(|e| e.to_string())?;
+    if !reachable(TLS_PORT)? {
+        return Err("the remote namespace cannot reach nginx".to_owned());
+    }
+    if reachable(backend_port)? {
+        return Err("the remote namespace reached the backend".to_owned());
+    }
+    if reachable(CLOSED_PORT)? {
+        return Err("the remote namespace reached a port nobody listed".to_owned());
+    }
+    drop(closed);
+    println!("  from the remote namespace: nginx reachable; backend and an unlisted port not");
+
+    // A complete job.
+    let spec = fixture_spec(
+        json!({}),
+        64,
+        json!({"max_wall_ms": 5_000, "max_memory_mib": 256}),
+    )?;
+    let run = remote_job(stack, &tls, "remote", &spec, b"[2,3]")?
+        .output()
+        .map_err(|e| e.to_string())?;
+    let report = t1_report(&run, "remote job")?;
+    println!(
+        "  a job from the remote namespace, through nginx: receipt at height {}, verified at T1",
+        report["receipt_height"]
+    );
+
+    // TLS version, seen from a client that would accept less.
+    let version = |limit: &str| {
+        remote(&format!(
+            "curl -s -o /dev/null -m 5 {limit} --cacert {}/ca.pem \
+             https://{SERVER_NAME}:{TLS_PORT}/v1/capabilities",
+            tls.display()
+        ))
+        .status()
+        .map_err(|e| e.to_string())
+    };
+    let old = version("--tlsv1.2 --tls-max 1.2")?;
+    let current = version("--tlsv1.3")?;
+    // 35 is curl's handshake failure. The control tells it from any other.
+    if old.code() != Some(35) || !current.success() {
+        return Err(format!("TLS versions: {old} {current}"));
+    }
+
+    // Signed requests through the proxy.
+    let empty = tls.join("empty");
+    std::fs::write(&empty, b"").map_err(|e| e.to_string())?;
+    let task = report["task_id"].as_str().ok_or("task id")?;
+    let path = format!("/v1/tasks/{task}");
+    let headers = signed("GET", &path, b"")?;
+    let first = curl(&tls, "GET", &path, &headers, &empty)?;
+    let second = curl(&tls, "GET", &path, &headers, &empty)?;
+    if first.0 != 200 || second.0 != 401 || !second.1.contains("REPLAY") {
+        return Err(format!("replay: {first:?} {second:?}"));
+    }
+    println!("  a signed request passes through nginx once; its replay is refused");
+    let query = format!("{path}?injected=1");
+    let headers = signed("GET", &path, b"")?;
+    let added = curl(&tls, "GET", &query, &headers, &empty)?;
+    if added.0 != 400 || !added.1.contains("AUTH_QUERY_NOT_ALLOWED") {
+        return Err(format!("query: {added:?}"));
+    }
+    let body = tls.join("altered");
+    std::fs::write(&body, b"{}").map_err(|e| e.to_string())?;
+    let headers = signed("PUT", "/v1/job-specs", &spec)?;
+    let altered = curl(&tls, "PUT", "/v1/job-specs", &headers, &body)?;
+    if altered.0 != 401 || !altered.1.contains("AUTH_BAD_SIGNATURE") {
+        return Err(format!("altered body: {altered:?}"));
+    }
+    let large = tls.join("large");
+    std::fs::write(&large, vec![b'x'; 300 * 1024]).map_err(|e| e.to_string())?;
+    let oversized = curl(&tls, "PUT", "/v1/job-specs", &[], &large)?;
+    // The service has the same limit: this must be nginx's own refusal.
+    if oversized.0 != 413 || !oversized.1.contains("<center>nginx</center>") {
+        return Err(format!("size limit: {oversized:?}"));
+    }
+    println!(
+        "  through nginx: added query, altered body and oversized body refused; TLS 1.2 refused"
+    );
+
+    // The backend goes away mid-job, and comes back.
+    let marker = c.scratch.join("restart-starts");
+    let slow = fixture_spec(
+        json!({"mode": "slow", "delay_ms": 4_000, "marker": marker}),
+        64,
+        json!({"max_wall_ms": 20_000, "max_memory_mib": 256}),
+    )?;
+    let client = remote_job(stack, &tls, "restart", &slow, b"[4,5]")?
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let started = Instant::now();
+    while !marker.exists() {
+        if started.elapsed() > Duration::from_secs(60) {
+            return Err("the job never started".to_owned());
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    stop_service(provider).await?;
+    let down = curl(&tls, "GET", "/v1/capabilities", &[], &empty)?;
+    if down.0 != 502 {
+        return Err(format!("backend down: {}", down.0));
+    }
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    start_service(stack, provider, log, config_file, config, "denied").await?;
+    let run = client.wait_with_output().map_err(|e| e.to_string())?;
+    let report = t1_report(&run, "after the restart")?;
+    let access = std::fs::read_to_string(tls.join("access.log")).map_err(|e| e.to_string())?;
+    let failed = access
+        .lines()
+        .filter(|l| l.contains("/v1/tasks/") && l.contains("\" 502 "))
+        .count();
+    if failed == 0 {
+        return Err("the client saw no gateway failure: nothing was tested".to_owned());
+    }
+    println!(
+        "  backend stopped mid-job: {failed} tracking request(s) got 502, the client recovered, \
+         receipt at height {}, verified at T1",
+        report["receipt_height"]
+    );
+
+    // A port the runner listens on, under each policy.
+    let listening = |name: &str| -> Result<(std::process::Child, PathBuf), String> {
+        let marker = c.scratch.join(format!("{name}.listening"));
+        let spec = fixture_spec(
+            json!({"mode": "listen", "port": RUNNER_LISTEN_PORT, "marker": marker, "hold_ms": 5_000}),
+            64,
+            json!({"max_wall_ms": 20_000, "max_memory_mib": 256}),
+        )?;
+        let child = stack
+            .client_command(name, &spec, b"[1]")?
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok((child, marker))
+    };
+    let try_it = |name: &'static str| async move {
+        let (child, marker) = listening(name)?;
+        let started = Instant::now();
+        while !marker.exists() {
+            if started.elapsed() > Duration::from_secs(60) {
+                return Err::<(bool, u64), String>("the listener never started".to_owned());
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let reached = reachable(RUNNER_LISTEN_PORT)?;
+        let run = child.wait_with_output().map_err(|e| e.to_string())?;
+        let report = t1_report(&run, name)?;
+        let bytes =
+            hex::decode(report["output"].as_str().ok_or("output")?).map_err(|e| e.to_string())?;
+        let output: Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+        Ok((reached, output["connections"].as_u64().unwrap_or(0)))
+    };
+    let (reached, connections) = try_it("listen-denied").await?;
+    if reached || connections != 0 {
+        return Err(format!("runner listener: {reached} {connections}"));
+    }
+    println!("  a port the runner listens on: not reachable from the remote namespace");
+    shell(&format!("nft delete chain {NFT_TABLE} input"))?;
+    let (reached, connections) = try_it("listen-output-only").await?;
+    println!(
+        "  observed, with only the output rule: reachable {reached}, {connections} connection(s)"
+    );
+    c.prepare()?;
+
+    // The inbound policy alone, then the same with both ports listed: the list
+    // is the only difference, so the list is what decides.
+    stop_service(provider).await?;
+    shell(&format!("nft delete chain {NFT_TABLE} output"))?;
+    start_service(stack, provider, log, config_file, config, "open").await?;
+    let (reached, connections) = try_it("listen-input-only").await?;
+    if reached || connections != 0 {
+        return Err(format!("inbound policy alone: {reached} {connections}"));
+    }
+    println!("  the inbound policy alone keeps the runner's port unreachable");
+    stop_service(provider).await?;
+    std::env::set_var(
+        "MBONGO_INBOUND_ALLOW",
+        format!("{TLS_PORT},{RPC_PORT},{REST_PORT},{RUNNER_LISTEN_PORT},{CLOSED_PORT}"),
+    );
+    c.prepare()?;
+    shell(&format!("nft delete chain {NFT_TABLE} output"))?;
+    start_service(stack, provider, log, config_file, config, "open").await?;
+    let listed = TcpListener::bind((HOST_IP, CLOSED_PORT)).map_err(|e| e.to_string())?;
+    if !reachable(CLOSED_PORT)? {
+        return Err("control: a listed port was not reachable".to_owned());
+    }
+    drop(listed);
+    let (reached, connections) = try_it("listen-open").await?;
+    if !reached || connections == 0 {
+        return Err(format!("control: {reached} {connections}"));
+    }
+    println!("  the control, with both ports listed: reachable, {connections} connection(s)");
+    stop_service(provider).await?;
+    std::env::set_var("MBONGO_INBOUND_ALLOW", "none");
+    c.prepare()?;
+    start_service(stack, provider, log, config_file, config, "denied").await
 }
 
 /// A job that forks without end stops at the limit, and takes nothing with it.
@@ -1552,6 +2099,9 @@ async fn wait_for_bind(log: &Path, provider: &mut Process) -> Result<String, Str
 }
 
 async fn run(base: &Path, contain: bool) -> Result<(), String> {
+    if contain {
+        std::env::set_var("MBONGO_INBOUND_ALLOW", "none");
+    }
     std::fs::create_dir_all(base.join("artifacts")).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(base.join("keys")).map_err(|e| e.to_string())?;
     report_time_wait();
@@ -1569,6 +2119,11 @@ async fn run(base: &Path, contain: bool) -> Result<(), String> {
         .args(["--p2p-port", &P2P_PORT.to_string()])
         .arg("--data-dir")
         .arg(base.join("chain"));
+    if contain {
+        // The remote client's node. Its transport is outside P3-C, and the
+        // firewall decides who reaches it.
+        node.args(["--rpc-host", "0.0.0.0", "--rest-host", "0.0.0.0"]);
+    }
     let _node = spawn_logged(node, &node_log)?;
     let chain = RpcChainClient::new(
         format!("http://127.0.0.1:{RPC_PORT}/rpc"),
@@ -1659,6 +2214,7 @@ async fn run(base: &Path, contain: bool) -> Result<(), String> {
             prove_process_limit(c, &stack).await?;
             prove_network(&stack, &mut provider, &provider_log, &config_file, &config).await?;
             prove_policy_loss(&stack, &mut provider, &provider_log, &config_file, &config).await?;
+            prove_transport(&stack, &mut provider, &provider_log, &config_file, &config).await?;
         }
         prove_vectors(&stack, &chain).await?;
         prove_failure(&stack)?;

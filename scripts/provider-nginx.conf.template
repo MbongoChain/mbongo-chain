@@ -1,0 +1,60 @@
+# Reference TLS terminator for one provider service (P3-C2).
+#
+# Fill in the placeholders. See docs/runbooks/PROVIDER_TLS_REFERENCE_LINUX.md.
+# A reference, not a production hardening guide. It sits inside the provider's
+# trust boundary: it sees plaintext. Every setting below that touches a request
+# exists because requests are signed, and because a signed request can only be
+# used once.
+
+worker_processes 1;
+pid @PREFIX@/nginx.pid;
+error_log @PREFIX@/error.log warn;
+
+events {
+    worker_connections 256;
+}
+
+http {
+    server_tokens off;
+    access_log @PREFIX@/access.log;
+
+    server {
+        listen @LISTEN@ ssl;
+        server_name @SERVER_NAME@;
+
+        ssl_certificate @CERTIFICATE@;
+        ssl_certificate_key @CERTIFICATE_KEY@;
+        ssl_protocols TLSv1.3;
+        ssl_session_tickets off;
+
+        # The service's own limit.
+        client_max_body_size 256k;
+        client_header_timeout 10s;
+        client_body_timeout 30s;
+        send_timeout 30s;
+        keepalive_timeout 30s;
+
+        # The signature covers the path as the client sent it.
+        merge_slashes off;
+
+        location / {
+            # No URI after the address: the path is forwarded untouched.
+            proxy_pass http://@BACKEND@;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+
+            # A retried request is a replay, and the service would refuse it.
+            proxy_next_upstream off;
+            proxy_redirect off;
+
+            # Streamed to the service, so that an input is not written to this
+            # host's disk by the terminator.
+            proxy_request_buffering off;
+
+            proxy_connect_timeout 5s;
+            proxy_send_timeout 30s;
+            proxy_read_timeout 60s;
+            proxy_max_temp_file_size 0;
+        }
+    }
+}

@@ -23,6 +23,9 @@ analyste = "analyste"
 ignora = "ignora"
 # nftables keyword: output interface
 oif = "oif"
+# nftables keywords: input interface, neighbor discovery
+iif = "iif"
+nd = "nd"
 # Linux capability names: CapInh in /proc/<pid>/status, setpriv --inh-caps
 inh = "inh"
 Inh = "Inh"

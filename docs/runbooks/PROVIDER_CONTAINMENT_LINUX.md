@@ -27,11 +27,11 @@ Tested on the CI runner, `ubuntu-24.04`, by the job
 ## Start
 
 ```bash
-sudo scripts/provider-containment-linux.sh prepare /srv/mbongo
+sudo MBONGO_INBOUND_ALLOW=22 scripts/provider-containment-linux.sh prepare /srv/mbongo
 ```
 
-This creates the accounts, the directories and the delegated cgroup, then
-prints the ids the configuration needs. Put the keys in `/srv/mbongo/keys`, run
+This creates the accounts, the directories, the delegated cgroup and the
+firewall, then prints the ids the configuration needs. Put the keys in `/srv/mbongo/keys`, run
 `prepare` again to set their modes, and configure the service:
 
 ```json
@@ -53,7 +53,7 @@ prints the ids the configuration needs. Put the keys in `/srv/mbongo/keys`, run
 ```
 
 ```bash
-sudo scripts/provider-containment-linux.sh run /srv/mbongo /srv/mbongo/bin/provider_service /srv/mbongo/provider.json
+sudo MBONGO_INBOUND_ALLOW=22 scripts/provider-containment-linux.sh run /srv/mbongo /srv/mbongo/bin/provider_service /srv/mbongo/provider.json
 ```
 
 `isolation` and its `network` field have no default. `"network": "open"` leaves
@@ -129,7 +129,7 @@ These are the provider's responsibility.
 | **Running jobs when the service dies** | `SIGKILL`, a crash or power loss leaves a running job alive with no deadline until the next start kills it. To end it sooner, write `1` to `<cgroup_root>/cgroup.kill` |
 | **CPU and disk limits** | A job can use all CPU until `max_wall_ms`, and fill any disk its account can write to |
 | **Protection from the service** | The service holds `CAP_SETUID` and `CAP_SETGID`. A compromised service can become any uid, so the service is trusted. Its bounding set allows nothing else |
-| **Inbound traffic, and packets without an owner** | The rule filters output by socket owner. Nothing filters input, so a peer can connect to a port the runner listens on. Packets the kernel sends with no owning socket, such as a handshake reply or a retransmission after a socket closed, are not matched. Data the runner writes to an established socket is refused. Filter input on the host if that matters |
+| **Inbound traffic, and packets without an owner** | The launcher's inbound policy drops new connections to any port not listed, and the remote-namespace test shows that this alone keeps a port the runner listens on unreachable. A listed port stays open to whatever listens on it. The service cannot check this policy: [`PROVIDER_TLS_REFERENCE_LINUX.md`](PROVIDER_TLS_REFERENCE_LINUX.md). With only the output rule, the same port was also unreachable in testing, but that is observed, and the kernel may send packets with no owning socket, which the rule would not match |
 | **Continuous network enforcement** | The policy is checked at startup and before each job. Removed during a job, it is not seen until the next one. The check proves loopback only: a rule changed to let other destinations through is not detected |
 | **Unsupported hosts** | The rule lives in one network namespace, the service's. A `/proc` mounted with `hidepid` hides the shared-account check. Other firewalls, container runtimes and hosts without `nftables` are untested. An administrator can remove the rule |
 | **Kernel bugs** | The boundary is the kernel's. It is weaker than a VM |
