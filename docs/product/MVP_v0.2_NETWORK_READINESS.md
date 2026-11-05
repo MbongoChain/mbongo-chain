@@ -111,8 +111,8 @@ VM, transaction gossip unless S3 proves it necessary, and paid P3-D deployment.
 | G0 | Approve this specification and the planning structure | Maintainer |
 | G1 | RFC 0006: `READY_FOR_REVIEW`, then acceptance after cooling and adversarial review | Maintainer, under the process |
 | G2 | S0: the prepared correction, reviewed privately, merged under the accepted RFC | Maintainer |
-| G3 | S1 implementation merged, protocol lock v0.5 | Maintainer |
-| G4 | S2 and S3, each with its own approval | Maintainer |
+| G3 | S1 implementation merged | Maintainer |
+| G4 | S2 and S3, each with its own approval, protocol lock v0.5 and `rpc_v0.4` cut once S3 reconnection and the `submit_transaction` failure rule are in | Maintainer |
 | G5 | S4 evidence accepted, MVP v0.2 released | Maintainer |
 
 ## 10. Implementation PR requirements
@@ -134,3 +134,9 @@ Append only. Never rewrite an entry: a change of mind is a new entry.
 | 2026-11-05 | G0: planning structure approved. RFC 0006 moves to its own PR | Maintainer |
 | 2026-11-05 | Private vulnerability tracking approved. No emergency exception is claimed | Maintainer |
 | 2026-11-05 | A protected state-transition change merges only after its governing RFC is accepted | Maintainer |
+| 2026-11-05 | S3 D1: PR 1 may be implemented before S0 merges if no locked surface changes. Other S3 PRs need separate approval | Maintainer |
+| 2026-11-05 | S3 D2: non-additive RPC behaviour goes into `rpc_v0.4`, planned with S1 | Maintainer |
+| 2026-11-05 | S3 D3: the producer RPC stays private and firewalled, and `produce_block` is not exposed to ordinary clients | Maintainer |
+| 2026-11-05 | S3 D4: a follower with no valid producer route fails explicitly, with no fallback | Maintainer |
+| 2026-11-05 | S3 D5: configurable mempool limits accepted provisionally, pending resource and invariant tests | Maintainer |
+| 2026-11-05 | The protocol v0.5 lock and `rpc_v0.4` belong at G4, after implementation and verification, not at G3 | Maintainer |
