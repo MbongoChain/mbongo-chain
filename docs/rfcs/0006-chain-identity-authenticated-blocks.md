@@ -147,8 +147,10 @@ small order, and the equation is checked without the cofactor (RFC 8032, as
 With `n` authorities, the producer at height `h` is `authorities[h % n]`. MVP v0.2 uses
 `n = 1`. Larger sets follow the same rule, and are not tested by this RFC's first use.
 
-`--producer` needs `--producer-key-file`, whose key must be one of the authorities, or
-the node refuses to start. At a height that is not its turn, `produce_block` returns
+`--producer` needs `--producer-key-file`, a file holding a 32-byte Ed25519 seed as 64 hex
+characters, as the client key files do. Its key must be one of the authorities, or the
+node refuses to start. The only exception is `--dev`, where the flag is not used and the
+public dev authority key is taken automatically. At a height that is not its turn, `produce_block` returns
 `NotProducerTurn` and produces nothing.
 
 **A producer builds a block in this order:** execute the transactions on an uncommitted
@@ -236,7 +238,7 @@ bind every implementation:
 ### 7. P2P and RPC
 
 - Negotiation identifiers become `/mbongo-sync/3/<c>` and `/mbongo/block_notify/0.3.0/<c>`,
-  where `<c>` is the first 16 hex characters of `chain_id`. Peers on another network fail
+  where `<c>` is the first 16 lowercase hex characters of `chain_id`. Peers on another network fail
   negotiation, before any block is exchanged.
 - Identify metadata becomes `/mbongo/0.5.0`, informational as before.
 - Message shapes and framing are otherwise unchanged. `Block` carries the new fields.
@@ -256,11 +258,12 @@ migration. A v0.5 network starts from a new genesis in an empty directory.
 - **Existing nodes:** v0.4 and v0.5 nodes do not negotiate.
 - **Existing data:** abandoned. Storage schema 3 → 4. Unlike earlier versions, a v0.5 node
   **refuses** a directory below schema 4, and does not stamp it. Schema 4 stores `chain_id`
-  and the genesis hash, and a node refuses a directory holding different ones. A directory
-  with no stored chain identity and no block is treated as new, so a crash during creation
-  is recoverable.
+  and the genesis hash, and a node refuses a directory holding different ones. Only a
+  directory with no schema stamp, no chain identity and no block is treated as new, so a
+  crash during creation is recoverable. Any stamp below 4 is refused, block or no block.
 - **Existing clients:** `@mbongo/sdk` needs a new version for signing, block decoding and
-  `get_chain_info`. 0.2.0 stays valid for v0.4 only.
+  `get_chain_info`. 0.2.0 stays valid for v0.4 only. `mbongo-compute` signs transactions
+  too, in its client and worker, and changes with the node.
 - **Rollback:** nothing to roll back. An abandoned v0.5 directory leaves v0.4 and its tag
   as they are.
 - **`mvp-v0.1.0`:** unaffected. It stays pinned to its release and protocol.
@@ -310,7 +313,8 @@ the vectors match their independent derivation in Rust and in TypeScript.
 
 1. `READY_FOR_REVIEW`, 7-day cooling period, written adversarial review (`RFC_PROCESS.md`).
 2. Acceptance.
-3. Implementation, in the order #209 sets: conformance to section 6 first, as its own
-   change, then `mbongo-core`, `mbongo-storage`, `mbongo-node`, `mbongo-network`, then the SDK.
+3. Implementation, under the gates of `MVP_v0.2_NETWORK_READINESS.md`: conformance to
+   section 6 first, as its own change, then `mbongo-core`, `mbongo-storage`, `mbongo-node`,
+   `mbongo-network`, `mbongo-compute`, then the SDK.
 4. `PROTOCOL_LOCK_v0.5.md`, `rpc_v0.4.md`, and a `v0.5-devnet-stable` tag. v0.4 stays as a
    historical lock. No coordination is needed: there is no network to upgrade.
