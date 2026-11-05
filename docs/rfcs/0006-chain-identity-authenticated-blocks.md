@@ -173,33 +173,44 @@ node:
 - commits a block with a synced write **before** broadcasting it. A crash before the
   commit leaves nothing that anyone has seen, so signing a different block at that height
   afterwards is harmless;
-- after a start, produces nothing until at least one peer has answered, whether the
-  authority dialed it or it dialed the authority, and every valid block peers serve within
-  a timeout is applied. A peer that does not answer is not counted. With `--dev` there is
-  no wait. If no peer ever answers, the wait has no limit, and only an operator ends it,
-  with `--producer-start-alone <height>`. That flag waives this wait and nothing else:
-  blocks from a peer that does answer are still applied first. Its value must equal the
-  node's local height, or the node refuses to start, so a value left in a configuration
-  does not apply to a later start;
+- after a start, produces nothing until it is **caught up**: at least one peer has answered,
+  whether the authority dialed it or it dialed the authority, every peer connected has
+  answered or stayed silent for 30 seconds, and no new valid block has been applied for
+  30 seconds. Each applied block restarts that period, so a slow honest catch-up is not cut
+  off, and a false low height from one peer does not end it while another is serving. If no
+  peer ever answers, the wait has no limit, and only an operator ends it, with
+  `--producer-start-alone <height>`;
+- treats that flag as waiving only the need for an answer: the 30 seconds still run, and
+  blocks that arrive in them are applied first. Its value must equal the local height, or
+  the node refuses to start, so a value left in a configuration stops matching once the
+  chain advances. After a wipe a leftover `0` matches again, which is the fork case: the flag
+  belongs on a command line, never in a configuration;
 - stops producing only on a block above its tip that passes rules (t) and (u). **A height
-  a peer merely reports never stops production,** and is dropped when no valid block backs
-  it within that timeout. It resumes once that block is applied. If the block cannot be
-  applied, it stays stopped and raises an alert until an operator decides, as in Recovery
-  below;
-- is the only running node holding that key. Nothing can enforce this: it is an operating
-  rule.
+  a peer merely reports never stops production.** It resumes once that block is applied. If
+  the block cannot be applied, it stays stopped and raises an alert. Stopping is not
+  persisted: the operator removes the source of that block, as in Recovery, and restarts
+  the node;
+- answers `produce_block` with an error, producing nothing, while waiting or stopped.
 
-These bind the producer. A receiving node cannot check them.
+With `--dev`, neither the wait nor the stop applies: dev networks share a key and a
+`chain_id`, so one would stop another. `--producer-start-alone` with `--dev`, or without
+`--producer`, is refused.
+
+The authority key runs on exactly one node. Nothing can enforce this: it is an operating
+rule. All of the above binds the producer, and a receiving node cannot check it.
 
 **Reconnection.** A node redials its configured bootnodes when a connection closes or a
 dial fails, with capped exponential backoff, for as long as it runs. Followers dial the
 authority, so this is what ends the start wait after a routine restart, with no peer list
-on the authority and no operator action.
+on the authority and no operator action. It needs an address that survives that restart:
+a bootnode address with no `/p2p/` part, or a stable peer identity from `--node-key-file`,
+which holds a 32-byte seed as `--producer-key-file` does and is not the authority key.
 
 **Recovery.** If two blocks exist at one height anyway, nodes stay on the first they saw,
 and no rule reconciles them. The operators pick one branch. Nodes on the other stop, clear
 their directories and resync. If no branch can be chosen, the network restarts from a new
-genesis.
+genesis, from a **different** file, such as one with a new `timestamp`: an identical file
+gives the same `chain_id`, and old blocks stay valid.
 
 ### 4. State commitment
 
@@ -299,12 +310,11 @@ bind every implementation:
   `producer` and `producer_signature`, in the `0x`-prefixed hex of `rpc_v0.3`.
 - New method `get_chain_info`, no parameters, returning
   `{"chain_id": "0x…", "genesis_hash": "0x…", "authorities": ["0x…"]}`.
-- `rpc_v0.4` also carries the transaction forwarding contract of S3 (#207). A node that
-  cannot pass a transaction to the producer fails `submit_transaction` explicitly, with
-  `-32603`, and never holds it silently. `error.data` may carry `{"kind": "…"}`, naming
-  the failure class. Forwarded requests carry the header `x-mbongo-forwarded: 1`. Methods,
-  parameters and result shapes do not change for this. Forwarding itself is node behaviour
-  and is designed under #207.
+- `rpc_v0.4` changes the meaning of `submit_transaction` on a node that is not the
+  producer. A hash means the producer admitted the transaction, or it is already committed.
+  A node that cannot establish either fails with `-32603`, and retains nothing. Parameters,
+  result shape and codes do not change. How a node reaches the producer is node behaviour,
+  under #207.
 - **A client takes `chain_id` from its own configuration,** and uses `get_chain_info` only
   to compare. An endpoint must not choose the network a user signs for.
 
@@ -345,7 +355,8 @@ migration. A v0.5 network starts from a new genesis in an empty directory.
 | A state transition that differs from section 6 | Refused by review and tests, not at runtime: nodes that agree pass rule (w) |
 | An authority key is stolen | **Not addressed.** Replacing it needs a new genesis |
 | An authority signs two blocks at one height by accident | Section 3 reduces this. It remains possible: a wiped or restored authority started with `--producer-start-alone`, one whose only answering peers are behind the true tip, or two nodes sharing the key. Recovery is manual |
-| A peer reports a false height | No effect on production: only a valid signed block stops it. A peer that withholds blocks delays a start until the timeout. If no peer answers at all, the wait is unbounded until an operator acts, so the chain stays halted rather than risk a fork |
+| A peer reports a false height | Does not stop a running authority: only a valid signed block does. At a start, a peer can delay catch-up, and if it is the only peer that answers, a wiped or restored authority can resume behind the tip. If no peer answers at all, the wait is unbounded until an operator acts, so the chain stays halted rather than risk a fork |
+| A peer keeps a signed block from an abandoned branch | It stops the authority until an operator removes that peer and restarts the node. This is the price of never extending a known fork |
 | An authority equivocates on purpose | **Not addressed.** Peers keep the first block seen. No fork choice, no slashing |
 | An authority censors or stops | **Not addressed.** With one authority the chain halts |
 | A dev network | All `--dev` networks share one `chain_id`, so transactions replay between them. Nothing stops a genesis naming the public dev authority: an operator must not |
@@ -374,13 +385,17 @@ signature verification on every block from any peer, bounded by the peer rate li
 - A genesis with more than one authority is refused.
 - Concurrent production gives one block per height. A crash before the commit, a restart
   behind a peer, and a restart with no peer answering, each give no second block at a height.
-- A false height from a peer does not stop production.
+- A false height from a peer does not stop production. A false low height does not end a
+  catch-up that another peer is serving, and each applied block restarts the period.
 - A signed block above the tip stops production until it is applied, and one that cannot be
   applied leaves the node stopped with an alert.
-- `--producer-start-alone` with a value other than the local height is refused.
+- `--producer-start-alone` with a value other than the local height, with `--dev`, or
+  without `--producer`, is refused. With it, blocks arriving in the period are applied first.
+- `produce_block` fails while waiting or stopped, through RPC and the timer alike.
 - After an authority restarts, followers redial with capped backoff, and it resumes with no
-  operator action.
-- `submit_transaction` with no route to the producer fails explicitly and retains nothing.
+  operator action, both with an address that has no `/p2p/` and with `--node-key-file`.
+- `submit_transaction` on a node with no route to the producer fails with `-32603` and
+  retains nothing.
 - Genesis: every malformed form refused, and a directory left by a crash during creation
   restarts as new.
 - Two nodes with different genesis files refuse to sync, at negotiation.
@@ -401,8 +416,9 @@ the vectors match their independent derivation in Rust and in TypeScript.
 2. Acceptance.
 3. Implementation, under the gates of `MVP_v0.2_NETWORK_READINESS.md`: conformance to
    section 6 first, as its own change, then `mbongo-core`, `mbongo-storage`, `mbongo-node`,
-   `mbongo-network`, `mbongo-compute`, then the SDK. Reconnection (S3, #207) lands before
-   the start rule is relied on.
+   `mbongo-network`, `mbongo-compute`, then the SDK.
 4. `PROTOCOL_LOCK_v0.5.md`, including the `Account` encoding, `rpc_v0.4.md`, an updated
-   `storage_invariants.md`, and a `v0.5-devnet-stable` tag. v0.4 stays as a
+   `storage_invariants.md`, and a `v0.5-devnet-stable` tag, cut only once reconnection and
+   the `submit_transaction` failure rule of S3 (#207) are in, because the acceptance
+   criteria need them on the same SHA. v0.4 stays as a
    historical lock. No coordination is needed: there is no network to upgrade.
