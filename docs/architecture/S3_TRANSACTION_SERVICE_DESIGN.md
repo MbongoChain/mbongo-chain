@@ -168,9 +168,10 @@ Whatever goes as `dependent` is treated the same way, so a receipt's sender lose
 above the receipt, and a `ComputeTask` among those takes its own receipt. Otherwise the
 receipt fails rule (q) in every block, and a resubmitted task would sit behind it.
 
-**The hook revalidates a block's senders.** A block not built from this mempool can leave
-an entry at a current nonce unable to apply: its task registered, its receipt anchored, or
-its balance spent. Only the same sender can cause this, since nonces and debits are the
+**The hook revalidates a block's senders.** What stays must start at the committed nonce,
+run without a gap, and be affordable. A block not built from this mempool can leave an entry
+unable to apply: its task registered, its receipt anchored, its balance spent, or a gap
+below it. Only the same sender can cause this, since nonces and debits are the
 sender's own, and a task or receipt id binds its sender. Those entries go as `superseded`.
 
 **Reasons:**
@@ -310,9 +311,9 @@ blocks and is run at the end.
 | M4f | Task registered, receipt anchored, or balance spent by another transaction in an imported block | `superseded`, with its dependants, next block valid | U | 1 | |
 | M5 | Evicted nonce resubmitted | Next block is valid | U | 1 | |
 | M6 | Block produced, pushed and synced | Included and stale entries removed on all three paths, through the real orchestrator | U | 1 | |
-| M7 | Random operations | Indexes, order and counters stay consistent | U | 1 | |
+| M7 | Generated operations over transfers, tasks, receipts and foreign blocks | Indexes agree, chains stay applicable, every eviction reason occurs | U | 1 | |
 | M8 | Largest transactions at the cap | Memory within the stated bound | U | 1 | |
-| M9 | Restart | Pool empty, resubmission included | I | 1 | AC9 |
+| M9 | Store closed and reopened | Committed state kept, nothing pending, resubmission included once. A separate process is covered by R2 and R9 | U | 1 | |
 | M10 | Eviction | No change to storage or blocks | U | 1 | |
 | M11 | S1's builder leaves an entry out | Evicted with its dependants, the rest included | U | 5 | |
 | M12 | A produced block fails with no transaction to blame | Nothing evicted | U | 5 | |
