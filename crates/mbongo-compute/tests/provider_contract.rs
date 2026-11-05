@@ -224,7 +224,9 @@ fn s2_4_a_runner_past_its_deadline_is_killed() {
     let heartbeat = r.dir.join("heartbeat");
     let mut spec = with_mode("fixture-sum", "sleep");
     spec["params"]["heartbeat"] = json!(heartbeat.display().to_string());
-    spec["limits"]["max_wall_ms"] = json!(1500);
+    // Long enough for Node to start on a loaded machine: the limit also bounds
+    // the start, and a runner that never started proves nothing here.
+    spec["limits"]["max_wall_ms"] = json!(5000);
     assert_eq!(r.run(&spec, b"[1]"), Err(JobError::LimitWallTime));
 
     std::thread::sleep(Duration::from_millis(300));
