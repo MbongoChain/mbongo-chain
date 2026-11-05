@@ -1,7 +1,7 @@
 # S3: Transaction Service and Recovery Design
 
 **Status: PROPOSED, with decisions D1 to D5 recorded in section 10.** Only PR 1 is authorized
-for implementation. Stage S3 of [`MVP_v0.2_NETWORK_READINESS.md`](../product/MVP_v0.2_NETWORK_READINESS.md),
+for implementation. PR 2 is at design and preparation only, in section 12. Stage S3 of [`MVP_v0.2_NETWORK_READINESS.md`](../product/MVP_v0.2_NETWORK_READINESS.md),
 tracked in #207. The roadmap stays in #209, and this document holds no schedule.
 
 **Covers:** forwarding to the producer, explicit failure, mempool bounds and eviction,
@@ -205,7 +205,7 @@ proposed. The status is 404, and the client resubmits.
 |---|---|---|---|
 | R1 | Outbound sync request fails | `in_flight` released, request retried | Stuck (#146); PR #147 proposes the fix |
 | R2 | Follower restarts during sync | Resumes from committed height, same head | Expected to work, no test |
-| R3 | Producer restarts | Followers reconnect with no operator action | Not expected to work, see section 1 |
+| R3 | Producer restarts | Followers reconnect with no operator action | Fails, measured in section 12.1 |
 | R4 | Follower restarts while the producer keeps producing | Catches up, same head | Covered in part by the devnet harness |
 | R5 | Peer lost in the middle of a range | Another known peer or redial, no duplicate apply | Not handled: one peer is held |
 | R6 | Gap seen through a block announcement | Sync triggered, gap closed | Implemented, no test of failure paths |
@@ -370,6 +370,121 @@ Maintainer decisions of 2026-11-05.
 - `outcome_unknown` stays unknown until the producer's status, or the block, settles it.
 - The JSON-RPC transport carries no authentication. Confidentiality and access control
   come from the private network, or from `https` when an operator sets it up.
-- Section 1 is read from the code. R3 has not been run.
+- Section 1 is read from the code. R3 was run on one setup, see section 12.1.
 - Memory is measured on heap allocation by a counting allocator, for the transaction shape
   stated, not on a running node. Deadline and concurrency values in section 2 are not measured.
+
+## 12. PR 2 design: sync recovery
+
+**Status: design finalized for review, implementation preparation only.** No production PR
+is authorized.
+
+### 12.1 What was measured
+
+R3, run with real binaries on Windows loopback, `--no-mdns`, on PR 1's code. A follower
+connected and synced, then the producer was restarted:
+
+| Bootnode address | Before restart | 25 s after restart |
+|---|---|---|
+| With `/p2p/<id>` | Producer 16, follower 16 | Producer 58, follower 33, one connection, closed, never redialed |
+| Without `/p2p/` | Producer 16, follower 16 | Producer 41, follower 16, one connection, closed, never redialed |
+
+The follower stops where the connection closed, and stays there. **R3 is confirmed on this
+setup.** It was not run across hosts, or on Linux.
+
+### 12.2 Reconnection
+
+`P2PNode` keeps the configured bootnodes, each with its own state.
+
+| Rule | Value |
+|---|---|
+| Trigger | A failed dial at start, `OutgoingConnectionError`, or `ConnectionClosed` on a bootnode |
+| Backoff | 1 s, doubling, capped at 60 s, with 20 percent jitter |
+| Limit | None: it retries for as long as the node runs |
+| Reset | After a connection has stayed up for 30 s, so a flapping peer does not retry at full speed |
+| Identity mismatch | A dial refused because the peer id differs is logged as such, and keeps backing off |
+
+The backoff is a pure type taking the time as an argument, so tests need no sleeping.
+
+### 12.3 Stable identity
+
+`--node-key-file <path>`: a 32-byte seed as 64 hex characters, as RFC 0006 section 3
+requires. Without it, a node has a fresh identity at each start, as today. Peer identity
+is not a locked surface. On Unix a file readable by group or others is refused. It is not
+the authority key: once S1 exists, the node refuses a file holding the same seed as
+`--producer-key-file`.
+
+Launchers that pin `/p2p/<id>` keep working for a restart only with this flag. Those that
+use a bare address do not need it. `start-devnet.ps1`, `mvp-launch.mjs`,
+`mvp-d-acceptance.mjs`, `devnet_harness` and `compute_vertical` pin it today, and stay as
+they are unless their own restart is tested.
+
+### 12.4 Peer failure
+
+The orchestrator's single peer slot becomes per-peer state:
+
+```rust
+struct PeerSync {
+    reported_height: u64,
+    failures: u32,
+    retry_at: Option<Instant>,
+}
+```
+
+| Case | Behaviour |
+|---|---|
+| Height answer | Updates that peer only. It never lowers or replaces another peer's value |
+| Choosing a peer | Highest reported height with no backoff in force. Ties go to the lower `PeerId`, so the choice is deterministic |
+| One request at a time | `in_flight` names the peer it is waiting for. An answer from any other peer does not clear it |
+| Disconnect, or failed request | New events `PeerDisconnected` and `RequestFailed`. The peer gets a failure, `in_flight` clears, and another is chosen |
+| Refused block | Failure and backoff for that peer, 1 s doubling to 60 s, instead of asking it again at once |
+| Malformed or impossible data | Failure for that peer. Range arithmetic saturates |
+| No peer available | Waits. Nothing is logged at more than one line per backoff period |
+
+`SyncEvent` is internal, so these events change nothing on the wire.
+
+### 12.5 PR #147
+
+Reassessed against `dev`. It has one commit, by an outside contributor, on `p2p.rs` and
+`main.rs`, based on `89cadb67`.
+
+| Part | Decision |
+|---|---|
+| Tracking outbound block request ids, `SyncEvent::RequestFailed` | Reuse |
+| `request_next_batch` returning whether the command was accepted | Reuse |
+| Its regression tests | Reuse |
+| Clearing `in_flight` with nothing more | Extend: a failed request also backs that peer off and rotates |
+| Hoisting `request_next_batch` to module level | Reuse, it makes testing simpler |
+
+It merges with PR 1 with one conflict, in `main.rs`. Its author's commit is kept with its
+authorship, and follow-up commits sit on top. #146 stays open until that lands. Whether to
+update #147 itself or supersede it, with credit, is for the contributor and the maintainer.
+
+### 12.6 Compatibility with RFC 0006
+
+| RFC 0006 | Here |
+|---|---|
+| Section 3, reconnection | Implements it |
+| Section 3, `--node-key-file` | Implements it |
+| Section 3, caught-up rule | Not here. S1 builds it, inside `produce_block`, on the per-peer state and events above |
+| Section 7, chain-bound identifiers | Independent. A negotiation failure is a peer failure with backoff |
+| Rollout | Needs this on the release SHA, by the decision placing the lock at G4 |
+
+Nothing here needs RFC 0006 to be accepted, and nothing here changes a protocol identifier
+or message shape. If RFC 0006 changes before acceptance, sections 12.2 and 12.3 follow it.
+
+### 12.7 Implementation split
+
+| PR | Content | Files | Tier |
+|---|---|---|---|
+| 2a | #147 refreshed, per-peer state, rotation, saturating ranges, R1, R5, R6, R7, R11 | `p2p.rs`, `main.rs` | Tier 0 file, no locked surface |
+| 2b | Reconnection, `--node-key-file`, R3, R3b, a restart stage in `devnet_harness` | `p2p.rs`, `main.rs`, harness | Tier 0 file, no locked surface |
+
+**Added cases:** R3c, reconnection with a bare address and with `--node-key-file`, across a
+producer restart. R3d, a pinned address after an identity change logs the mismatch. R5b, an
+answer from a peer not asked does not clear `in_flight`. R5c, a low height from one peer does
+not stop a sync served by another.
+
+**Decisions needed before implementation:** approval of PRs 2a and 2b, and the values in
+12.2. The harness restart stage runs on push only unless the maintainer wants it on pull
+requests, which costs CI time.
