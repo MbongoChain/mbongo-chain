@@ -27,15 +27,15 @@ requirements below.
    in their endpoint file.
 
 2. **Firewall and accounts.** List every TCP port this host must accept, SSH
-   included. Everything else inbound is dropped, host-wide:
+   included. Every other new connection to this host is dropped:
 
    ```bash
    sudo MBONGO_INBOUND_ALLOW=22,8443 scripts/provider-containment-linux.sh prepare /srv/mbongo
    ```
 
 3. **Service.** Bind it to loopback, as it requires, on a fixed port, and start it
-   with the same `MBONGO_INBOUND_ALLOW`. `run` refuses to start if the installed
-   policy differs from it.
+   with the same `MBONGO_INBOUND_ALLOW`. `run` refuses to start unless the inbound
+   chain is exactly what `prepare` installed, from that same list.
 
 4. **nginx.** Fill in [`provider-nginx.conf.template`](../../scripts/provider-nginx.conf.template):
 
@@ -73,11 +73,11 @@ each of these, and any other terminator must meet them:
 | Requirement | Reference setting | Evidence |
 |---|---|---|
 | TLS 1.3 only | `ssl_protocols TLSv1.3` | A client limited to TLS 1.2 is refused |
-| Path and body unchanged | `proxy_pass` with no URI, `merge_slashes off` | Signatures verify through nginx, and a job completes |
+| Path and body unchanged | `proxy_pass` with no URI, `merge_slashes off` | Signatures verify through nginx, and a job completes. The routes use no encoded characters, and none was tested |
 | No retries | `proxy_next_upstream off` | **Set, not exercised:** with one backend, nginx has nothing to retry to. A replay itself is refused, tested |
 | No redirects rewritten | `proxy_redirect off` | The client refuses redirects, tested in C1 |
-| Size limit | `client_max_body_size 256k` | A 300 KiB body gets 413 |
-| Bodies stay off disk | `client_body_buffer_size 256k`, `proxy_max_temp_file_size 0` | **Set, not tested** |
+| Size limit | `client_max_body_size 256k` | A 300 KiB body gets nginx's own 413 |
+| Bodies stay off disk | `proxy_request_buffering off`, `proxy_max_temp_file_size 0` | **Set, not tested** |
 | Timeouts | `proxy_read_timeout 60s` and the others in the template | **Set, not tested** |
 
 ## Host-level tests
@@ -86,21 +86,25 @@ each of these, and any other terminator must meet them:
 
 | Test | Result |
 |---|---|
-| From the remote namespace | nginx reachable. The backend, a port nobody listed, and a port the runner listens on are not |
-| The control, with no policy | The runner's port is reachable, and it accepts the connection |
+| From the remote namespace | nginx reachable. A port nobody listed and a port the runner listens on are not. The backend is not either, because it binds loopback, whatever the firewall does |
+| The inbound policy alone, with the runner's output rule removed | The runner's port stays unreachable |
+| The control: the same, with both ports listed | Both ports reachable, and the runner accepts the connection |
 | A generic job from the remote namespace, through nginx | Anchored receipt, verified at T1 |
 | A signed request sent twice through nginx | Passes once, then refused as a replay |
 | Query added, body altered | `AUTH_QUERY_NOT_ALLOWED`, `AUTH_BAD_SIGNATURE` |
 | Backend stopped mid-job, then restarted | Tracking gets 502, the client recovers, verified at T1 |
-| Launcher: missing or malformed `MBONGO_INBOUND_ALLOW` | Refused |
-| Launcher: no inbound chain, policy set to accept, an unlisted port | Refused |
+| Launcher: missing or malformed `MBONGO_INBOUND_ALLOW`, or a misspelled network mode | Refused |
+| Launcher: no inbound chain, policy set to accept, any rule added, another list at `run` | Refused |
 
 ## What the inbound policy does not give
 
 - **The service cannot check it.** Proving it needs a vantage point off the host.
-  The launcher compares what is installed with what was asked for, at start only.
+  The launcher compares the chain with what `prepare` installed, at start only.
   Changes after that are not detected, unlike the runner's output policy.
-- **TCP only.** The list opens TCP ports. Nothing else new is accepted.
+- **Forwarded traffic** does not pass through this chain, so ports a container
+  runtime publishes are not covered.
+- **TCP only.** The list opens TCP ports. Nothing else new is accepted, IPv6 neighbor
+  discovery aside. No remote IPv6 path was tested.
 - **Established traffic** is accepted, as any stateful firewall does.
 - **One network namespace,** the launcher's. Other firewalls and container runtimes
   are untested.

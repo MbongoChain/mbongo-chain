@@ -10,11 +10,14 @@
 # this itself and refuses to start otherwise: `run` repairs nothing.
 #
 # `prepare` also installs the runner's network policy and the host's inbound
-# policy. `run` refuses to start without them, unless MBONGO_RUNNER_NETWORK=open.
+# policy. `run` refuses to start unless the inbound policy is exactly what
+# `prepare` installed, and unless the runner's policy is there.
+# MBONGO_RUNNER_NETWORK=open drops that second condition only.
 #
 # MBONGO_INBOUND_ALLOW is required by both: the TCP ports this host accepts new
 # connections on, comma-separated, or `none`. List everything the host needs,
-# such as SSH: every other new inbound connection is dropped, host-wide.
+# such as SSH: every other new connection to this host is dropped. Forwarded
+# traffic, such as container ports, does not pass through this chain.
 #
 # Environment: MBONGO_PROVIDER_USER, MBONGO_RUNNER_USER, MBONGO_CGROUP,
 # MBONGO_RUNNER_NETWORK, MBONGO_INBOUND_ALLOW.
@@ -52,14 +55,11 @@ inbound_ports() {
   [ -n "$INBOUND_ALLOW" ] || die "MBONGO_INBOUND_ALLOW is required: a port list, or none"
   [ "$INBOUND_ALLOW" = none ] && return 0
   case "$INBOUND_ALLOW" in
-  ,* | *, | *,,*) die "MBONGO_INBOUND_ALLOW is malformed" ;;
+  *[!0-9,]* | ,* | *, | *,,* | 0* | *,0*) die "MBONGO_INBOUND_ALLOW is malformed" ;;
   esac
   local port
   for port in ${INBOUND_ALLOW//,/ }; do
-    case "$port" in
-    '' | *[!0-9]*) die "MBONGO_INBOUND_ALLOW is malformed" ;;
-    esac
-    [ "${#port}" -le 5 ] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ] ||
+    [ "${#port}" -le 5 ] && [ "$port" -le 65535 ] ||
       die "MBONGO_INBOUND_ALLOW holds a port out of range"
   done
 }
@@ -93,20 +93,27 @@ table inet $NFT_TABLE {
 EOF
 }
 
-# What `run` will not start without. It checks what is installed against what
-# was asked for, not only that something is there.
+# The inbound chain as installed, with the list it was installed from. `prepare`
+# records it and `run` compares, so any change to the chain is seen, whatever
+# form it takes and whatever `nft` prints.
+inbound_state() {
+  echo "allow=$INBOUND_ALLOW"
+  nft list chain inet "$NFT_TABLE" input
+}
+
+# What `run` will not start without.
 check_policies() {
-  local table listed wanted
+  local base=$1 table
   table=$(nft list table inet "$NFT_TABLE" 2>/dev/null) ||
     die "the runner's network policy is not installed: run prepare"
-  grep -q "meta skuid $(id -u "$RUNNER_USER") " <<<"$table" ||
-    die "the runner's network policy is not installed: run prepare"
+  if [ "$RUNNER_NETWORK" = denied ]; then
+    grep -q "meta skuid $(id -u "$RUNNER_USER") " <<<"$table" ||
+      die "the runner's network policy is not installed: run prepare"
+  fi
   grep -q "hook input priority filter; policy drop;" <<<"$table" ||
     die "the inbound policy is not installed: run prepare"
-  listed=$(grep -o 'tcp dport [^c]*' <<<"$table" | grep -o '[0-9]\+' | sort -un | paste -sd, || true)
-  wanted=""
-  [ "$INBOUND_ALLOW" = none ] || wanted=$(tr , '\n' <<<"$INBOUND_ALLOW" | sort -un | paste -sd,)
-  [ "$listed" = "$wanted" ] || die "the inbound policy does not match MBONGO_INBOUND_ALLOW"
+  [ "$(inbound_state)" = "$(cat "$base/inbound.policy" 2>/dev/null)" ] ||
+    die "the inbound policy does not match what prepare installed"
 }
 
 prepare() {
@@ -131,6 +138,10 @@ prepare() {
     "$CGROUP/cgroup.threads" "$CGROUP/cgroup.subtree_control"
 
   network_policy
+  (
+    umask 077
+    inbound_state >"$base/inbound.policy"
+  )
 
   echo "RUNNER_UID=$(id -u "$RUNNER_USER")"
   echo "RUNNER_GID=$(id -g "$RUNNER_USER")"
@@ -139,11 +150,13 @@ prepare() {
 }
 
 run() {
-  local service=$2 config=$3
-  if [ "$RUNNER_NETWORK" = denied ]; then
-    inbound_ports
-    check_policies
-  fi
+  local base=$1 service=$2 config=$3
+  case "$RUNNER_NETWORK" in
+  denied | open) ;;
+  *) die "MBONGO_RUNNER_NETWORK must be denied or open" ;;
+  esac
+  inbound_ports
+  check_policies "$base"
   echo $$ >"$CGROUP/service/cgroup.procs"
   # Job directories inherit group runner from work/; 027 lets it read them.
   umask 027

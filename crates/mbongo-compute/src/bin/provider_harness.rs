@@ -1257,7 +1257,7 @@ async fn prove_network(
 
     // The control: same job, same endpoints, no rule.
     stop_service(provider).await?;
-    shell(&format!("nft delete table {NFT_TABLE}"))?;
+    shell(&format!("nft delete chain {NFT_TABLE} output"))?;
     start_service(stack, provider, log, config_file, config, "open").await?;
     let open = run("network-open")?;
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -1356,9 +1356,11 @@ fn prove_inbound_refusals(c: &Contained, file: &Path) -> Result<(), String> {
         (Some("22,,80"), "malformed"),
         (Some(",22"), "malformed"),
         (Some("22,"), "malformed"),
-        (Some("0"), "out of range"),
+        (Some("22 80"), "malformed"),
+        (Some("0"), "malformed"),
+        (Some("0022"), "malformed"),
         (Some("70000"), "out of range"),
-        (Some("000000080"), "out of range"),
+        (Some("123456"), "out of range"),
     ];
     for (allow, reason) in lists {
         let (ok, err) = prepare(allow)?;
@@ -1386,6 +1388,21 @@ fn prove_inbound_refusals(c: &Contained, file: &Path) -> Result<(), String> {
             format!("nft add rule {NFT_TABLE} input tcp dport 9999 ct state new accept"),
             "does not match",
         ),
+        (
+            "a UDP port nobody listed",
+            format!("nft add rule {NFT_TABLE} input udp dport 53 accept"),
+            "does not match",
+        ),
+        (
+            "every TCP port accepted",
+            format!("nft add rule {NFT_TABLE} input meta l4proto tcp accept"),
+            "does not match",
+        ),
+        (
+            "everything accepted",
+            format!("nft add rule {NFT_TABLE} input accept"),
+            "does not match",
+        ),
     ];
     for (name, change, reason) in &changes {
         shell(change)?;
@@ -1398,6 +1415,27 @@ fn prove_inbound_refusals(c: &Contained, file: &Path) -> Result<(), String> {
         }
         println!("  refused, by the launcher: {name}");
     }
+    let run = service_command(Some(c), file)
+        .env("MBONGO_INBOUND_ALLOW", "22")
+        .output()
+        .map_err(|e| e.to_string())?;
+    let err = String::from_utf8_lossy(&run.stderr);
+    if run.status.success() || !err.contains("does not match") {
+        return Err(format!(
+            "another list at run: {} {}",
+            run.status,
+            err.trim()
+        ));
+    }
+    let run = service_command(Some(c), file)
+        .env("MBONGO_RUNNER_NETWORK", "deny")
+        .output()
+        .map_err(|e| e.to_string())?;
+    let err = String::from_utf8_lossy(&run.stderr);
+    if run.status.success() || !err.contains("must be denied or open") {
+        return Err(format!("a misspelled mode: {} {}", run.status, err.trim()));
+    }
+    println!("  refused, by the launcher: another list at run, and a misspelled network mode");
     Ok(())
 }
 
@@ -1652,15 +1690,20 @@ async fn prove_transport(
     );
 
     // TLS version, seen from a client that would accept less.
-    let old = remote(&format!(
-        "curl -s -m 5 --tlsv1.2 --tls-max 1.2 --cacert {}/ca.pem \
-         https://{SERVER_NAME}:{TLS_PORT}/v1/capabilities",
-        tls.display()
-    ))
-    .status()
-    .map_err(|e| e.to_string())?;
-    if old.success() {
-        return Err("nginx accepted TLS 1.2".to_owned());
+    let version = |limit: &str| {
+        remote(&format!(
+            "curl -s -o /dev/null -m 5 {limit} --cacert {}/ca.pem \
+             https://{SERVER_NAME}:{TLS_PORT}/v1/capabilities",
+            tls.display()
+        ))
+        .status()
+        .map_err(|e| e.to_string())
+    };
+    let old = version("--tlsv1.2 --tls-max 1.2")?;
+    let current = version("--tlsv1.3")?;
+    // 35 is curl's handshake failure. The control tells it from any other.
+    if old.code() != Some(35) || !current.success() {
+        return Err(format!("TLS versions: {old} {current}"));
     }
 
     // Signed requests through the proxy.
@@ -1691,8 +1734,9 @@ async fn prove_transport(
     let large = tls.join("large");
     std::fs::write(&large, vec![b'x'; 300 * 1024]).map_err(|e| e.to_string())?;
     let oversized = curl(&tls, "PUT", "/v1/job-specs", &[], &large)?;
-    if oversized.0 != 413 {
-        return Err(format!("size limit: {}", oversized.0));
+    // The service has the same limit: this must be nginx's own refusal.
+    if oversized.0 != 413 || !oversized.1.contains("<center>nginx</center>") {
+        return Err(format!("size limit: {oversized:?}"));
     }
     println!(
         "  through nginx: added query, altered body and oversized body refused; TLS 1.2 refused"
@@ -1784,16 +1828,36 @@ async fn prove_transport(
         "  observed, with only the output rule: reachable {reached}, {connections} connection(s)"
     );
     c.prepare()?;
+
+    // The inbound policy alone, then the same with both ports listed: the list
+    // is the only difference, so the list is what decides.
     stop_service(provider).await?;
-    shell(&format!("nft delete table {NFT_TABLE}"))?;
+    shell(&format!("nft delete chain {NFT_TABLE} output"))?;
     start_service(stack, provider, log, config_file, config, "open").await?;
+    let (reached, connections) = try_it("listen-input-only").await?;
+    if reached || connections != 0 {
+        return Err(format!("inbound policy alone: {reached} {connections}"));
+    }
+    println!("  the inbound policy alone keeps the runner's port unreachable");
+    stop_service(provider).await?;
+    std::env::set_var(
+        "MBONGO_INBOUND_ALLOW",
+        format!("{TLS_PORT},{RPC_PORT},{REST_PORT},{RUNNER_LISTEN_PORT},{CLOSED_PORT}"),
+    );
+    c.prepare()?;
+    shell(&format!("nft delete chain {NFT_TABLE} output"))?;
+    start_service(stack, provider, log, config_file, config, "open").await?;
+    let listed = TcpListener::bind((HOST_IP, CLOSED_PORT)).map_err(|e| e.to_string())?;
+    if !reachable(CLOSED_PORT)? {
+        return Err("control: a listed port was not reachable".to_owned());
+    }
+    drop(listed);
     let (reached, connections) = try_it("listen-open").await?;
     if !reached || connections == 0 {
         return Err(format!("control: {reached} {connections}"));
     }
-    println!("  the control, with no policy: reachable, {connections} connection(s) accepted");
+    println!("  the control, with both ports listed: reachable, {connections} connection(s)");
     stop_service(provider).await?;
-    c.prepare()?;
     std::env::set_var("MBONGO_INBOUND_ALLOW", "none");
     c.prepare()?;
     start_service(stack, provider, log, config_file, config, "denied").await
