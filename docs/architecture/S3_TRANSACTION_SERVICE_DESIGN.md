@@ -335,8 +335,9 @@ forwarding exposes the producer.
 
 **Overlap with S0 and S1:** S0 touches the transfer path only, so it does not meet these
 PRs. RFC 0006, under review in #211, asks a producer to serialise production, commit before
-broadcast and catch up before producing. PR 5's lock is the same requirement, so it must
-follow the accepted text. S1 rewrites parts of `backend.rs` and `main.rs`, and every PR above that lands first
+broadcast, catch up before producing, and leave out a transaction that fails in its view.
+That overlaps PR 5: if the RFC is accepted in that form, S1 builds the block that way, and
+PR 5 shrinks to evicting what was left out. S1 rewrites parts of `backend.rs` and `main.rs`, and every PR above that lands first
 gives it a merge to resolve, or the reverse. The specification places S3 after S0, so PRs
 1 to 5 starting earlier is decision D1.
 
