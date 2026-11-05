@@ -173,15 +173,16 @@ node:
 - commits a block with a synced write **before** broadcasting it. A crash before the
   commit leaves nothing that anyone has seen, so signing a different block at that height
   afterwards is harmless;
-- after a start, produces nothing until it is **caught up**: at least one peer has answered,
-  whether the authority dialed it or it dialed the authority, every peer connected has
-  answered or stayed silent for 30 seconds, and no new valid block has been applied for
-  30 seconds. Each applied block restarts that period, so a slow honest catch-up is not cut
-  off, and a false low height from one peer does not end it while another is serving. If no
-  peer ever answers, the wait has no limit, and only an operator ends it, with
-  `--producer-start-alone <height>`;
-- treats that flag as waiving only the need for an answer: the 30 seconds still run, and
-  blocks that arrive in them are applied first. Its value must equal the local height, or
+- after a start, produces nothing until it is **caught up**: 30 seconds without progress,
+  counted from the first answer from any peer, whether the authority dialed it or it dialed
+  the authority. Progress is a valid block applied, or the first answer from a peer
+  connected at that moment that shows a height above the tip. Peers that connect later, and
+  later answers, do not extend the period. So a slow honest catch-up is not cut off, a false
+  low height does not end one that another peer is serving, and a peer serving no valid
+  block can delay a start by at most one period. If no peer ever answers, the wait has no
+  limit, and only an operator ends it, with `--producer-start-alone <height>`;
+- treats that flag as waiving only the need for an answer: the period then counts from the
+  start, and blocks that arrive in it are applied first. Its value must equal the local height, or
   the node refuses to start, so a value left in a configuration stops matching once the
   chain advances. After a wipe a leftover `0` matches again, which is the fork case: the flag
   belongs on a command line, never in a configuration;
@@ -355,7 +356,7 @@ migration. A v0.5 network starts from a new genesis in an empty directory.
 | A state transition that differs from section 6 | Refused by review and tests, not at runtime: nodes that agree pass rule (w) |
 | An authority key is stolen | **Not addressed.** Replacing it needs a new genesis |
 | An authority signs two blocks at one height by accident | Section 3 reduces this. It remains possible: a wiped or restored authority started with `--producer-start-alone`, one whose only answering peers are behind the true tip, or two nodes sharing the key. Recovery is manual |
-| A peer reports a false height | Does not stop a running authority: only a valid signed block does. At a start, a peer can delay catch-up, and if it is the only peer that answers, a wiped or restored authority can resume behind the tip. If no peer answers at all, the wait is unbounded until an operator acts, so the chain stays halted rather than risk a fork |
+| A peer reports a false height | Does not stop a running authority: only a valid signed block does. At a start, a peer can delay catch-up by one period, and if it is the only peer that answers, a wiped or restored authority can resume behind the tip. If no peer answers at all, the wait is unbounded until an operator acts, so the chain stays halted rather than risk a fork |
 | A peer keeps a signed block from an abandoned branch | It stops the authority until an operator removes that peer and restarts the node. This is the price of never extending a known fork |
 | An authority equivocates on purpose | **Not addressed.** Peers keep the first block seen. No fork choice, no slashing |
 | An authority censors or stops | **Not addressed.** With one authority the chain halts |
@@ -386,7 +387,9 @@ signature verification on every block from any peer, bounded by the peer rate li
 - Concurrent production gives one block per height. A crash before the commit, a restart
   behind a peer, and a restart with no peer answering, each give no second block at a height.
 - A false height from a peer does not stop production. A false low height does not end a
-  catch-up that another peer is serving, and each applied block restarts the period.
+  catch-up that another peer is serving, and each applied block restarts the period. A
+  first answer arriving late still leads to catch-up, and new silent connections do not
+  extend the period.
 - A signed block above the tip stops production until it is applied, and one that cannot be
   applied leaves the node stopped with an alert.
 - `--producer-start-alone` with a value other than the local height, with `--dev`, or
