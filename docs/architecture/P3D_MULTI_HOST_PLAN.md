@@ -1,8 +1,12 @@
 # P3-D: Private Multi-Host Interoperability Plan
 
-**Status: PROPOSED.** Nothing here is provisioned or started. No infrastructure is
-purchased, no endpoint is public, and the test waits for approval of the
-environment and its cost.
+**Status: approved in principle (2026-11-05).** The environment and its cost are
+**not** approved. Nothing here is provisioned or started: no infrastructure is
+purchased, no billing is activated, and no endpoint is public. D1 to D12 are kept as
+proposed private acceptance criteria.
+
+The producer and follower topology with SSH forwarding is a **temporary test
+arrangement**, not the target decentralized network architecture.
 
 **Goal:** show that what passed on one host works across two genuinely separate
 Linux hosts, with two independently configured providers. No new workload, and no
@@ -146,7 +150,9 @@ organizations: one operator runs both hosts, so "independently configured" means
 separate keys, state and authorities. A runner written from the contract by the same
 team is a weaker test than one written by a third party.
 
-## 7. Decisions required
+## 7. Decisions still required
+
+Execution needs a separate decision on these.
 
 | # | Decision | Recommendation |
 |---|---|---|
