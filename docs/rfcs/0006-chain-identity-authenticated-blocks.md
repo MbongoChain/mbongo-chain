@@ -5,7 +5,7 @@
 **Author:** Gilbert Kalombo
 **Created:** 2026-11-05
 **Protocol version:** v0.4 → v0.5
-**Locked surfaces affected:** [`PROTOCOL_LOCK_v0.4.md`](../specs/PROTOCOL_LOCK_v0.4.md) §5 (validation rules), §8 (RPC, additive), §9 (P2P identifiers), §10 (genesis); block and transaction encoding and signing
+**Locked surfaces affected:** [`PROTOCOL_LOCK_v0.4.md`](../specs/PROTOCOL_LOCK_v0.4.md) §5 (validation rules), §6 (storage schema), §8 (RPC), §9 (P2P identifiers), §10 (genesis), §11 (vectors); block encoding, transaction signing, hashing inputs
 
 > Nothing here authorizes implementation. The review status is on the pull request.
 
@@ -22,68 +22,86 @@ whether it agrees with its peers on state:
 | Network identity | No chain identifier. `--chain` is printed and ignored | A signed transaction is valid on every network |
 | Genesis | Code-defined, one public test account | No network can have its own accounts or operators |
 | State agreement | `state_root` is always zero | Two nodes can diverge on balances with no error |
+| State transition | Described by code, not by a normative definition | Two implementations can differ, and neither is wrong |
 
 None of this matters on a local devnet. All of it blocks a network run by more than
-one operator, which is the goal of MVP v0.2 (#209).
-If we do nothing, MVP v0.2 can only be a single-operator demonstration.
+one operator, which is the goal of MVP v0.2 (#209). If we do nothing, MVP v0.2 can only
+be a single-operator demonstration.
 
 ---
 
 ## Scope
 
 - [x] Block/transaction SCALE encoding: `BlockHeader`, `Block`
-- [ ] Hashing rules: unchanged, new domains only
-- [x] `apply_block` validity rules: new rules (t)–(w), and state-transition invariants
+- [x] Hashing rules: block hash input changes with the block, new domains
+- [x] `apply_block` validity rules: new rules (t)–(w), and a normative transfer definition
 - [ ] Atomic `write_batch` requirement: unchanged
-- [ ] Storage trait semantics: unchanged. Schema bumps for the new block shape
-- [x] P2P protocol strings: new version and chain binding. Framing unchanged
-- [x] RPC: additive, `get_chain_info`. Block JSON gains two fields
+- [x] Storage: schema 4, chain identity metadata, refusal of older directories
+- [x] P2P protocol strings: new versions and chain binding. Framing unchanged
+- [x] RPC: `rpc_v0.4`, a result shape and one new method
 - [x] Transaction signing payload
 - [x] Genesis definition (Lock §10)
+- [x] Protocol vectors (Lock §11)
 
 ## Non-Goals
 
 - Validator elections, staking, slashing, rewards, fork choice or finality.
 - Rotating the authority set without a new genesis.
 - Fees, issuance or any monetary decision. RFC 0003 and RFC 0004 stay non-normative.
-- Transaction gossip. See S3 in the MVP specification.
+- Transaction gossip. See S3 (#207).
 - Membership proofs or light clients.
-- Any change to `ComputeTask`, `Receipt` or `task_id`.
+- Any change to the `ComputeTask` or `Receipt` encoding, or to `task_id`.
 
 ---
 
 ## Design
 
+`||` is byte concatenation. Domain strings are ASCII, with no terminator. Hex is
+lowercase, with no prefix, unless a section says otherwise.
+
 ### 1. Genesis file and chain identifier
 
-A network is defined by one canonical JSON file:
+A network is defined by one file, at most 1 MiB:
 
 ```json
-{
-  "schema": "mbongo-genesis:v1",
-  "name": "<network name>",
-  "timestamp": 0,
-  "allocations": [{ "address": "<hex>", "amount": "<decimal string>" }],
-  "authorities": ["<hex address>"]
-}
+{"allocations":[{"address":"<hex>","amount":"<decimal>"}],"authorities":["<hex>"],"name":"<name>","schema":"mbongo-genesis:v1","timestamp":0}
 ```
 
-The file is encoded with the constrained canonical JSON of `mbongo-compute`'s inference
-contract: sorted keys, no whitespace, strings and non-negative integers only. A
-non-canonical file is refused. Addresses are unique within `allocations` and within
-`authorities`. `authorities` is not empty. Amounts fit in `u128`, and their sum too.
+The file must already be canonical, or it is refused. This RFC defines canonical here,
+and does not depend on any other code:
 
-`chain_id = BLAKE3("mbongo:chain-id:v1" || canonical_bytes)`, 32 bytes.
+- UTF-8. No whitespace outside strings. Object keys sorted bytewise. No duplicate keys,
+  no unknown keys, all five top-level keys present.
+- `schema`: exactly `mbongo-genesis:v1`.
+- `name`: 1 to 64 characters from `[a-z0-9-]`.
+- `timestamp`: a decimal integer that fits in `u64`.
+- `address`, `authorities[]`: 64 hex characters. Each authority is a valid Ed25519
+  public key, and `authorities` holds at least one, with no duplicates. **Its order is
+  significant.**
+- `allocations`: sorted ascending by address, with no duplicates. May be empty.
+- `amount`: a decimal string with no sign and no leading zero, or `"0"`. Each amount and
+  their sum fit in `u128`.
 
-The genesis block is computed from the file, at height 0, with `parent_hash` zero,
-an empty body, `producer` zero and `producer_signature` zero. Rules (t) and (u) do not
-apply to it: a node derives it, and never receives it.
+`chain_id = BLAKE3("mbongo:chain-id:v1" || file_bytes)`, 32 bytes.
 
-- `mbongo-node --genesis <file>` loads it. `--chain` is removed.
-- The node refuses a non-empty data directory created under another `chain_id`.
-- A built-in dev genesis stays available for tests under an explicit `--dev` flag,
-  which is refused together with `--genesis`. Exactly one of the two is required.
-- Allocations are test values. Their meaning is a matter for the network, not for this RFC.
+The genesis block is derived, never received: height 0, `parent_hash` zero, `timestamp`
+from the file, empty body, `producer` zero, `producer_signature` zero, and `state_root`
+per section 4. Rules (t) to (w) do not apply to it. The genesis block, the allocations
+and the chain identity are written in one `write_batch`.
+
+**Node flags.** `--genesis <file>` loads a file. `--dev` selects the built-in dev genesis.
+Exactly one is required, and `--chain` is removed.
+
+**The dev genesis** is a fixed file in the repository: the existing public dev account
+with its existing amount, and one authority, the public key of the seed
+`BLAKE3("mbongo:dev-authority:v1")`. With `--dev --producer`, that key is used
+automatically. It is a public test key.
+
+**Consumers that change** to pass one of these flags: `docker-compose.yml`, `Dockerfile`,
+`scripts/devnet/*`, `scripts/mvp-launch.mjs`, `scripts/mvp-d-acceptance.mjs`, and every
+harness that starts a node: `replay_harness`, `devnet_harness`, `compute_vertical`,
+`compute_harness`, `mvp_inference_harness`, `provider_harness`, and the tests that start
+one.
 
 ### 2. Transaction signing
 
@@ -96,8 +114,7 @@ The signed bytes become:
 The `Transaction` encoding and its hash are unchanged: only the signature's domain
 changes. A signature made for one network does not verify on another. `ComputeTask`
 and `Receipt` need no change: an anchoring transaction carries a chain-bound signature.
-A `Receipt` signature alone does not name a network, and a client that checks one
-outside a chain should say so.
+A `Receipt` signature alone does not name a network.
 
 ### 3. Authenticated blocks
 
@@ -114,41 +131,57 @@ pub struct BlockHeader {
 pub struct Block {
     pub header: BlockHeader,
     pub body: BlockBody,
-    pub producer_signature: [u8; 64], // new
+    pub producer_signature: [u8; 64], // new, appended
 }
 ```
 
-`producer_signature` is Ed25519 over
-`BLAKE3("mbongo-block:v1" || chain_id || SCALE(header))`. The header commits to the
-body through `transactions_root`. `compute_block_hash` keeps hashing the whole block.
+`producer_signature` is Ed25519 over the 32 bytes of
+`BLAKE3("mbongo-block:v1" || chain_id || SCALE(header))`. Verification is strict
+(`verify_strict`): the block hash covers the signature, so a malleable signature would
+give one block two hashes. `compute_block_hash` keeps hashing the SCALE of the whole block.
 
-`authorities` is a fixed list. The producer at height `h` is `authorities[h % n]`.
-MVP v0.2 uses `n = 1`. A node started with `--producer` must hold that key, through
-`--producer-key-file`, and otherwise refuses to start.
+With `n` authorities, the producer at height `h` is `authorities[h % n]`. MVP v0.2 uses
+`n = 1`. Larger sets follow the same rule, and are not tested by this RFC's first use.
+
+`--producer` needs `--producer-key-file`, whose key must be one of the authorities, or
+the node refuses to start. At a height that is not its turn, `produce_block` returns
+`NotProducerTurn` and produces nothing.
+
+**A producer builds a block in this order:** execute the transactions on an uncommitted
+view, compute `state_root`, fill the header with
+`timestamp = max(now, parent.timestamp)`, sign, then call `apply_block`, which validates
+it like any other block and commits it.
 
 ### 4. State commitment
 
-`state_root` becomes a hash chain over what each block changes:
+`state_root` is a hash chain over what each block changes:
 
 ```text
-state_root(0) = BLAKE3("mbongo:state:v1" || chain_id || SCALE(sorted allocations))
-state_root(h) = BLAKE3("mbongo:state:v1" || state_root(h-1) || SCALE(sorted changes))
+state_root(0) = BLAKE3("mbongo:state:v1" || chain_id || SCALE(allocations))
+state_root(h) = BLAKE3("mbongo:state:v1" || state_root(h-1) || SCALE(changes))
 ```
 
-`changes` are the final account, task and receipt records the block writes: one entry
-per key, each `(kind, key, SCALE(record))`, sorted by `kind` then `key`. An empty block
-has empty `changes`. The cost is proportional to the block, and storage needs no iteration.
+- `allocations` is `Vec<(Address, u128)>`, in file order.
+- `changes` is `Vec<(u8, [u8; 32], Vec<u8>)>`, sorted by the first element, then the second.
+- Entries, one per key, hold the value after the whole block:
 
-The producer applies the block, computes `state_root`, then signs the header.
+| Kind | Key | Value | Present when |
+|---|---|---|---|
+| 0 | Address | `SCALE(Account)` | The account is the sender or the receiver of an applied transaction, even if unchanged |
+| 1 | `task_id` | `SCALE(ComputeTask)` | The block registers the task |
+| 2 | `task_id` | `SCALE(Receipt)` | The block anchors the receipt |
 
-This detects divergence at the first differing block. **It is not a Merkle root:** it
-gives no membership proof and no snapshot sync. A full state tree was considered and
-left out: it is much larger, and nothing in this version needs a proof. Light clients
-would need a later RFC.
+A skipped transaction (section 6) contributes nothing. An empty block has empty `changes`.
+
+The cost is proportional to the block, and storage needs no iteration. This detects
+divergence at the first differing block. **It is not a Merkle root:** it gives no
+membership proof and no snapshot sync. A full state tree was considered and left out:
+it is much larger, and nothing in this version needs a proof.
 
 ### 5. New validity rules
 
-Evaluated after the existing height and parent checks, before any transaction:
+Evaluated in this order, after the existing height, parent and `transactions_root`
+checks, and before any transaction:
 
 | Rule | Check | Error |
 |---|---|---|
@@ -162,35 +195,49 @@ Evaluated after every transaction is applied, before the atomic write:
 |---|---|---|
 | (w) | `state_root` equals the value computed locally | `StateRootMismatch` |
 
-Rule order is fixed as listed, and the first failure rejects the block. The existing
-rules and their precedence are otherwise unchanged. `timestamp` has no upper bound: a
-wall-clock check would make validity depend on when a block is replayed.
+The first failure rejects the block. Existing rules and their precedence are otherwise
+unchanged. `timestamp` has no upper bound: a wall-clock check would make validity depend
+on when a block is replayed.
 
-### 6. State-transition invariants
+### 6. State transition
 
-Rule (w) proves that nodes agree, not that the state is right: a transition applied
-identically everywhere passes it. These invariants govern `apply_block` for every
-accepted transaction and every account involved, and bind every implementation:
+Rule (w) proves that nodes agree, not that the state is right. This section makes the
+transfer path normative. It changes no validity rule.
+
+A transaction already stored is **skipped**, as Lock §5 defines: it changes nothing, and
+is not *applied*. Everything below concerns applied transactions.
+
+Accounts are one mapping from address to state. Applying a `Transfer` or `Stake`
+transaction performs these steps, in order, each on the result of the one before:
+
+1. Read `state[sender]`. If absent, `InsufficientBalance`.
+2. If `tx.nonce != state[sender].nonce`, `InvalidNonce`. Otherwise add one to it.
+3. If `state[sender].balance < tx.amount`, `InsufficientBalance`. Otherwise subtract.
+4. If `state[receiver]` is absent, create it with zero balance and nonce.
+5. Add `tx.amount` to `state[receiver].balance`. On overflow, `InsufficientBalance`.
+
+Any failure rejects the block, and nothing is written. These steps imply invariants that
+bind every implementation:
 
 | # | Invariant |
 |---|---|
-| I1 | The total supply is unchanged by every block. Only genesis creates balances |
-| I2 | An accepted transaction advances its sender's nonce by exactly one |
-| I3 | Its sender's balance falls by exactly what leaves that account, and no account gains more than another loses |
-| I4 | Every account a transaction touches is read once and written once, from one view of its state |
-
-A transaction that a correct implementation cannot apply under these invariants is
-applied in the way that satisfies them. Validity rules are unchanged by this section.
+| I1 | Total supply is unchanged by every block. Only genesis creates balances |
+| I2 | An applied transaction advances its sender's nonce by exactly one |
+| I3 | Balances change by exactly `amount`, down at the sender and up at the receiver, as the steps define |
+| I4 | A step reads what the previous step wrote |
 
 ### 7. P2P and RPC
 
-- `/mbongo-sync/3/<chain_id prefix>` and `/mbongo/block_notify/0.3.0/<chain_id prefix>`,
-  with the first 16 hex characters of `chain_id`. Peers on another network fail
+- Negotiation identifiers become `/mbongo-sync/3/<c>` and `/mbongo/block_notify/0.3.0/<c>`,
+  where `<c>` is the first 16 hex characters of `chain_id`. Peers on another network fail
   negotiation, before any block is exchanged.
+- Identify metadata becomes `/mbongo/0.5.0`, informational as before.
 - Message shapes and framing are otherwise unchanged. `Block` carries the new fields.
-- A new read method, `get_chain_info`, returns `chain_id`, `genesis_hash` and
-  `authorities`. Clients need `chain_id` to sign.
-- Block responses gain `producer` and `producer_signature`.
+- **A new RPC version, `rpc_v0.4`,** because a result shape changes: block results gain
+  `producer` and `producer_signature`, both hex.
+- New method `get_chain_info`, no parameters, returning
+  `{"chain_id": "<hex>", "genesis_hash": "<hex>", "authorities": ["<hex>"]}`. Clients need
+  `chain_id` to sign.
 
 ---
 
@@ -200,10 +247,13 @@ applied in the way that satisfies them. Validity rules are unchanged by this sec
 migration. A v0.5 network starts from a new genesis in an empty directory.
 
 - **Existing nodes:** v0.4 and v0.5 nodes do not negotiate.
-- **Existing data:** abandoned. Storage schema 3 → 4.
-- **Existing clients:** `@mbongo/sdk` needs a new version for signing and block
-  decoding. 0.2.0 stays valid for v0.4 only.
+- **Existing data:** abandoned. Storage schema 3 → 4. Unlike earlier versions, a v0.5 node
+  **refuses** a directory below schema 4, and does not stamp it. Schema 4 stores `chain_id`
+  and the genesis hash, and a node refuses a directory holding different ones.
+- **Existing clients:** `@mbongo/sdk` needs a new version for signing, block decoding and
+  `get_chain_info`. 0.2.0 stays valid for v0.4 only.
 - **`mvp-v0.1.0`:** unaffected. It stays pinned to its release and protocol.
+- **Vectors:** see Testing.
 
 ---
 
@@ -213,32 +263,40 @@ migration. A v0.5 network starts from a new genesis in an empty directory.
 |---|---|
 | A peer forges blocks | Refused by (t) and (u) |
 | A transaction replayed on another network | Refused by the signing domain |
-| Two nodes silently disagreeing on state | Refused by (w), at the first differing block |
-| A state transition that breaks an invariant | Refused by review and tests, not at runtime: nodes that agree pass rule (w) |
+| Two nodes silently disagreeing on state | The differing block is refused by (w), and the node stays at the last agreed height. It may keep re-requesting that block |
+| A state transition that differs from section 6 | Refused by review and tests, not at runtime: nodes that agree pass rule (w) |
 | An authority key is stolen | **Not addressed.** Replacing it needs a new genesis |
 | An authority equivocates | **Not addressed.** Peers keep the first block seen. No fork choice, no slashing |
 | An authority censors or stops | **Not addressed.** With `n = 1` the chain halts |
 
-Authority keys become the most sensitive keys on a network. New denial-of-service
-paths: signature verification on every block from any peer, which a block-rate limit
-in S3 bounds.
+Authority keys become the most sensitive keys on a network. New denial-of-service path:
+signature verification on every block from any peer, bounded by the peer rate limits of
+#207, which are a prerequisite for exposing a node to untrusted peers.
 
 ## Testing
 
-- Vectors for `chain_id`, the transaction signing domain, the block signature and
-  `state_root`, shared with the TypeScript SDK.
-- `apply_block` negative tests for (t)–(w), each asserting its own error.
+- **Vectors, independently derived** as Lock §11 requires, shared with the TypeScript SDK:
+  new fixtures for `chain_id`, the genesis file, the transaction signing domain, the block
+  signature and `state_root`.
+- **Existing fixtures that change, and need new versions:** `compute-task-v1`,
+  `anchor-receipt-v1`, `anchor-binding-v1` and `compute-task-rpc-v1`, wherever they hold a
+  signature or a block. `receipt-v1` is unchanged. The v0.4 fixtures stay as records.
+- `apply_block` negative tests for (t) to (w), each asserting its own error.
+- Genesis: every malformed form refused, and a crash during creation leaves no partial state.
 - Two nodes with different genesis files refuse to sync, at negotiation.
 - A transaction signed for another `chain_id` is refused.
 - Two nodes forced to diverge stop at the first differing block.
-- Property tests of I1 to I4 over generated blocks, with every combination of accounts
-  a transaction can name, and boundary amounts.
-- Replay, devnet convergence and compute vertical harnesses on v0.5.
+- Generated blocks over every sender and receiver combination, with boundary amounts,
+  checked against section 6.
+- A schema-3 directory is refused, and a directory of another chain is refused.
+- `replay_harness` must apply blocks through `apply_block`, which it does not do today.
+- Devnet convergence and compute vertical harnesses on v0.5.
 
 ## Rollout
 
 1. `READY_FOR_REVIEW`, 7-day cooling period, written adversarial review (`RFC_PROCESS.md`).
-2. Acceptance. Implementation in `mbongo-core`, `mbongo-node`, `mbongo-network`, then the SDK.
-3. Corrections needed for the invariants of section 6 land first, under this RFC.
-4. A new protocol lock, `PROTOCOL_LOCK_v0.5.md`, and a `v0.5-devnet-stable` tag. v0.4
-   stays as a historical lock. No coordination is needed: there is no network to upgrade.
+2. Acceptance.
+3. Implementation, in the order #209 sets: conformance to section 6 first, as its own
+   change, then `mbongo-core`, `mbongo-storage`, `mbongo-node`, `mbongo-network`, then the SDK.
+4. `PROTOCOL_LOCK_v0.5.md`, `rpc_v0.4.md`, and a `v0.5-devnet-stable` tag. v0.4 stays as a
+   historical lock. No coordination is needed: there is no network to upgrade.
