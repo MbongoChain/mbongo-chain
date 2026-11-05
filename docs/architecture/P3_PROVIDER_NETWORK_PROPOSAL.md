@@ -88,6 +88,8 @@ for anything stronger. The terminator's trust boundary needs explicit checks.
 
 ### P3-D: Independent providers on separate hosts
 
+Plan under review: [`P3D_MULTI_HOST_PLAN.md`](P3D_MULTI_HOST_PLAN.md).
+
 | | |
 |---|---|
 | Capability | Two providers on separate hosts, with their own keys, serve one client against one chain |
