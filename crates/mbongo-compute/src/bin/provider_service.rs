@@ -199,6 +199,7 @@ async fn serve(config: Config) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let containment = contain(&config)?;
     provider_config.contained = containment.as_ref().map(|c| c.proof());
+    let network = provider_config.contained.is_some_and(|p| p.network_denied());
     let store = Arc::new(ProviderStore::new(config.artifact_dir));
     let mut runtimes: Vec<Arc<dyn RuntimeAdapter>> = Vec::new();
     for r in config.runtimes {
@@ -251,7 +252,6 @@ async fn serve(config: Config) -> Result<(), String> {
     }
     println!("KEY_ISOLATION_ENFORCED={enforced}");
     println!("MEMORY_LIMIT_ENFORCED={enforced}");
-    let network = provider_config.contained.is_some_and(|p| p.network_denied());
     println!("RUNNER_NETWORK={}", if network { "DENIED" } else { "OPEN" });
     println!("STATE=DURABLE");
     println!("EXECUTION=AT_LEAST_ONCE (one receipt per task; a runner may run twice)");
