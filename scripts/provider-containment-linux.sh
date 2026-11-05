@@ -9,17 +9,22 @@
 # <base>/work belongs to it too, group runner, 2750. The service checks all of
 # this itself and refuses to start otherwise: `run` repairs nothing.
 #
-# `prepare` also installs the runner's network policy. `run` refuses to start
-# without it, unless MBONGO_RUNNER_NETWORK=open.
+# `prepare` also installs the runner's network policy and the host's inbound
+# policy. `run` refuses to start without them, unless MBONGO_RUNNER_NETWORK=open.
+#
+# MBONGO_INBOUND_ALLOW is required by both: the TCP ports this host accepts new
+# connections on, comma-separated, or `none`. List everything the host needs,
+# such as SSH: every other new inbound connection is dropped, host-wide.
 #
 # Environment: MBONGO_PROVIDER_USER, MBONGO_RUNNER_USER, MBONGO_CGROUP,
-# MBONGO_RUNNER_NETWORK.
+# MBONGO_RUNNER_NETWORK, MBONGO_INBOUND_ALLOW.
 set -euo pipefail
 
 PROVIDER_USER=${MBONGO_PROVIDER_USER:-mbongo-provider}
 RUNNER_USER=${MBONGO_RUNNER_USER:-mbongo-runner}
 CGROUP=${MBONGO_CGROUP:-/sys/fs/cgroup/mbongo-provider}
 RUNNER_NETWORK=${MBONGO_RUNNER_NETWORK:-denied}
+INBOUND_ALLOW=${MBONGO_INBOUND_ALLOW:-}
 NFT_TABLE=mbongo_runner
 
 die() {
@@ -42,13 +47,31 @@ account() {
   fi
 }
 
+# Fails closed: no list and a malformed list are both refused.
+inbound_ports() {
+  [ -n "$INBOUND_ALLOW" ] || die "MBONGO_INBOUND_ALLOW is required: a port list, or none"
+  [ "$INBOUND_ALLOW" = none ] && return 0
+  case "$INBOUND_ALLOW" in
+  ,* | *, | *,,*) die "MBONGO_INBOUND_ALLOW is malformed" ;;
+  esac
+  local port
+  for port in ${INBOUND_ALLOW//,/ }; do
+    case "$port" in
+    '' | *[!0-9]*) die "MBONGO_INBOUND_ALLOW is malformed" ;;
+    esac
+    [ "${#port}" -le 5 ] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ] ||
+      die "MBONGO_INBOUND_ALLOW holds a port out of range"
+  done
+}
+
 # Everything the runner's account sends is refused, over IPv4 and IPv6,
 # loopback included. The rule follows the socket's owner, so it holds for every
 # descendant. A reset fails a TCP connection at once.
 network_policy() {
   command -v nft >/dev/null || die "nftables is required"
-  local uid
+  local uid allow=""
   uid=$(id -u "$RUNNER_USER")
+  [ "$INBOUND_ALLOW" = none ] || allow="tcp dport { $INBOUND_ALLOW } ct state new accept"
   # One transaction: a re-run on a live service leaves no moment without the rule.
   nft -f - <<EOF
 table inet $NFT_TABLE
@@ -59,12 +82,36 @@ table inet $NFT_TABLE {
     meta skuid $uid meta l4proto tcp counter reject with tcp reset
     meta skuid $uid counter reject with icmpx type admin-prohibited
   }
+  chain input {
+    type filter hook input priority filter; policy drop;
+    iif "lo" accept
+    ct state established,related accept
+    icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert } accept
+    $allow
+  }
 }
 EOF
 }
 
+# What `run` will not start without. It checks what is installed against what
+# was asked for, not only that something is there.
+check_policies() {
+  local table listed wanted
+  table=$(nft list table inet "$NFT_TABLE" 2>/dev/null) ||
+    die "the runner's network policy is not installed: run prepare"
+  grep -q "meta skuid $(id -u "$RUNNER_USER") " <<<"$table" ||
+    die "the runner's network policy is not installed: run prepare"
+  grep -q "hook input priority filter; policy drop;" <<<"$table" ||
+    die "the inbound policy is not installed: run prepare"
+  listed=$(grep -o 'tcp dport [^c]*' <<<"$table" | grep -o '[0-9]\+' | sort -un | paste -sd, || true)
+  wanted=""
+  [ "$INBOUND_ALLOW" = none ] || wanted=$(tr , '\n' <<<"$INBOUND_ALLOW" | sort -un | paste -sd,)
+  [ "$listed" = "$wanted" ] || die "the inbound policy does not match MBONGO_INBOUND_ALLOW"
+}
+
 prepare() {
   local base=$1
+  inbound_ports
   [ "$(stat -f -c %T /sys/fs/cgroup)" = cgroup2fs ] || die "cgroup v2 is required"
   account "$PROVIDER_USER"
   account "$RUNNER_USER"
@@ -94,8 +141,8 @@ prepare() {
 run() {
   local service=$2 config=$3
   if [ "$RUNNER_NETWORK" = denied ]; then
-    nft list table inet "$NFT_TABLE" 2>/dev/null | grep -q "meta skuid $(id -u "$RUNNER_USER") " ||
-      die "the runner's network policy is not installed: run prepare"
+    inbound_ports
+    check_policies
   fi
   echo $$ >"$CGROUP/service/cgroup.procs"
   # Job directories inherit group runner from work/; 027 lets it read them.

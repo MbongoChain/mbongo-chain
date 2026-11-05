@@ -209,6 +209,20 @@ switch (params.mode) {
     respond(Buffer.from(JSON.stringify(sorted(results))));
     break;
   }
+  case "listen": {
+    let connections = 0;
+    const server = net.createServer((socket) => {
+      connections += 1;
+      socket.destroy();
+    });
+    await new Promise((resolve) => server.listen(params.port, "0.0.0.0", resolve));
+    fs.writeFileSync(params.marker, "listening\n");
+
+    await new Promise((resolve) => setTimeout(resolve, params.hold_ms));
+    server.close();
+    respond(Buffer.from(JSON.stringify({ connections })));
+    break;
+  }
   case "fork": {
     const script = `n=0; while [ $n -lt ${params.attempts} ]; do /bin/sleep 60 & n=$((n+1)); echo $n > ${params.counter}; done`;
     spawnSync("/bin/sh", ["-c", script], { stdio: "ignore" });

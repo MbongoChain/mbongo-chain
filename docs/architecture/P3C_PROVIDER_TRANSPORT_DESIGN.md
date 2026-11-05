@@ -1,7 +1,6 @@
 # P3-C: Secure Transport Between Clients and Providers
 
-**Status: design approved (2026-11-05), C1 implemented.** C2 needs separate
-approval. The service stays loopback-only. No provider is
+**Status: design approved (2026-11-05), C1 and C2 implemented.** The service stays loopback-only. No provider is
 exposed, and P3-D is not started.
 
 These choices define the **reference implementation**. They are not exclusive
@@ -132,8 +131,9 @@ so a provider cannot lock itself out by accident or skip it by omission. This is
 not a firewall framework: no per-job rules, and no other policy.
 
 **Limit:** the service cannot prove this at runtime, because proof needs a vantage
-point off the host. The launcher checks presence, and the Linux test proves the
-effect from a separate network namespace.
+point off the host. At start, the launcher compares what is installed with what was
+asked for, and the Linux test proves the effect from a separate network namespace.
+The reference is [`PROVIDER_TLS_REFERENCE_LINUX.md`](../runbooks/PROVIDER_TLS_REFERENCE_LINUX.md).
 
 ## 7. Failure handling
 

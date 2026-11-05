@@ -217,13 +217,17 @@ jobs:
         with:
           node-version: 24
 
-      - name: Install nftables
-        run: command -v nft || (sudo apt-get update && sudo apt-get install -y nftables)
+      - name: Install nftables and nginx
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nftables nginx curl
+          sudo systemctl stop nginx || true
 
       - name: Report the platform
         run: |
           uname -r
           nft --version
+          nginx -v
           stat -f -c %T /sys/fs/cgroup
           cat /sys/fs/cgroup/cgroup.subtree_control
           setpriv --version
