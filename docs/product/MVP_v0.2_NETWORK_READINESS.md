@@ -1,8 +1,8 @@
 # MVP v0.2 — End-to-End Functional Private Network
 
-**Status:** PROPOSED. Not approved, and it authorizes no implementation.
+**Status:** Planning structure approved (2026-11-05). It authorizes no implementation: each stage has its own gate.
 **Created:** 2026-11-05
-**Authority it holds:** none yet. Once approved: what MVP v0.2 delivers, and its gates.
+**Authority it holds:** what MVP v0.2 delivers, and its gates.
 **Authority it does not hold:** every normative document keeps its authority. Protocol
 facts stay in the protocol lock and the RFCs. See [`INDEX.md`](../INDEX.md).
 **Progress and decisions:** the master EPIC, #209.
@@ -30,15 +30,15 @@ nothing else.
 
 | Stage | Delivers | Depends on |
 |---|---|---|
-| **S0** (#204) | Native balance conservation, with invariant tests. Details stay in private security tracking | Nothing |
-| **S1** (#205) | RFC 0006 and its implementation: `chain_id`, configurable genesis, signed blocks, state commitment | S0 |
+| **S0** (#204) | Native balance conservation, with invariant tests. Details stay in private security tracking | Prepared now. Merges under RFC 0006, once accepted |
+| **S1** (#205) | RFC 0006 and its implementation: `chain_id`, configurable genesis, signed blocks, state commitment | RFC accepted, S0 merged |
 | **S2** (#206) | Test MBO through genesis, a wallet CLI, SDK transfers, a faucet | RFC 0006 accepted. Key handling can start earlier |
-| **S3** (#207) | Transaction forwarding to the producer, mempool and peer limits, sync recovery, release binaries, operator guide | S0. Blocks signed by S1 for its final tests |
+| **S3** (#207) | Transaction forwarding to the producer, mempool and peer limits, sync recovery, release binaries, operator guide | S0 merged. Preparation can start earlier. Blocks signed by S1 for its final tests |
 | **S4** (#208) | End-to-end acceptance and release | S1, S2, S3 |
 
 ```text
-S0 ──> S1 (RFC 0006: review ──> accept ──> implement) ──┬──> S2 ──┐
-  └────────────────────────────> S3 ────────────────────┴─────────┴──> S4
+RFC 0006 accepted ──> S0 merged ──> S1 implemented ──┬──> S2 ──┐
+                         └─────────────> S3 ─────────┴─────────┴──> S4
 ```
 
 ## 3. Reusable components
@@ -55,12 +55,13 @@ S0 ──> S1 (RFC 0006: review ──> accept ──> implement) ──┬─�
 
 ## 4. Dependencies and blockers
 
-- [RFC 0006](../rfcs/0006-chain-identity-authenticated-blocks.md) must be accepted before
-  any protected protocol work. The process requires a 7-day cooling period and a
+- RFC 0006, under review in [PR #211](https://github.com/MbongoChain/mbongo-chain/pull/211), must be accepted before any protected
+  protocol work. The process requires a 7-day cooling period and a
   written adversarial review, with no bypass.
 - #103: one maintainer, so RFCs follow the sole-maintainer path.
 - #146 and PR #147: sync can stall after a failed request. Part of S3.
-- S0's classification under `RFC_PROCESS.md` needs a decision. See gate G1.
+- S0 changes a protected state transition, so it merges only under an accepted RFC.
+  There is no emergency exception.
 
 ## 5. Security assumptions
 
@@ -108,8 +109,8 @@ VM, transaction gossip unless S3 proves it necessary, and paid P3-D deployment.
 | Gate | Decision | Who |
 |---|---|---|
 | G0 | Approve this specification and the planning structure | Maintainer |
-| G1 | S0: private tracking, classification under `RFC_PROCESS.md`, and fix approval | Maintainer |
-| G2 | RFC 0006: `READY_FOR_REVIEW`, then acceptance after cooling and adversarial review | Maintainer, under the process |
+| G1 | RFC 0006: `READY_FOR_REVIEW`, then acceptance after cooling and adversarial review | Maintainer, under the process |
+| G2 | S0: the prepared correction, reviewed privately, merged under the accepted RFC | Maintainer |
 | G3 | S1 implementation merged, protocol lock v0.5 | Maintainer |
 | G4 | S2 and S3, each with its own approval | Maintainer |
 | G5 | S4 evidence accepted, MVP v0.2 released | Maintainer |
@@ -130,3 +131,6 @@ Append only. Never rewrite an entry: a change of mind is a new entry.
 | 2026-11-05 | Order: S0, then S1 through its RFC, then S2 and S3 in parallel, then S4 | Maintainer |
 | 2026-11-05 | Paid P3-D deployment is excluded from this MVP. Its plan stays approved in principle | Maintainer |
 | 2026-11-05 | The monetary-conservation finding stays in private tracking | Maintainer |
+| 2026-11-05 | G0: planning structure approved. RFC 0006 moves to its own PR | Maintainer |
+| 2026-11-05 | Private vulnerability tracking approved. No emergency exception is claimed | Maintainer |
+| 2026-11-05 | A protected state-transition change merges only after its governing RFC is accepted | Maintainer |

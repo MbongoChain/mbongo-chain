@@ -35,7 +35,7 @@ Design records: #180 direction, #184 `5c7124d7` D15 and G2, #189 `20a5f910`, #19
 | #147 sync recovery | Open, unmerged. Tracked by #146 |
 | `mbongo-explorer` | Blocks only, no tests, not in CI |
 | RFC 0003, RFC 0004 | Research, non-normative |
-| RFC 0006 | Draft |
+| RFC 0006 | Draft, in #211 |
 
 ## Limitations
 
