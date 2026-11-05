@@ -94,6 +94,14 @@ struct Args {
     #[arg(long)]
     no_mdns: bool,
 
+    /// Most transactions this node holds pending (1 to 65536)
+    #[arg(long, default_value_t = mempool::DEFAULT_MAX_PENDING)]
+    mempool_max_pending: usize,
+
+    /// Seconds a transaction may stay pending before it is evicted
+    #[arg(long, default_value_t = mempool::DEFAULT_TTL_SECS)]
+    mempool_ttl_secs: u64,
+
     /// Bootnodes (multiaddr format)
     #[arg(long)]
     bootnodes: Vec<String>,
@@ -127,6 +135,9 @@ fn resolve_bind_addr(host: &str, port: u16, flag: &str) -> Result<SocketAddr, St
 
 /// The protocol lock this binary implements (informational; see the lock).
 const PROTOCOL_AUTHORITY: &str = "PROTOCOL_LOCK_v0.4";
+
+/// How often expired transactions are swept when no block commits.
+const MEMPOOL_SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 /// The RPC contract this binary serves (informational).
 const RPC_AUTHORITY: &str = "rpc_v0.3";
 /// The on-disk schema this binary writes (informational; the storage layer
@@ -162,7 +173,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage =
         RocksDbStorage::open(&args.data_dir).map_err(|e| format!("failed to open storage: {e}"))?;
 
-    let mut backend = NodeBackend::new(storage, args.producer);
+    let mempool_config =
+        mempool::MempoolConfig::new(args.mempool_max_pending, args.mempool_ttl_secs)?;
+    let mut backend = NodeBackend::with_mempool_config(storage, args.producer, mempool_config);
 
     // Ensure genesis block exists (idempotent).
     backend
@@ -260,6 +273,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
+    // Expiry also runs after each commit. This covers a node with no blocks.
+    let sweep_backend = backend.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(MEMPOOL_SWEEP_INTERVAL);
+        loop {
+            interval.tick().await;
+            sweep_backend.sweep_mempool().await;
+        }
+    });
+
     println!("Node started.");
 
     // Wait for any task to finish (normally they run forever).
@@ -356,7 +379,9 @@ async fn run_sync_orchestrator<S: mbongo_storage::Storage + Send + Sync + 'stati
 
                 if incoming_height == local_height + 1 {
                     // Next expected block — apply directly.
-                    backend.handle_incoming_block(block);
+                    if let Some(applied) = backend.handle_incoming_block(block) {
+                        backend.after_block_committed(&applied).await;
+                    }
                 } else if incoming_height > local_height + 1 {
                     // Gap detected — trigger sync from a known peer.
                     log::info!(
@@ -431,6 +456,7 @@ async fn run_sync_orchestrator<S: mbongo_storage::Storage + Send + Sync + 'stati
                                             log::info!(
                                                 "Applied synced block: height={h}, hash={bh}"
                                             );
+                                            backend.after_block_committed(&block).await;
                                         }
                                         Err(e) => {
                                             log::warn!(
@@ -565,5 +591,113 @@ mod tests {
         assert_eq!(args.p2p_host, std::net::Ipv4Addr::LOCALHOST);
         // The flag takes no value.
         assert!(Args::try_parse_from(["mbongo-node", "--no-mdns", "true"]).is_err());
+    }
+
+    #[test]
+    fn mempool_flags_default_to_the_stated_bounds() {
+        let args = Args::parse_from(["mbongo-node"]);
+        assert_eq!(args.mempool_max_pending, 8192);
+        assert_eq!(args.mempool_ttl_secs, 3600);
+    }
+
+    /// A pending transaction, and the block that includes it, built on a
+    /// second node so that the first has to import it.
+    async fn node_with_a_pending_transaction_and_its_block() -> (
+        NodeBackend<mbongo_storage::InMemoryStorage>,
+        mbongo_core::Hash,
+        mbongo_core::Block,
+    ) {
+        use ed25519_dalek::{Signer, SigningKey};
+        use mbongo_core::{Account, Address, Transaction, TransactionPayload, TransactionType};
+        use mbongo_storage::Storage;
+
+        let sk = SigningKey::from_bytes(&[0x71u8; 32]);
+        let sender = Address(sk.verifying_key().to_bytes());
+        let mut tx = Transaction {
+            tx_type: TransactionType::Transfer,
+            sender,
+            receiver: Address([1u8; 32]),
+            amount: 5,
+            nonce: 0,
+            payload: TransactionPayload::None,
+            signature: [0u8; 64],
+        };
+        tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+        let mut account = Account::new(sender);
+        account.balance = 100;
+
+        let build = || {
+            let node = NodeBackend::new(mbongo_storage::InMemoryStorage::new(), true);
+            node.ensure_genesis().unwrap();
+            node.storage.put_account(&sender, &account).unwrap();
+            node
+        };
+        let producer = build();
+        producer.submit_transaction(tx.clone()).await.unwrap();
+        producer.produce_block().await.unwrap();
+        let block = producer.storage.get_block_by_height(1).unwrap().unwrap();
+
+        let follower = build();
+        follower.submit_transaction(tx.clone()).await.unwrap();
+        let hash = backend::compute_tx_hash(&tx);
+        assert!(follower.is_pending(&hash).await);
+        (follower, hash, block)
+    }
+
+    async fn wait_until_not_pending(
+        node: &NodeBackend<mbongo_storage::InMemoryStorage>,
+        hash: &mbongo_core::Hash,
+    ) {
+        for _ in 0..500 {
+            if !node.is_pending(hash).await {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        panic!("the transaction stayed pending");
+    }
+
+    #[tokio::test]
+    async fn the_orchestrator_clears_the_mempool_on_a_pushed_block() {
+        let (node, hash, block) = node_with_a_pending_transaction_and_its_block().await;
+        let (block_tx, block_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(run_sync_orchestrator(
+            node.clone(),
+            block_rx,
+            event_rx,
+            cmd_tx,
+        ));
+        block_tx.send(block).unwrap();
+        wait_until_not_pending(&node, &hash).await;
+        assert_eq!(node.latest_height().unwrap(), 1);
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn the_orchestrator_clears_the_mempool_on_a_synced_block() {
+        let (node, hash, block) = node_with_a_pending_transaction_and_its_block().await;
+        let (_block_tx, block_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(run_sync_orchestrator(
+            node.clone(),
+            block_rx,
+            event_rx,
+            cmd_tx,
+        ));
+        let peer_id = libp2p::PeerId::random();
+        event_tx.send(SyncEvent::PeerConnected { peer_id }).unwrap();
+        let block_hash = backend::compute_block_hash(&block);
+        event_tx
+            .send(SyncEvent::ResponseReceived {
+                peer_id,
+                response: mbongo_network::SyncResponse::Blocks(vec![(block_hash, block)]),
+            })
+            .unwrap();
+        wait_until_not_pending(&node, &hash).await;
+        assert_eq!(node.latest_height().unwrap(), 1);
+        task.abort();
     }
 }
