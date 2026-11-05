@@ -315,7 +315,7 @@ blocks and is run at the end.
 | M8 | Largest transactions at the cap | Memory within the stated bound | U | 1 | |
 | M9 | Store closed and reopened | Committed state kept, nothing pending, resubmission included once. A separate process is covered by R2 and R9 | U | 1 | |
 | M10 | Eviction | No change to storage or blocks | U | 1 | |
-| M11 | S1's builder leaves an entry out | Evicted with its dependants, the rest included | U | 5 | |
+| M11 | S1's builder leaves an entry out | Evicted as `left_out`, a reason PR 5 adds, with its dependants, the rest included | U | 5 | |
 | M12 | A produced block fails with no transaction to blame | Nothing evicted | U | 5 | |
 | R1–R9 | Section 5 | As stated | I, H | 2, 6 | AC9 |
 | R11 | Section 5 | As stated | U | 2 | AC9 |
