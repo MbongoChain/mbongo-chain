@@ -394,11 +394,14 @@ setup.** It was not run across hosts, or on Linux.
 
 ### 12.2 Reconnection
 
-`P2PNode` keeps the configured bootnodes, each with its own state.
+`P2PNode` keeps the configured bootnodes, each with its own state. A bare address has no
+peer id, and its dial failures report none, so state is keyed on the dial's `ConnectionId`,
+then on the `PeerId` learned at connection, which is replaced if a later dial learns another.
 
 | Rule | Value |
 |---|---|
-| Trigger | A failed dial at start, `OutgoingConnectionError`, or `ConnectionClosed` on a bootnode |
+| Trigger | A synchronous `dial` error, which emits no event and is counted directly, `OutgoingConnectionError`, or `ConnectionClosed` with `num_established == 0` on a bootnode |
+| Duplicates | A bootnode already connected, by its learned `PeerId`, is not dialed. A bare address ignores dial conditions, so this check is explicit |
 | Backoff | 1 s, doubling, capped at 60 s, with 20 percent jitter |
 | Limit | None: it retries for as long as the node runs |
 | Reset | After a connection has stayed up for 30 s, so a flapping peer does not retry at full speed |
@@ -425,6 +428,7 @@ The orchestrator's single peer slot becomes per-peer state:
 
 ```rust
 struct PeerSync {
+    connected: bool,
     reported_height: u64,
     failures: u32,
     retry_at: Option<Instant>,
@@ -434,14 +438,17 @@ struct PeerSync {
 | Case | Behaviour |
 |---|---|
 | Height answer | Updates that peer only. It never lowers or replaces another peer's value |
-| Choosing a peer | Highest reported height with no backoff in force. Ties go to the lower `PeerId`, so the choice is deterministic |
+| Block announcement | `block_rx` carries the sending `PeerId`, internally, and `handle_incoming_block` reports the result. A valid next block is applied. A height above that only triggers a height request to that peer: an unverified height is not a reported height |
+| Choosing a peer | Among connected peers, the highest reported height with no backoff in force. Ties go to the lower `PeerId`, so the choice is deterministic |
 | One request at a time | `in_flight` names the peer it is waiting for. An answer from any other peer does not clear it |
-| Disconnect, or failed request | New events `PeerDisconnected` and `RequestFailed`. The peer gets a failure, `in_flight` clears, and another is chosen |
-| Refused block | Failure and backoff for that peer, 1 s doubling to 60 s, instead of asking it again at once |
+| Disconnect | New event `PeerDisconnected`, sent at `num_established == 0`. The entry stays with `connected: false`, keeping its backoff. Only an abnormal close counts as a failure. `in_flight` clears if it named that peer |
+| Failed request | New event `RequestFailed`, for height and block requests alike. The peer gets a failure, `in_flight` clears, another is chosen, and a failed height request is retried after the backoff |
+| Blocks in a batch at or below the local height | Skipped: a pushed block may have arrived first. Not a failure |
+| Refused block, a `Blocks` answer with no progress, or `SyncResponse::Error` | Failure and backoff for that peer, 1 s doubling to 60 s, instead of asking it again at once |
 | Malformed or impossible data | Failure for that peer. Range arithmetic saturates |
-| No peer available | Waits. Nothing is logged at more than one line per backoff period |
+| No peer available | Waits on a timer set to the earliest `retry_at`, as a third branch of the orchestrator's `select!`, so a retry does not depend on another event |
 
-`SyncEvent` is internal, so these events change nothing on the wire.
+`SyncEvent` and `block_rx` are internal, so these changes reach nothing on the wire.
 
 ### 12.5 PR #147
 
@@ -450,9 +457,9 @@ Reassessed against `dev`. It has one commit, by an outside contributor, on `p2p.
 
 | Part | Decision |
 |---|---|
-| Tracking outbound block request ids, `SyncEvent::RequestFailed` | Reuse |
+| Tracking outbound block request ids, `SyncEvent::RequestFailed` | Extend to height requests, where a negotiation failure first appears |
 | `request_next_batch` returning whether the command was accepted | Reuse |
-| Its regression tests | Reuse |
+| Its regression tests | Rewrite the two that pin block-only tracking and a re-request with no backoff. Reuse the rest |
 | Clearing `in_flight` with nothing more | Extend: a failed request also backs that peer off and rotates |
 | Hoisting `request_next_batch` to module level | Reuse, it makes testing simpler |
 
@@ -466,7 +473,7 @@ update #147 itself or supersede it, with credit, is for the contributor and the 
 |---|---|
 | Section 3, reconnection | Implements it |
 | Section 3, `--node-key-file` | Implements it |
-| Section 3, caught-up rule | Not here. S1 builds it, inside `produce_block`, on the per-peer state and events above |
+| Section 3, caught-up rule | Not here. S1 builds it, inside `produce_block`. PR 2a publishes the time of the first answer and of the last progress, pushed blocks included, through a shared handle, because per-peer state is local to the orchestrator task |
 | Section 7, chain-bound identifiers | Independent. A negotiation failure is a peer failure with backoff |
 | Rollout | Needs this on the release SHA, by the decision placing the lock at G4 |
 
@@ -477,13 +484,15 @@ or message shape. If RFC 0006 changes before acceptance, sections 12.2 and 12.3 
 
 | PR | Content | Files | Tier |
 |---|---|---|---|
-| 2a | #147 refreshed, per-peer state, rotation, saturating ranges, R1, R5, R6, R7, R11 | `p2p.rs`, `main.rs` | Tier 0 file, no locked surface |
+| 2a | #147 refreshed, per-peer state, rotation, retry timer, saturating ranges, R1, R2, R4, R5, R6, R7, R11 | `p2p.rs`, `main.rs` | Tier 0 file, no locked surface |
 | 2b | Reconnection, `--node-key-file`, R3, R3b, a restart stage in `devnet_harness` | `p2p.rs`, `main.rs`, harness | Tier 0 file, no locked surface |
 
 **Added cases:** R3c, reconnection with a bare address and with `--node-key-file`, across a
 producer restart. R3d, a pinned address after an identity change logs the mismatch. R5b, an
 answer from a peer not asked does not clear `in_flight`. R5c, a low height from one peer does
-not stop a sync served by another.
+not stop a sync served by another. R5d, one peer whose request failed is retried with no
+other event. R7b, a batch overlapping a pushed block is no failure. R7c, a `Blocks` answer
+with no progress backs off.
 
 **Decisions needed before implementation:** approval of PRs 2a and 2b, and the values in
 12.2. The harness restart stage runs on push only unless the maintainer wants it on pull
