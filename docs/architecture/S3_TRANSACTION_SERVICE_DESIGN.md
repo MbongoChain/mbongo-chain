@@ -338,7 +338,7 @@ Each PR meets section 10 of the specification, in this order:
 |---|---|---|---|---|
 | 1 | **Mempool bounds, eviction, post-commit hook** | `mempool.rs`, `main.rs`, and in `backend.rs` admission, `handle_incoming_block` and the removal in `produce_block` | Tier 0 file, no locked surface | Nothing from RFC 0006 |
 | 2 | Sync recovery: #147 refreshed, redial, per-peer state and rotation, stable identity, R1–R7, R11 | `p2p.rs`, `main.rs` | Tier 0 file, no locked surface | Nothing from RFC 0006 |
-| 3 | Forwarding and explicit failure, with the RPC spec revision | `main.rs`, `backend.rs` admission, `server.rs`, `rpc.rs`, new `forwarder.rs` | Tier 0 files, RPC (D2) | PR 1, S1 and `rpc_v0.4` (D2) |
+| 3 | Forwarding and explicit failure, with the RPC spec revision | `main.rs`, `backend.rs` admission, `server.rs`, `rpc.rs`, new `forwarder.rs` | Tier 0 files, RPC (D2) | PR 1 and S1. It ships with `rpc_v0.4` (D2) |
 | 4 | Status and `/status` | `rest.rs`, `backend.rs` | Tier 0 file, no locked surface | PRs 1, 2 and 3: peer count needs the P2P events from PR 2 |
 | 5 | Eviction of what S1's builder leaves out. No block-building code | `mempool.rs`, hook | Tier 1 | PR 1, S1 |
 | 6 | Final acceptance on v0.5: F13, F14, R7s, full R and AC runs | Harness, chain check | 1 | S0, S1 merged |
