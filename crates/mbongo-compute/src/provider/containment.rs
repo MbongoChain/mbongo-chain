@@ -852,7 +852,7 @@ mod linux {
                     Ok(None) if started.elapsed() < PROBE_CONNECT_TIMEOUT => {
                         std::thread::sleep(Duration::from_millis(5));
                     }
-                    // Silence is a denial too, under a rule that drops.
+                    // The policy refuses at once: silence proves nothing.
                     _ => {
                         group.kill();
                         let _ = child.wait();
@@ -867,11 +867,12 @@ mod linux {
                 ));
             }
             match status.map(|s| s.code()) {
-                None | Some(Some(NO_CONNECTION)) => Ok(()),
+                Some(Some(NO_CONNECTION)) => Ok(()),
                 Some(Some(0)) => Err(refuse(
                     "NETWORK_POLICY_INEFFECTIVE",
                     format!("the runner reached {target}"),
                 )),
+                None => Err(inconclusive(format!("{target}: no answer"))),
                 Some(other) => Err(inconclusive(format!("{target}: exit {other:?}"))),
             }
         }

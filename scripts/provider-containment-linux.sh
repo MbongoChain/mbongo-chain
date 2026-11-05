@@ -49,8 +49,10 @@ network_policy() {
   command -v nft >/dev/null || die "nftables is required"
   local uid
   uid=$(id -u "$RUNNER_USER")
-  nft delete table inet "$NFT_TABLE" 2>/dev/null || true
+  # One transaction: a re-run on a live service leaves no moment without the rule.
   nft -f - <<EOF
+table inet $NFT_TABLE
+delete table inet $NFT_TABLE
 table inet $NFT_TABLE {
   chain output {
     type filter hook output priority filter; policy accept;
