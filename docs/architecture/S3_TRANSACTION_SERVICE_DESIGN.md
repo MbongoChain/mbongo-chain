@@ -444,7 +444,7 @@ struct PeerSync {
 | Disconnect | New event `PeerDisconnected`, sent at `num_established == 0`. The entry stays with `connected: false`, keeping its backoff. Only an abnormal close counts as a failure. `in_flight` clears if it named that peer |
 | Failed request | New event `RequestFailed`, for height and block requests alike. The peer gets a failure, `in_flight` clears, another is chosen, and a failed height request is retried after the backoff |
 | Blocks in a batch at or below the local height | Skipped: a pushed block may have arrived first. Not a failure |
-| Refused block, a `Blocks` answer with no progress, or `SyncResponse::Error` | Failure and backoff for that peer, 1 s doubling to 60 s, instead of asking it again at once |
+| Refused block, an empty `Blocks` answer, or `SyncResponse::Error` | Failure and backoff for that peer, 1 s doubling to 60 s, instead of asking it again at once |
 | Malformed or impossible data | Failure for that peer. Range arithmetic saturates |
 | No peer available | Waits on a timer set to the earliest `retry_at`, as a third branch of the orchestrator's `select!`, so a retry does not depend on another event |
 
@@ -484,15 +484,15 @@ or message shape. If RFC 0006 changes before acceptance, sections 12.2 and 12.3 
 
 | PR | Content | Files | Tier |
 |---|---|---|---|
-| 2a | #147 refreshed, per-peer state, rotation, retry timer, saturating ranges, R1, R2, R4, R5, R6, R7, R11 | `p2p.rs`, `main.rs` | Tier 0 file, no locked surface |
+| 2a | #147 refreshed, per-peer state, rotation, retry timer, saturating ranges, R1, R2, R4, R5, R6, R7, R11 | `p2p.rs`, `main.rs`, `handle_incoming_block` in `backend.rs` | Tier 0 file, no locked surface |
 | 2b | Reconnection, `--node-key-file`, R3, R3b, a restart stage in `devnet_harness` | `p2p.rs`, `main.rs`, harness | Tier 0 file, no locked surface |
 
 **Added cases:** R3c, reconnection with a bare address and with `--node-key-file`, across a
 producer restart. R3d, a pinned address after an identity change logs the mismatch. R5b, an
 answer from a peer not asked does not clear `in_flight`. R5c, a low height from one peer does
 not stop a sync served by another. R5d, one peer whose request failed is retried with no
-other event. R7b, a batch overlapping a pushed block is no failure. R7c, a `Blocks` answer
-with no progress backs off.
+other event. R7b, a batch overlapping a pushed block is no failure. R7c, an empty `Blocks`
+answer backs off.
 
 **Decisions needed before implementation:** approval of PRs 2a and 2b, and the values in
 12.2. The harness restart stage runs on push only unless the maintainer wants it on pull
