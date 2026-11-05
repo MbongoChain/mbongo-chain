@@ -200,6 +200,7 @@ proposed. The status is 404, and the client resubmits.
 | R7 | Peer serves a block that is refused | Block not applied, backoff, another peer tried | Same peer is asked again at once |
 | R8 | Process crash during block commit | Atomic batch: restart at the old or the new height. A host crash is not covered, and no power-loss durability is claimed | Storage batch is atomic; no crash test |
 | R9 | All nodes restart | Same height, head hash and balances on every node | No test |
+| R11 | Peer sends malformed or impossible sync data | Ignored, no crash, peer treated as failed | No test |
 | R10 | Provider restarts during a job | Job recovers as the durable store defines, and its receipt still anchors through the network | Provider restart tests exist, with no network |
 
 **Fix for R3, R5 and R7:** redial configured bootnodes on `ConnectionClosed` and on failed
@@ -303,6 +304,7 @@ blocks and is run at the end.
 | M12 | Error with no index | Nothing evicted | U | 5 | |
 | M13 | Timer and RPC production at once | One block per height, nothing evicted | U | 5 | |
 | R1–R9 | Section 5 | As stated | I, H | 2, 6 | AC9 |
+| R11 | Section 5 | As stated | U | 2 | AC9 |
 | R3b | Bootnode unreachable for a long time | Backoff stays capped, reconnects when it returns | I | 2 | AC9 |
 | R10 | Section 5 | As stated | H | 6 | AC9 |
 | R7s | Forged block from a peer | Refused, sync continues | I, S1 | 6 | AC7, AC9 |
@@ -332,7 +334,9 @@ PR 1 comes first because it needs nothing else, and removes an unbounded resourc
 forwarding exposes the producer.
 
 **Overlap with S0 and S1:** S0 touches the transfer path only, so it does not meet these
-PRs. S1 rewrites parts of `backend.rs` and `main.rs`, and every PR above that lands first
+PRs. RFC 0006, under review in #211, asks a producer to serialise production, commit before
+broadcast and catch up before producing. PR 5's lock is the same requirement, so it must
+follow the accepted text. S1 rewrites parts of `backend.rs` and `main.rs`, and every PR above that lands first
 gives it a merge to resolve, or the reverse. The specification places S3 after S0, so PRs
 1 to 5 starting earlier is decision D1.
 
@@ -350,7 +354,7 @@ gives it a merge to resolve, or the reverse. The specification places S3 after S
 
 - Forwarding has one target. If the producer is down, transactions are refused, not queued.
 - Nothing pending survives a restart.
-- `outcome_unknown` stays unknown until the client reads the status.
+- `outcome_unknown` stays unknown until the producer's status, or the block, settles it.
 - The JSON-RPC transport carries no authentication. Confidentiality and access control
   come from the private network, or from `https` when an operator sets it up.
 - Section 1 is read from the code. R3 has not been run.
