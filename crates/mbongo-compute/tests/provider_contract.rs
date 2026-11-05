@@ -629,6 +629,10 @@ fn isolation_is_stated_and_refused_when_it_cannot_be_proven() {
         "max_pids": 16,
     });
     let err = start(&config);
+    assert!(err.contains("missing field `network`"), "{err}");
+
+    config["isolation"]["network"] = json!("denied");
+    let err = start(&config);
     let expected = if cfg!(target_os = "linux") {
         [
             "ISOLATION_REFUSED=CGROUP_UNAVAILABLE",
@@ -654,6 +658,7 @@ fn a_root_runner_is_refused_before_anything_else() {
         private_dirs: Vec::new(),
         work_dir: dir.join("work"),
         denied_paths: Vec::new(),
+        network_denied: true,
     })
     .unwrap_err();
     let expected: &[&str] = if cfg!(target_os = "linux") {

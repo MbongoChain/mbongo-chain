@@ -53,6 +53,16 @@ struct RuntimeEntry {
     pass_env: Vec<String>,
 }
 
+/// The runner's network. It has no default either.
+#[derive(Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RunnerNetwork {
+    /// Refused by the launcher's rule, and proven, or the service does not start.
+    Denied,
+    /// Not restricted.
+    Open,
+}
+
 /// Stated explicitly: a configuration that omits it does not load.
 #[derive(Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
@@ -68,6 +78,7 @@ enum Isolation {
         /// Ceiling on a job's memory, whatever its spec declares.
         max_memory_mib: u64,
         max_pids: u64,
+        network: RunnerNetwork,
         /// Further paths a runner must not read.
         #[serde(default)]
         denied_paths: Vec<PathBuf>,
@@ -100,6 +111,7 @@ fn contain(config: &Config) -> Result<Option<Arc<Containment>>, String> {
         cgroup_root,
         max_memory_mib,
         max_pids,
+        network,
         denied_paths,
     } = &config.isolation
     else {
@@ -121,6 +133,7 @@ fn contain(config: &Config) -> Result<Option<Arc<Containment>>, String> {
         private_dirs: vec![config.state_dir.clone(), config.artifact_dir.clone()],
         work_dir: config.work_dir.clone(),
         denied_paths: denied,
+        network_denied: *network == RunnerNetwork::Denied,
     })
     .map_err(|e| e.to_string())?;
     println!("ISOLATION_PROBE_PATHS={}", containment.probed_paths());
@@ -238,6 +251,8 @@ async fn serve(config: Config) -> Result<(), String> {
     }
     println!("KEY_ISOLATION_ENFORCED={enforced}");
     println!("MEMORY_LIMIT_ENFORCED={enforced}");
+    let network = provider_config.contained.is_some_and(|p| p.network_denied());
+    println!("RUNNER_NETWORK={}", if network { "DENIED" } else { "OPEN" });
     println!("STATE=DURABLE");
     println!("EXECUTION=AT_LEAST_ONCE (one receipt per task; a runner may run twice)");
     let ticker = {

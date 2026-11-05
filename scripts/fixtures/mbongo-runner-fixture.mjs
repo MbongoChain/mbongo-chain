@@ -3,7 +3,9 @@
 // Rust core: it speaks only the process contract. Not a workload.
 // `params.mode` asks for misbehaviour, so that tests can reach each failure.
 import { spawn, spawnSync } from "node:child_process";
+import dgram from "node:dgram";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 
 const CONTRACT = "mbongo-runner:v1";
@@ -114,6 +116,40 @@ function daemon(heartbeat) {
   return child.pid;
 }
 
+function tcpAttempt(host, port) {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host, port });
+    const done = (outcome) => {
+      socket.destroy();
+      resolve(outcome);
+    };
+    socket.setTimeout(1500, () => done("TIMEOUT"));
+    socket.once("connect", () => done("OK"));
+    socket.once("error", (e) => done(e.code ?? "ERROR"));
+  });
+}
+
+function udpAttempt(host, port) {
+  return new Promise((resolve) => {
+    const socket = dgram.createSocket(host.includes(":") ? "udp6" : "udp4");
+    socket.once("error", (e) => {
+      socket.close();
+      resolve(e.code ?? "ERROR");
+    });
+    socket.send("x", port, host, (e) => {
+      socket.close();
+      resolve(e ? (e.code ?? "ERROR") : "OK");
+    });
+  });
+}
+
+// The same attempt from a descendant in its own session.
+function descendantAttempt(proto, host, port) {
+  const script = `if (exec 3<>/dev/${proto}/${host}/${port}; echo x >&3) 2>/dev/null; then exit 0; else exit 7; fi`;
+  const run = spawnSync("/usr/bin/setsid", ["--wait", "/bin/bash", "-c", script], { stdio: "ignore", timeout: 3000 });
+  return run.status === 0 ? "OK" : run.status === 7 ? "DENIED" : "NOT_RUN";
+}
+
 const input = readRequest();
 switch (params.mode) {
   case undefined:
@@ -162,6 +198,15 @@ switch (params.mode) {
     if (params.hang) for (;;) pause(1000);
     if (params.hold_ms) pause(params.hold_ms);
     respond(Buffer.from(JSON.stringify({ descendant_session: session(pid), own_session: session(process.pid), pid })));
+    break;
+  }
+  case "net": {
+    const results = {};
+    for (const { name, proto, host, port } of params.targets) {
+      const main = await (proto === "tcp" ? tcpAttempt(host, port) : udpAttempt(host, port));
+      results[name] = { descendant: descendantAttempt(proto, host, port), main };
+    }
+    respond(Buffer.from(JSON.stringify(sorted(results))));
     break;
   }
   case "fork": {
