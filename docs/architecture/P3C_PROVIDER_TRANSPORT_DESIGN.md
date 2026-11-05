@@ -1,7 +1,7 @@
 # P3-C: Secure Transport Between Clients and Providers
 
-**Status: design approved (2026-11-05).** C1 is authorized once this is merged.
-C2 needs separate approval. The service stays loopback-only. No provider is
+**Status: design approved (2026-11-05), C1 implemented.** C2 needs separate
+approval. The service stays loopback-only. No provider is
 exposed, and P3-D is not started.
 
 These choices define the **reference implementation**. They are not exclusive
@@ -139,12 +139,14 @@ No failure falls back to a weaker path, and none sends the input.
 | Failure | Client sees | Retried |
 |---|---|---|
 | Untrusted, expired or wrong-name certificate | `PROVIDER_TLS_REFUSED` | No |
-| `http://` off loopback, or a redirect | `PROVIDER_INSECURE_URL` | No |
+| `http://` off loopback | `PROVIDER_INSECURE_URL` | No |
+| A redirect | `PROVIDER_REDIRECT_REFUSED`. Not followed | No |
 | Malformed endpoint file | Refuses to start | No |
 | Capabilities name another executor | `WrongProvider`, before any upload | No |
 | `AUTH_WRONG_RECIPIENT` | `Rejected` | No |
 | Terminator down, connection refused | `Unavailable` | While polling, until the timeout |
-| Backend down: 502, 503, 504 | `Unavailable`. **A change:** these surface as `Rejected` today, which ends a poll | While polling |
+| Backend down: 502, 503, 504, on tracking, the result or registration | `Rejected`, treated as transient | Until the timeout, each with a fresh signature |
+| The same, on the job spec or the input | `Rejected` | No. The job ends, and nothing reaches the chain |
 | Replay refused | `Rejected` | Only with a new identifier |
 | Timeout | `TimedOut` | The task stays on-chain. Recovery is P5 |
 
@@ -173,9 +175,9 @@ expected:
 |---|---|
 | Valid chain, full job | Verified at T1 |
 | Unknown CA, expired, wrong name | `PROVIDER_TLS_REFUSED`, no request received |
-| Publicly trusted root is not in the file | Refused |
 | TLS 1.2 only | Refused |
-| `http://` off loopback; redirect to another host | `PROVIDER_INSECURE_URL`, nothing sent to the second host |
+| `http://` off loopback | `PROVIDER_INSECURE_URL` |
+| Redirect to another host | `PROVIDER_REDIRECT_REFUSED`, nothing sent to the second host |
 | Capabilities name another executor | `WrongProvider`, no upload received |
 | 502, 503, 504 while polling | Keeps polling, then succeeds |
 

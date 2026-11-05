@@ -19,6 +19,7 @@ pub mod auth;
 pub mod client;
 pub mod containment;
 pub mod durable;
+pub mod endpoint;
 pub mod journal;
 pub mod lock;
 pub mod runner;

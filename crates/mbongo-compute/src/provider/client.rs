@@ -7,12 +7,14 @@
 //! job's declared type and size. It does not prove the output is right for
 //! the client's purpose, or that the declared runtime ran.
 
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use mbongo_core::{Address, ComputeTask, Receipt, COMPUTE_TASK_VERSION};
 use mbongo_verification::verify_receipt_signature;
-use reqwest::Method;
+use reqwest::redirect::Policy;
+use reqwest::{Method, Url};
 use serde::{Deserialize, Serialize};
 
 use crate::chain::{find_receipt, ChainClient};
@@ -23,6 +25,7 @@ use crate::job::{verify_result, JobSpec, TechnicalLevel};
 use crate::mvp::client::{find_task, random_bytes, submit_task};
 
 use super::auth::{sign_request, SignedRequest};
+use super::endpoint::ProviderEndpoint;
 use super::service::{
     Capabilities, ErrorBody, JobSpecAccepted, JobStatus, RegisterRequest, UploadRequest,
     UploadResponse,
@@ -37,6 +40,15 @@ pub enum JobClientError {
     /// The provider could not be reached.
     #[error("provider unavailable: {0}")]
     Unavailable(&'static str),
+    /// Plain HTTP to anything but loopback, or a URL this client cannot use.
+    #[error("PROVIDER_INSECURE_URL")]
+    InsecureUrl,
+    /// The TLS handshake failed: nothing was sent.
+    #[error("PROVIDER_TLS_REFUSED")]
+    TlsRefused,
+    /// The provider answered with a redirect. It is not followed.
+    #[error("PROVIDER_REDIRECT_REFUSED")]
+    Redirected,
     /// The provider refused the request.
     #[error("refused ({status}): {code}")]
     Rejected {
@@ -67,6 +79,18 @@ pub enum JobClientError {
     Verification(String),
 }
 
+impl JobClientError {
+    /// A failure another attempt may not repeat: the provider or a gateway in
+    /// front of it is out of reach for now.
+    fn is_transient(&self) -> bool {
+        match self {
+            Self::Unavailable(_) => true,
+            Self::Rejected { status, .. } => matches!(status, 502..=504),
+            _ => false,
+        }
+    }
+}
+
 /// A signing client for one provider.
 pub struct ProviderClient {
     http: reqwest::Client,
@@ -76,7 +100,31 @@ pub struct ProviderClient {
     clock: Arc<dyn Clock>,
 }
 
+/// A failed handshake surfaces as invalid data, possibly wrapped in another
+/// I/O error, whose `source` skips what it wraps.
+fn is_invalid_data(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::InvalidData
+        || error
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<std::io::Error>())
+            .is_some_and(is_invalid_data)
+}
+
+fn is_tls_failure(e: &reqwest::Error) -> bool {
+    let mut source = std::error::Error::source(e);
+    while let Some(cause) = source {
+        if cause.downcast_ref::<std::io::Error>().is_some_and(is_invalid_data) {
+            return true;
+        }
+        source = cause.source();
+    }
+    false
+}
+
 fn class(e: &reqwest::Error) -> JobClientError {
+    if is_tls_failure(e) {
+        return JobClientError::TlsRefused;
+    }
     JobClientError::Unavailable(if e.is_connect() {
         "connection refused or unreachable"
     } else if e.is_timeout() {
@@ -87,9 +135,15 @@ fn class(e: &reqwest::Error) -> JobClientError {
 }
 
 impl ProviderClient {
-    /// A client for the provider at `base`, whose executor is `recipient`.
-    pub fn new(base: &str, key: LocalKey, recipient: Address) -> Result<Self, JobClientError> {
-        let http = reqwest::Client::builder()
+    fn build(
+        builder: reqwest::ClientBuilder,
+        base: &str,
+        key: LocalKey,
+        recipient: Address,
+    ) -> Result<Self, JobClientError> {
+        // A redirect would carry a signed request, and its input, elsewhere.
+        let http = builder
+            .redirect(Policy::none())
             .timeout(Duration::from_secs(600))
             .no_proxy()
             .build()
@@ -101,6 +155,34 @@ impl ProviderClient {
             recipient,
             clock: Arc::new(SystemClock),
         })
+    }
+
+    /// A client for a provider on this host, over plain HTTP, whose executor is
+    /// `recipient`. Anything off loopback goes through [`Self::secure`].
+    pub fn new(base: &str, key: LocalKey, recipient: Address) -> Result<Self, JobClientError> {
+        let url = Url::parse(base).map_err(|_| JobClientError::InsecureUrl)?;
+        let host = url.host_str().unwrap_or_default().trim_matches(['[', ']']);
+        let loopback =
+            host == "localhost" || host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback());
+        if url.scheme() != "http" || !loopback {
+            return Err(JobClientError::InsecureUrl);
+        }
+        Self::build(reqwest::Client::builder(), base, key, recipient)
+    }
+
+    /// A client for a provider across a network: TLS 1.3, and only the
+    /// authorities its endpoint file names. The chain and the host name are
+    /// verified, and no option turns that off.
+    pub fn secure(endpoint: &ProviderEndpoint, key: LocalKey) -> Result<Self, JobClientError> {
+        let mut builder = reqwest::Client::builder()
+            .use_rustls_tls()
+            .tls_built_in_root_certs(false)
+            .min_tls_version(reqwest::tls::Version::TLS_1_3)
+            .https_only(true);
+        for anchor in endpoint.anchors() {
+            builder = builder.add_root_certificate(anchor.clone());
+        }
+        Self::build(builder, &endpoint.base(), key, endpoint.executor())
     }
 
     async fn send(
@@ -127,8 +209,15 @@ impl ProviderClient {
             req = req.header(name, value);
         }
         let resp = req.body(body).send().await.map_err(|e| class(&e))?;
+        Self::checked(resp).await
+    }
+
+    async fn checked(resp: reqwest::Response) -> Result<reqwest::Response, JobClientError> {
         if resp.status().is_success() {
             return Ok(resp);
+        }
+        if resp.status().is_redirection() {
+            return Err(JobClientError::Redirected);
         }
         let status = resp.status().as_u16();
         let code = resp
@@ -154,7 +243,7 @@ impl ProviderClient {
             .send()
             .await
             .map_err(|e| class(&e))?;
-        Self::json(resp).await
+        Self::json(Self::checked(resp).await?).await
     }
 
     /// `PUT /v1/job-specs`: the `execution_spec` to commit.
@@ -273,7 +362,7 @@ async fn wait_completed(
         let status = match client.status(task_id).await {
             Ok(status) => status,
             // A provider restarting is not a failed job.
-            Err(JobClientError::Unavailable(_)) if started.elapsed() < wait.timeout => {
+            Err(e) if e.is_transient() && started.elapsed() < wait.timeout => {
                 tokio::time::sleep(wait.poll).await;
                 continue;
             }
@@ -295,7 +384,29 @@ async fn wait_completed(
     }
 }
 
+/// Reading a result changes nothing, so a gateway failure can be retried.
+async fn fetch_result(
+    client: &ProviderClient,
+    task_id: [u8; 32],
+    wait: WaitPolicy,
+    started: Instant,
+) -> Result<Vec<u8>, JobClientError> {
+    loop {
+        match client.result(task_id).await {
+            Err(e) if e.is_transient() && started.elapsed() < wait.timeout => {
+                tokio::time::sleep(wait.poll).await;
+            }
+            outcome => return outcome,
+        }
+    }
+}
+
 /// Submits a job, waits, and verifies the result up to T1.
+///
+/// What is retried, until `wait.timeout`, is what repeats safely: tracking, and
+/// registration, which the service treats as idempotent. Each retry is a fresh
+/// signature. The job spec, the input and the on-chain task are sent once: a
+/// failure there ends the job, and nothing submits it again.
 pub async fn run_job<C: ChainClient>(
     client: &ProviderClient,
     chain: &C,
@@ -348,12 +459,15 @@ pub async fn run_job<C: ChainClient>(
             {
                 tokio::time::sleep(wait.poll).await;
             }
+            Err(e) if e.is_transient() && started.elapsed() < wait.timeout => {
+                tokio::time::sleep(wait.poll).await;
+            }
             Err(e) => return Err(e),
         }
     }
     let status = wait_completed(client, task_id, wait, started).await?;
 
-    let output = client.result(task_id).await?;
+    let output = fetch_result(client, task_id, wait, started).await?;
     let latest = chain.latest_height().await.map_err(chain_error)?;
     let (receipt_height, receipt) = find_receipt(chain, task_id, task_height, latest)
         .await
