@@ -437,7 +437,7 @@ impl Mempool {
     /// `committed` returns a sender's committed nonce and balance, or `None`
     /// when it cannot answer, which leaves that sender's entries for a later
     /// block. `task_registered` reads committed state too. Entries above an
-    /// included or stale one stay: they are still valid.
+    /// included or stale one stay, unless a gap or a spent balance rules them out.
     ///
     /// Only a block's own senders can lose a pending entry this way: nonces
     /// and debits are the sender's own, and a task or receipt id binds its
@@ -1454,7 +1454,9 @@ mod tests {
                     }
                 }
                 5 | 6 => {
-                    let pending: Vec<[u8; 32]> = pool.by_compute_task_id.keys().copied().collect();
+                    let mut pending: Vec<[u8; 32]> =
+                        pool.by_compute_task_id.keys().copied().collect();
+                    pending.sort_unstable();
                     if !pending.is_empty() {
                         let index = usize::try_from(next(pending.len() as u64)).unwrap();
                         let tx = receipt(who, nonce, pending[index]);
@@ -1486,10 +1488,13 @@ mod tests {
                         let spend = u128::from(next(1000)) * 50;
                         transfer(who, at, spend.min(chain.balances[i]))
                     } else {
-                        let rival = pool
-                            .by_hash
-                            .values()
-                            .find(|t| t.sender == who && compute_task_id_of(t).is_some());
+                        let rival = pool.pending_by_sender.get(&who).and_then(|nonces| {
+                            nonces
+                                .iter()
+                                .filter_map(|n| pool.by_sender_nonce.get(&(who, *n)))
+                                .filter_map(|h| pool.by_hash.get(h))
+                                .find(|t| compute_task_id_of(t).is_some())
+                        });
                         match rival.and_then(compute_task_salt) {
                             Some(salt) => task(who, at, salt),
                             None => transfer(who, at, 0),
