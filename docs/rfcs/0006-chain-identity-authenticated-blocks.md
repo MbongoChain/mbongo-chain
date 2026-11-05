@@ -5,7 +5,7 @@
 **Author:** Gilbert Kalombo
 **Created:** 2026-11-05
 **Protocol version:** v0.4 → v0.5
-**Locked surfaces affected:** [`PROTOCOL_LOCK_v0.4.md`](../specs/PROTOCOL_LOCK_v0.4.md) §2 (signing input), §5 (validation rules), §6 (storage schema), §8 (RPC), §9 (P2P identifiers), §10 (genesis), §11 (vectors); block encoding, transaction signing, hashing inputs
+**Locked surfaces affected:** [`PROTOCOL_LOCK_v0.4.md`](../specs/PROTOCOL_LOCK_v0.4.md) §2 (signing input), §5 (validation rules), §6 (storage schema), §7 (receipts), §8 (RPC), §9 (P2P identifiers), §10 (genesis), §11 (vectors); block encoding, transaction signing, hashing inputs; [`RECEIPT_SPEC_v0.1.md`](../specs/RECEIPT_SPEC_v0.1.md) (signature verification only)
 
 > Nothing here authorizes implementation. The review status is on the pull request.
 
@@ -36,7 +36,7 @@ be a single-operator demonstration.
 - [x] Hashing rules: block hash input changes with the block, new domains
 - [x] `apply_block` validity rules: new rules (t)–(w), one strict signature definition, and a normative transfer definition that supersedes v0.4 behaviour where they differ
 - [x] Producer obligations: one block per height (section 3)
-- [ ] Atomic `write_batch` requirement: unchanged
+- [x] `write_batch`: atomicity unchanged. An authority node's block commit becomes a synced write (section 3)
 - [x] Storage: schema 4, chain identity metadata, refusal of older directories
 - [x] P2P protocol strings: new versions and chain binding. Framing unchanged
 - [x] RPC: `rpc_v0.4`, a result shape and one new method
@@ -153,8 +153,8 @@ it adds that check. `compute_block_hash` keeps hashing the SCALE of the whole bl
 The producer of every block is `authorities[0]`, the only authority this schema allows.
 
 `--producer` needs `--producer-key-file`, a file holding a 32-byte Ed25519 seed as 64 hex
-characters, as the client key files do. Its key must be one of the authorities, or the
-node refuses to start. The only exception is `--dev`, where the flag is not used and the
+characters, as the client key files do. Its key must be the authority, or the node
+refuses to start. The only exception is `--dev`, where the flag is not used and the
 public dev authority key is taken automatically, and `--dev` with `--producer-key-file` is
 refused.
 
@@ -162,7 +162,8 @@ refused.
 view, compute `state_root`, fill the header with
 `timestamp = max(now, parent.timestamp)`, sign, then call `apply_block`, which validates
 it like any other block and commits it. A transaction that fails in the view is left out
-of the block, and does not fail it.
+of the block, with no effect on the view, and does not fail the block. What then happens
+to it is node-local mempool policy.
 
 **One block per height.** With no fork choice, two signed blocks at one height split a
 network for good, and honest failures can cause that as well as malice. So an authority
@@ -172,8 +173,13 @@ node:
 - commits a block with a synced write **before** broadcasting it. A crash before the
   commit leaves nothing that anyone has seen, so signing a different block at that height
   afterwards is harmless;
-- after a start, produces nothing until it has reached the highest height its connected
-  peers report, and refuses to produce while any peer reports a higher one;
+- after a start, if peers are configured, produces nothing until one of them has answered
+  and every valid block they serve within a timeout is applied. A peer that does not
+  answer is not counted. If none answers, it waits for an operator to pass
+  `--producer-start-alone`, which is also how a new network's first start proceeds;
+- stops producing only on a block above its tip that passes rules (t) and (u), which it
+  applies first. **A height a peer merely reports never stops production,** and is
+  dropped when no valid block backs it within that timeout;
 - is the only running node holding that key. Nothing can enforce this: it is an operating
   rule.
 
@@ -246,8 +252,9 @@ block being applied.
 
 A stored `Transfer` or `Stake` transaction is **skipped**, as Lock §5 defines: it changes
 nothing, and is not *applied*. A stored `ComputeTask` or `AnchorReceipt` transaction is
-refused, by its existing rule. A second copy within one block is not stored, so it is
-evaluated like any other transaction, and fails at its nonce. Everything below concerns
+refused, by its existing rule. A second copy, within one block, of a transaction not yet
+stored is evaluated like any other, and fails at its nonce. Every copy of a stored
+`Transfer` or `Stake` is skipped. Everything below concerns
 applied transactions.
 
 Accounts are one mapping from address to state. Applying a `Transfer` or `Stake`
@@ -296,10 +303,12 @@ migration. A v0.5 network starts from a new genesis in an empty directory.
   **refuses** a directory below schema 4, and does not stamp it. Schema 4 stores `chain_id`
   and the genesis hash, and a node refuses a directory holding different ones. A
   directory is new when it has no chain identity and no block, and its stamp is absent or
-  4, so a crash at any point during creation is recoverable. Any stamp below 4 is refused,
+  4, so a crash during genesis creation is recoverable, once the column families exist as
+  the Lock's open sequence requires. Any stamp below 4 is refused,
   block or no block.
 - **Existing clients:** `@mbongo/sdk` needs a new version for signing, block decoding and
-  `get_chain_info`. 0.2.0 stays valid for v0.4 only. Every other transaction signer
+  `get_chain_info`. 0.2.0 stays valid for v0.4 only. Its signature verification must
+  meet the strict definition, which a library default may not do. Every other transaction signer
   changes with the node: `mbongo-wallet`, and in `mbongo-compute` its client, worker,
   service and harnesses.
 - **Rollback:** nothing to roll back. An abandoned v0.5 directory leaves v0.4 and its tag
@@ -318,7 +327,8 @@ migration. A v0.5 network starts from a new genesis in an empty directory.
 | Two nodes silently disagreeing on state | The differing block is refused by (w), and the node stays at the last agreed height. It may keep re-requesting that block |
 | A state transition that differs from section 6 | Refused by review and tests, not at runtime: nodes that agree pass rule (w) |
 | An authority key is stolen | **Not addressed.** Replacing it needs a new genesis |
-| An authority signs two blocks at one height by accident | Section 3 removes the known honest causes. Recovery is manual |
+| An authority signs two blocks at one height by accident | Section 3 reduces this. It remains possible: a wiped or restored authority started with `--producer-start-alone`, or two nodes sharing the key. Recovery is manual |
+| A peer reports a false height | No effect on production: only a valid signed block stops it. A peer that withholds blocks delays a start until the timeout |
 | An authority equivocates on purpose | **Not addressed.** Peers keep the first block seen. No fork choice, no slashing |
 | An authority censors or stops | **Not addressed.** With one authority the chain halts |
 | A dev network | All `--dev` networks share one `chain_id`, so transactions replay between them. Nothing stops a genesis naming the public dev authority: an operator must not |
@@ -338,12 +348,18 @@ signature verification on every block from any peer, bounded by the peer rate li
   signature or a block. `receipt-v1` is unchanged. The v0.4 fixtures stay as records.
 - `apply_block` negative tests for (t) to (w), each asserting its own error.
 - Negative vectors for the strict definition: non-canonical `s`, `R` and key forms, and
-  small-order `R` and key, for blocks, transactions and receipts.
-- For each transaction type: a stored copy, and a second copy in one block, with a vector.
+  small-order `R` and key, and a signature that passes only the cofactored equation, for
+  blocks, transactions and receipts.
+- For each transaction type: a stored copy, a second copy in one block, and two copies of
+  a stored `Transfer` or `Stake`, with a vector.
+- A transaction failing in the view is left out with no partial effect, and the rest of the
+  block is valid.
 - A genesis with more than one authority is refused.
-- Concurrent production gives one block per height. A crash before the commit, and a
-  restart behind a peer, each give no second block at a height.
-- Genesis: every malformed form refused, and a crash during creation leaves no partial state.
+- Concurrent production gives one block per height. A crash before the commit, a restart
+  behind a peer, and a restart with no peer answering, each give no second block at a height.
+- A false height from a peer does not stop production.
+- Genesis: every malformed form refused, and a directory left by a crash during creation
+  restarts as new.
 - Two nodes with different genesis files refuse to sync, at negotiation.
 - A transaction signed for another `chain_id` is refused.
 - Two nodes forced to diverge stop at the first differing block.
