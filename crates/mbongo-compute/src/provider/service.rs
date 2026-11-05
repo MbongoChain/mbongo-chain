@@ -320,6 +320,8 @@ pub struct Capabilities {
     pub key_isolation_enforced: bool,
     /// Whether `max_memory_mib` is enforced on the runner's whole tree.
     pub memory_limit_enforced: bool,
+    /// Whether startup proved the runner has no loopback network.
+    pub runner_network_denied: bool,
 }
 
 /// `PUT /v1/job-specs` response.
@@ -844,6 +846,11 @@ impl<C: ChainClient + Clone + 'static> ProviderService<C> {
             limits: self.inner.config.limits,
             key_isolation_enforced: self.inner.config.contained.is_some(),
             memory_limit_enforced: self.inner.config.contained.is_some(),
+            runner_network_denied: self
+                .inner
+                .config
+                .contained
+                .is_some_and(ContainmentProof::network_denied),
         }
     }
 

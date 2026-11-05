@@ -16,7 +16,9 @@ provider-chosen runner compromised by what it processes.
 |---|---|
 | Linux 5.16 or later, cgroup v2 mounted at `/sys/fs/cgroup` | `cgroup.kill`, and open-time credentials for joining a cgroup. Older kernels refuse |
 | `memory` and `pids` controllers, swap accounting (`memory.swap.max`) | The memory and process limits |
-| util-linux `setpriv`, coreutils at `/bin` | The launcher, and the startup probe |
+| util-linux `setpriv`, coreutils at `/bin`, `/bin/bash` with `/dev/tcp` | The launcher, and the startup probes |
+| `nftables` with `inet` tables, `meta skuid` and `reject` | The runner's network policy |
+| A runner account used by nothing else, with no login shell | The policy follows the uid |
 | Local filesystems for keys and state | Same rule as P1 |
 
 Tested on the CI runner, `ubuntu-24.04`, by the job
@@ -45,6 +47,7 @@ prints the ids the configuration needs. Put the keys in `/srv/mbongo/keys`, run
   "cgroup_root": "/sys/fs/cgroup/mbongo-provider",
   "max_memory_mib": 2048,
   "max_pids": 256,
+  "network": "denied",
   "denied_paths": []
 }
 ```
@@ -53,7 +56,9 @@ prints the ids the configuration needs. Put the keys in `/srv/mbongo/keys`, run
 sudo scripts/provider-containment-linux.sh run /srv/mbongo /srv/mbongo/bin/provider_service /srv/mbongo/provider.json
 ```
 
-`isolation` has no default. A configuration that omits it does not load, and
+`isolation` and its `network` field have no default. `"network": "open"` leaves
+the runner's network unrestricted, and needs `MBONGO_RUNNER_NETWORK=open` for the
+launcher. A configuration that omits either does not load, and
 `{"mode": "none"}` isolates nothing and claims nothing. It is for controlled
 local testing only.
 
@@ -80,7 +85,10 @@ path, on the configuration above.
 | It cannot leave its cgroup or change its limits | Interface files belong to the provider account, and the job's cgroup directory is closed to the runner | Moving itself out, raising `memory.max` and creating a child cgroup: `EACCES` |
 | `SIGTERM` or Ctrl-C leaves no job running | The service refuses further jobs, kills each running job's cgroup, and exits 0. The task stays unfinished in the journal, and the next start runs it again | A job and its detached descendant killed, exit 0, no cgroup left, the task completed at T1 after a restart |
 | A restart leaves nothing from before it running | With the state lock held, the service kills every leftover `job-*` cgroup before it runs anything, and removes their job directories | Real `SIGKILL` of the service, orphan observed alive, then gone; the task completes at T1 |
-| It starts only if all of this holds | `Containment::establish` | 17 refusal cases, over 11 of the codes below. `UNSUPPORTED_PLATFORM` is tested on Windows. The three probe failures are produced by replacing the probe's tool in a private mount namespace, which tests the service's decision, not a real kernel fault |
+| With `network: denied`, its traffic is refused | An `nftables` rule on the runner's uid, in an `inet` table, installed by the launcher as root before the service starts. The service gains no capability, and cannot read the rule | From the runner and from a detached descendant: TCP and UDP over IPv4 and IPv6, an IPv4 address written in IPv6, the host's own address, the node RPC and REST ports, the service, and an outside address where one is reachable. Nothing arrived at the real endpoints. Without the rule, the same job reached all of them |
+| The network policy is proven, not assumed | Before anything runs, the runner must fail to reach a loopback listener, over IPv4 and IPv6, that the service's own account reaches with the same command. Repeated before every job | Policy absent, naming another account, letting loopback or IPv6 through: refused at startup. Removed or changed while running: no runner starts, and none does until a restart, even once repaired |
+| The runner's account is not shared | At startup, any process under its uid refuses the start. The launcher refuses an account with a login shell | A foreign process under that uid: refused |
+| It starts only if all of this holds | `Containment::establish` | 23 refusal cases, over 14 of the codes below. `UNSUPPORTED_PLATFORM` is tested on Windows. The three probe failures are produced by replacing the probe's tool in a private mount namespace, which tests the service's decision, not a real kernel fault |
 
 ### Refusals
 
@@ -100,6 +108,9 @@ The service exits with `ISOLATION_REFUSED=<code>`. There is no degraded mode.
 | `PROBE_READABLE` | A contained process read a protected path |
 | `PROBE_INCONCLUSIVE` | A protected path failed for another reason than permission, such as not existing |
 | `PROBE_KILL` | `cgroup.kill` did not kill a contained process |
+| `RUNNER_UID_SHARED` | A process already runs under the runner's account |
+| `NETWORK_POLICY_INEFFECTIVE` | A contained process reached a loopback listener |
+| `NETWORK_PROBE_INCONCLUSIVE` | The control did not connect, or the probe did not run |
 
 A job that cannot be contained at runtime does not run: it fails with
 `JOB_RUNTIME_FAILED`.
@@ -110,13 +121,17 @@ These are the provider's responsibility.
 
 | Not provided | Consequence |
 |---|---|
-| **Network isolation** | The runner can reach the internet, every loopback service, including the node RPC and this service's HTTP API, and local Unix sockets its account may open. It can send out anything it was given. Use firewall rules on the runner's uid, or a network namespace. **A prerequisite for untrusted workloads**, not provided by P2 |
+| **Complete network isolation** | With `network: open`, nothing is restricted. With `denied`, only IP traffic from sockets the runner's account opened is refused. See below |
+| **IPC isolation** | Unix-domain sockets, abstract ones included, are not IP traffic and no rule covers them. A local daemon listening on one, such as a proxy or a resolver, can carry traffic out for the runner. A socket received from another account keeps that account's identity. Pipes, shared memory, message queues and files follow the account's permissions only |
 | **A private filesystem view** | The runner reads whatever is world-readable, and writes wherever its account can, such as `/tmp`. Files it leaves there persist and reach later jobs. There is no mount namespace, `chroot` or seccomp filter |
 | **Isolation between jobs** | Jobs share one runner account. The worker starts one at a time and no process survives a job, but files can, and a job past its deadline can briefly overlap the next |
 | **Memory held outside a job** | `memory.max` ends with the job. What it left in `/dev/shm`, another tmpfs or System V shared memory stays, and repeated jobs can exhaust the host |
 | **Running jobs when the service dies** | `SIGKILL`, a crash or power loss leaves a running job alive with no deadline until the next start kills it. To end it sooner, write `1` to `<cgroup_root>/cgroup.kill` |
 | **CPU and disk limits** | A job can use all CPU until `max_wall_ms`, and fill any disk its account can write to |
 | **Protection from the service** | The service holds `CAP_SETUID` and `CAP_SETGID`. A compromised service can become any uid, so the service is trusted. Its bounding set allows nothing else |
+| **Inbound traffic, and packets without an owner** | The rule filters output by socket owner. Nothing filters input, so a peer can connect to a port the runner listens on. Packets the kernel sends with no owning socket, such as a handshake reply or a retransmission after a socket closed, are not matched. Data the runner writes to an established socket is refused. Filter input on the host if that matters |
+| **Continuous network enforcement** | The policy is checked at startup and before each job. Removed during a job, it is not seen until the next one. The check proves loopback only: a rule changed to let other destinations through is not detected |
+| **Unsupported hosts** | The rule lives in one network namespace, the service's. A `/proc` mounted with `hidepid` hides the shared-account check. Other firewalls, container runtimes and hosts without `nftables` are untested. An administrator can remove the rule |
 | **Kernel bugs** | The boundary is the kernel's. It is weaker than a VM |
 | **Core dumps and swap of the service** | Keys are in its memory. Disable both if that matters |
 | **Key protection from root or other accounts with access to the provider account** | Out of scope |

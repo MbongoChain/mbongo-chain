@@ -9,8 +9,12 @@
 //! proves it at runtime by spawning through the same path as a job. Anything
 //! it cannot prove refuses the start. There is no degraded mode.
 //!
-//! **Not provided:** network isolation, a private filesystem view, CPU or disk
-//! limits, and protection of the host from the service itself. See
+//! With `network_denied`, the runner's traffic is refused too. The launcher
+//! installs that rule, as root: the service cannot read or change it, so it
+//! proves the effect instead, at startup and before each job.
+//!
+//! **Not provided:** complete network or IPC isolation, a private filesystem
+//! view, CPU or disk limits, and protection of the host from the service. See
 //! `docs/runbooks/PROVIDER_CONTAINMENT_LINUX.md`. On any other platform,
 //! [`Containment::establish`] refuses.
 
@@ -38,6 +42,8 @@ pub struct ContainmentConfig {
     /// Further paths a runner must not read. Only the runtime probe checks
     /// them, so they need not belong to the service.
     pub denied_paths: Vec<PathBuf>,
+    /// Whether the runner must have no network.
+    pub network_denied: bool,
 }
 
 /// Why isolation was refused. Holds no file content.
@@ -53,7 +59,16 @@ pub struct ContainmentError {
 /// Proof that [`Containment::establish`] passed. Only it can make one, so a
 /// service cannot declare isolation it did not establish.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ContainmentProof(());
+pub struct ContainmentProof {
+    network_denied: bool,
+}
+
+impl ContainmentProof {
+    /// Whether the runner's network was proven denied.
+    pub fn network_denied(self) -> bool {
+        self.network_denied
+    }
+}
 
 #[cfg(target_os = "linux")]
 pub use linux::{Containment, JobCgroup};
@@ -128,6 +143,7 @@ mod linux {
     use std::ffi::OsString;
     use std::fs::{self, File, OpenOptions};
     use std::io;
+    use std::net::{SocketAddr, TcpListener};
     use std::os::fd::AsRawFd;
     use std::os::raw::{c_int, c_long, c_ulong};
     use std::os::unix::fs::MetadataExt;
@@ -145,6 +161,9 @@ mod linux {
     const PROBE_MEMORY_MIB: u64 = 64;
     const REAP_TIMEOUT: Duration = Duration::from_secs(5);
     const PROBE_SETTLE: Duration = Duration::from_millis(200);
+    const PROBE_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+    /// What the network probe exits with when it could not connect.
+    const NO_CONNECTION: i32 = 7;
     const SIGKILL: i32 = 9;
 
     const PR_SET_NO_NEW_PRIVS: c_int = 38;
@@ -478,6 +497,53 @@ mod linux {
         Ok(())
     }
 
+    /// The runner's account belongs to the runner alone. Run after the sweep, so
+    /// that anything still under it is not one of this service's jobs. A `/proc`
+    /// mounted with `hidepid` hides other accounts from this check.
+    fn check_runner_account(config: &ContainmentConfig) -> Result<(), ContainmentError> {
+        let entries = fs::read_dir("/proc")
+            .map_err(|e| refuse("RUNNER_UID_SHARED", format!("/proc: {:?}", e.kind())))?;
+        for entry in entries.filter_map(Result::ok) {
+            let name = entry.file_name();
+            let is_process = name.to_string_lossy().bytes().all(|b| b.is_ascii_digit());
+            let running_as_runner = is_process
+                && entry.metadata().is_ok_and(|m| m.uid() == config.runner_uid)
+                // A zombie has no command line, and is already gone.
+                && fs::read(entry.path().join("cmdline")).is_ok_and(|c| !c.is_empty());
+            if running_as_runner {
+                return Err(refuse(
+                    "RUNNER_UID_SHARED",
+                    format!("process {} runs as the runner", name.to_string_lossy()),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Connects, in a shell both identities can run. Reports with its status
+    /// that it ran and could not connect, so that a failure to run is not read
+    /// as a denial.
+    fn connect_script(target: SocketAddr) -> String {
+        format!(
+            "if (exec 3<>/dev/tcp/{}/{}) 2>/dev/null; then exit 0; else exit {NO_CONNECTION}; fi",
+            target.ip(),
+            target.port()
+        )
+    }
+
+    fn connection_arrived(listener: &TcpListener, wait: Duration) -> bool {
+        let started = Instant::now();
+        loop {
+            if listener.accept().is_ok() {
+                return true;
+            }
+            if started.elapsed() >= wait {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     fn field<'a>(status: &'a str, name: &str) -> Option<&'a str> {
         status
             .lines()
@@ -494,6 +560,7 @@ mod linux {
             check_identity(&config, uid, gid)?;
             check_cgroup(&config, uid)?;
             let swept = sweep_jobs(&config)?;
+            check_runner_account(&config)?;
             check_paths(&config, uid)?;
             sweep_job_dirs(&config)?;
             // Job directories: read-only for the runner's group, whatever
@@ -502,18 +569,22 @@ mod linux {
             unsafe {
                 umask(0o027);
             }
+            let config_network = config.network_denied;
             let mut containment = Self {
                 config,
                 next_job: AtomicU64::new(0),
                 swept,
                 probed_paths: 0,
-                proof: ContainmentProof(()),
+                proof: ContainmentProof {
+                    network_denied: config_network,
+                },
                 closed: Arc::new(AtomicBool::new(false)),
             };
             containment.probe_identity()?;
             containment.probe_descriptors()?;
             containment.probed_paths = containment.probe_denied()?;
             containment.probe_kill()?;
+            containment.probe_network()?;
             Ok(containment)
         }
 
@@ -532,10 +603,23 @@ mod linux {
             self.probed_paths
         }
 
-        /// A cgroup for one job, with its limits in place. `max_memory_mib`
-        /// comes from the job spec, so the provider's ceiling caps it.
-        /// `label` names the job in the log.
+        /// A cgroup for one job, once its network policy is proven to still
+        /// hold. A policy lost after startup stops every further job, until a
+        /// restart proves it again. A policy lost during a job is not seen.
+        ///
+        /// `max_memory_mib` comes from the job spec, so the provider's ceiling
+        /// caps it. `label` names the job in the log.
         pub fn job(&self, max_memory_mib: u64, label: &str) -> io::Result<JobCgroup> {
+            if !self.closed.load(Ordering::SeqCst) {
+                if let Err(e) = self.probe_network() {
+                    log::error!("containment: NETWORK_POLICY_LOST: {e}");
+                    self.closed.store(true, Ordering::SeqCst);
+                }
+            }
+            self.cgroup(max_memory_mib, label)
+        }
+
+        fn cgroup(&self, max_memory_mib: u64, label: &str) -> io::Result<JobCgroup> {
             let n = self.next_job.fetch_add(1, Ordering::SeqCst);
             let path = self.config.cgroup_root.join(format!("{JOB_PREFIX}{n}"));
             fs::create_dir(&path)?;
@@ -590,7 +674,7 @@ mod linux {
             args: &[OsString],
         ) -> Result<(JobCgroup, Output), ContainmentError> {
             let group = self
-                .job(PROBE_MEMORY_MIB, "probe")
+                .cgroup(PROBE_MEMORY_MIB, "probe")
                 .map_err(|e| refuse("CGROUP_UNAVAILABLE", format!("job cgroup: {:?}", e.kind())))?;
             let mut command = Command::new(program);
             command.args(args).env_clear().current_dir("/").stdin(Stdio::null());
@@ -698,10 +782,105 @@ mod linux {
             Ok(targets.len())
         }
 
+        /// The runner cannot reach a loopback listener that the service's own
+        /// account can reach through the same command. Loopback only: a policy
+        /// changed to let other destinations through is not seen here.
+        fn probe_network(&self) -> Result<(), ContainmentError> {
+            if !self.config.network_denied {
+                return Ok(());
+            }
+            let mut tested = 0;
+            for address in ["127.0.0.1:0", "[::1]:0"] {
+                let listener = match TcpListener::bind(address) {
+                    Ok(listener) => listener,
+                    // A host without IPv6 has no IPv6 to reach.
+                    Err(e) if e.kind() == io::ErrorKind::AddrNotAvailable => continue,
+                    Err(e) => {
+                        return Err(refuse(
+                            "NETWORK_PROBE_INCONCLUSIVE",
+                            format!("{address}: {:?}", e.kind()),
+                        ))
+                    }
+                };
+                self.probe_listener(&listener)?;
+                tested += 1;
+            }
+            if tested == 0 {
+                return Err(refuse("NETWORK_PROBE_INCONCLUSIVE", "no loopback address"));
+            }
+            Ok(())
+        }
+
+        fn probe_listener(&self, listener: &TcpListener) -> Result<(), ContainmentError> {
+            let inconclusive = |detail: String| refuse("NETWORK_PROBE_INCONCLUSIVE", detail);
+            listener
+                .set_nonblocking(true)
+                .map_err(|e| inconclusive(format!("{:?}", e.kind())))?;
+            let target =
+                listener.local_addr().map_err(|e| inconclusive(format!("{:?}", e.kind())))?;
+            let script = connect_script(target);
+            let shell = || {
+                let mut command = Command::new("/bin/bash");
+                command
+                    .args(["-c", &script])
+                    .env_clear()
+                    .current_dir("/")
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
+                command
+            };
+            // The control: reachable, by the same command, for another account.
+            let control = shell().status().map_err(|e| inconclusive(format!("{:?}", e.kind())))?;
+            if !control.success() || !connection_arrived(listener, PROBE_SETTLE) {
+                return Err(inconclusive(format!(
+                    "{target}: the control did not connect"
+                )));
+            }
+            let group = self
+                .cgroup(PROBE_MEMORY_MIB, "probe")
+                .map_err(|e| refuse("CGROUP_UNAVAILABLE", format!("job cgroup: {:?}", e.kind())))?;
+            let mut command = shell();
+            group.confine(&mut command);
+            let mut child = command
+                .spawn()
+                .map_err(|e| refuse("SPAWN_DENIED", format!("bash: {:?}", e.kind())))?;
+            let started = Instant::now();
+            let status = loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => break Some(status),
+                    Ok(None) if started.elapsed() < PROBE_CONNECT_TIMEOUT => {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    // The policy refuses at once: silence proves nothing.
+                    _ => {
+                        group.kill();
+                        let _ = child.wait();
+                        break None;
+                    }
+                }
+            };
+            if connection_arrived(listener, Duration::ZERO) {
+                return Err(refuse(
+                    "NETWORK_POLICY_INEFFECTIVE",
+                    format!("the runner reached {target}"),
+                ));
+            }
+            match status.map(|s| s.code()) {
+                Some(Some(NO_CONNECTION)) => Ok(()),
+                Some(Some(0)) => Err(refuse(
+                    "NETWORK_POLICY_INEFFECTIVE",
+                    format!("the runner reached {target}"),
+                )),
+                None => Err(inconclusive(format!("{target}: no answer"))),
+                Some(other) => Err(inconclusive(format!("{target}: exit {other:?}"))),
+            }
+        }
+
         /// `cgroup.kill` reaches a process the service could not signal.
         fn probe_kill(&self) -> Result<(), ContainmentError> {
             let group = self
-                .job(PROBE_MEMORY_MIB, "probe")
+                .cgroup(PROBE_MEMORY_MIB, "probe")
                 .map_err(|e| refuse("CGROUP_UNAVAILABLE", format!("job cgroup: {:?}", e.kind())))?;
             let mut command = Command::new("/bin/sleep");
             command.arg("30").env_clear().current_dir("/").stdin(Stdio::null());
