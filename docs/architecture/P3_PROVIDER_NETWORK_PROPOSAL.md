@@ -64,6 +64,8 @@ private filesystem view.
 
 ### P3-C: Provider network authentication and TLS
 
+Design under review: [`P3C_PROVIDER_TRANSPORT_DESIGN.md`](P3C_PROVIDER_TRANSPORT_DESIGN.md).
+
 | | |
 |---|---|
 | Capability | A client reaches a remote provider confidentially, and refuses anything else |
