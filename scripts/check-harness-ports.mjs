@@ -1,27 +1,32 @@
 // Fixed harness ports must stay outside the Linux ephemeral range: a listener
-// cannot bind a port held by a recent outbound connection in TIME_WAIT.
+// cannot bind a port held by a recent outbound connection, or one in TIME_WAIT.
 //   node scripts/check-harness-ports.mjs
 import fs from "node:fs";
 import path from "node:path";
 
 const ROOT = path.join(import.meta.dirname, "..");
+const CONST = /const ([A-Z0-9_]*(?:RPC|REST|P2P)(?:_PORT)?): u16 = (\d+);/g;
+const FIELD = /\b(rpc|rest|p2p): (\d+),/g;
+
+// Every harness that CI runs, plus the ignored convergence test, with the
+// number of fixed ports each must yield.
 const HARNESSES = [
-  "crates/mbongo-node/src/bin/replay_harness.rs",
-  "crates/mbongo-compute/src/bin/compute_harness.rs",
-  "crates/mbongo-compute/src/bin/provider_harness.rs",
+  { file: "crates/mbongo-node/src/bin/replay_harness.rs", pattern: CONST, count: 3 },
+  { file: "crates/mbongo-compute/src/bin/compute_harness.rs", pattern: CONST, count: 3 },
+  { file: "crates/mbongo-compute/src/bin/provider_harness.rs", pattern: CONST, count: 3 },
+  { file: "crates/mbongo-node/src/bin/compute_vertical.rs", pattern: FIELD, count: 9 },
+  { file: "crates/mbongo-node/src/bin/devnet_harness.rs", pattern: CONST, count: 9 },
+  { file: "crates/mbongo-node/tests/devnet_convergence.rs", pattern: CONST, count: 9 },
 ];
-const NAMES = ["RPC_PORT", "REST_PORT", "P2P_PORT"];
 
 const ports = [];
-for (const file of HARNESSES) {
+for (const { file, pattern, count } of HARNESSES) {
   const text = fs.readFileSync(path.join(ROOT, file), "utf8");
-  for (const name of NAMES) {
-    const m = text.match(new RegExp(`const ${name}: u16 = (\\d+);`));
-    if (!m) throw new Error(`${file}: no ${name}`);
-    ports.push({ file, name, port: Number(m[1]) });
-  }
+  const found = [...text.matchAll(pattern)].map((m) => ({ file, name: m[1], port: Number(m[2]) }));
+  if (found.length !== count) throw new Error(`${file}: expected ${count} ports, found ${found.length}`);
+  ports.push(...found);
 }
-const expected = HARNESSES.length * NAMES.length;
+const expected = HARNESSES.reduce((n, h) => n + h.count, 0);
 if (ports.length !== expected) throw new Error(`expected ${expected} ports, found ${ports.length}`);
 if (new Set(ports.map((p) => p.port)).size !== expected) throw new Error("two harnesses share a port");
 

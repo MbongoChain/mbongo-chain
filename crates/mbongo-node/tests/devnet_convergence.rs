@@ -30,13 +30,13 @@ const MIN_HEIGHT: u64 = 5;
 // Uses different ports from the harness binary to avoid conflicts.
 const PRODUCER_RPC: u16 = 29944;
 const PRODUCER_REST: u16 = 28080;
-const PRODUCER_P2P: u16 = 40333;
+const PRODUCER_P2P: u16 = 28333;
 const FOLLOWER1_RPC: u16 = 29945;
 const FOLLOWER1_REST: u16 = 28081;
-const FOLLOWER1_P2P: u16 = 40334;
+const FOLLOWER1_P2P: u16 = 28334;
 const FOLLOWER2_RPC: u16 = 29946;
 const FOLLOWER2_REST: u16 = 28082;
-const FOLLOWER2_P2P: u16 = 40335;
+const FOLLOWER2_P2P: u16 = 28335;
 
 // RPC readiness probe: max 50 attempts × 200ms = 10s total.
 const RPC_PROBE_MAX_ATTEMPTS: u32 = 50;
