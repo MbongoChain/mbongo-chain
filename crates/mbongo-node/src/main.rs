@@ -411,9 +411,9 @@ async fn run_sync_orchestrator<S: mbongo_storage::Storage + Send + Sync + 'stati
                             tracker.height_answered(peer_id, remote_h);
                         }
                         SyncResponse::Blocks(blocks) => {
-                            if tracker.expects_blocks(&peer_id) {
+                            if let Some(start) = tracker.expected_start(&peer_id) {
                                 log::info!("Received {} blocks from {peer_id}", blocks.len());
-                                let outcome = apply_synced_blocks(&backend, blocks).await;
+                                let outcome = apply_synced_blocks(&backend, blocks, start).await;
                                 tracker.blocks_answered(peer_id, outcome, now);
                             } else {
                                 log::warn!("Ignoring blocks from {peer_id}: none were asked");
@@ -441,9 +441,12 @@ async fn run_sync_orchestrator<S: mbongo_storage::Storage + Send + Sync + 'stati
 
 /// Applies a block answer in order, and says what it amounted to. Blocks at or
 /// below the local height are skipped: a pushed block may have arrived first.
+/// That also moves the local height to `start` or past it, so an answer that
+/// applies nothing and leaves the node below `start` did not answer the request.
 async fn apply_synced_blocks<S: mbongo_storage::Storage + Send + Sync + 'static>(
     backend: &NodeBackend<S>,
     blocks: Vec<(mbongo_core::Hash, mbongo_core::Block)>,
+    start: u64,
 ) -> BatchOutcome {
     if blocks.is_empty() {
         return BatchOutcome::Empty;
@@ -472,10 +475,12 @@ async fn apply_synced_blocks<S: mbongo_storage::Storage + Send + Sync + 'static>
             }
         }
     }
-    if applied == 0 {
-        BatchOutcome::AlreadyHeld
-    } else {
-        BatchOutcome::Progress
+    if applied > 0 {
+        return BatchOutcome::Progress;
+    }
+    match backend.latest_height() {
+        Ok(local) if local >= start => BatchOutcome::AlreadyHeld,
+        _ => BatchOutcome::Refused,
     }
 }
 
@@ -500,7 +505,7 @@ fn send_due_requests<S: mbongo_storage::Storage + Send + Sync + 'static>(
     };
     if let Some((peer, remote_height)) = tracker.block_source(local_height, now) {
         if request_next_batch(cmd_tx, peer, local_height, remote_height) {
-            tracker.blocks_requested(peer);
+            tracker.blocks_requested(peer, local_height.saturating_add(1));
         }
     }
 }
@@ -700,6 +705,8 @@ mod tests {
             cmd_tx,
         ));
         let peer_id = libp2p::PeerId::random();
+        event_tx.send(SyncEvent::PeerConnected { peer_id }).unwrap();
+        next_command(&mut cmd_rx).await;
         event_tx
             .send(SyncEvent::ResponseReceived {
                 peer_id,
@@ -794,7 +801,13 @@ mod tests {
     }
 
     impl Harness {
-        fn height(&self, peer_id: libp2p::PeerId, height: u64) {
+        /// A peer connects, is asked its height, and answers.
+        async fn report(&mut self, peer_id: libp2p::PeerId, height: u64) {
+            self.events.send(SyncEvent::PeerConnected { peer_id }).unwrap();
+            assert!(is_height_to(
+                &next_command(&mut self.commands).await,
+                peer_id
+            ));
             self.answer(peer_id, SyncResponse::Height(height));
         }
 
@@ -820,7 +833,7 @@ mod tests {
     async fn a_failed_block_request_is_retried_on_its_own_after_the_backoff() {
         let mut h = harness();
         let peer = libp2p::PeerId::random();
-        h.height(peer, 1);
+        h.report(peer, 1).await;
         assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));
 
         h.failed(peer, mbongo_network::SyncRequestKind::Blocks);
@@ -847,7 +860,7 @@ mod tests {
     async fn repeated_failures_do_not_hot_loop() {
         let mut h = harness();
         let peer = libp2p::PeerId::random();
-        h.height(peer, 1);
+        h.report(peer, 1).await;
         let mut requests = 0u32;
         let start = tokio::time::Instant::now();
         while start.elapsed() < std::time::Duration::from_secs(300) {
@@ -858,6 +871,7 @@ mod tests {
             };
             assert!(is_blocks_to(&command, peer));
             requests += 1;
+            assert!(requests <= 11, "too many requests");
             h.answer(peer, SyncResponse::Blocks(Vec::new()));
         }
         // At 0, 1, 3, 7, 15, 31, 63, then every 60 seconds: the last at 303.
@@ -869,9 +883,9 @@ mod tests {
     async fn a_lost_peer_releases_the_request_and_another_takes_over() {
         let mut h = harness();
         let (gone, stays) = (libp2p::PeerId::random(), libp2p::PeerId::random());
-        h.height(gone, 5);
+        h.report(gone, 5).await;
         assert!(is_blocks_to(&next_command(&mut h.commands).await, gone));
-        h.height(stays, 4);
+        h.report(stays, 4).await;
         assert_silent(&mut h.commands, std::time::Duration::from_millis(50)).await;
 
         h.events
@@ -880,6 +894,7 @@ mod tests {
                 abnormal: true,
             })
             .unwrap();
+        assert!(is_height_to(&next_command(&mut h.commands).await, stays));
         assert!(is_blocks_to(&next_command(&mut h.commands).await, stays));
         h.task.abort();
     }
@@ -888,7 +903,7 @@ mod tests {
     async fn blocks_from_a_peer_not_asked_change_nothing() {
         let mut h = harness();
         let (asked, other) = (libp2p::PeerId::random(), libp2p::PeerId::random());
-        h.height(asked, 1);
+        h.report(asked, 1).await;
         assert!(is_blocks_to(&next_command(&mut h.commands).await, asked));
 
         h.answer(other, SyncResponse::Blocks(Vec::new()));
@@ -903,6 +918,7 @@ mod tests {
     async fn a_gap_asks_the_announcing_peer_and_does_not_believe_it() {
         let mut h = harness();
         let peer = libp2p::PeerId::random();
+        h.report(peer, 0).await;
         h.blocks.send((peer, sample_block(50))).unwrap();
         assert!(is_height_to(&next_command(&mut h.commands).await, peer));
         assert_silent(&mut h.commands, std::time::Duration::from_secs(5)).await;
@@ -914,7 +930,7 @@ mod tests {
     async fn a_refused_block_backs_off_instead_of_asking_again_at_once() {
         let mut h = harness();
         let peer = libp2p::PeerId::random();
-        h.height(peer, 1);
+        h.report(peer, 1).await;
         assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));
 
         let bad = sample_block(1);
@@ -930,7 +946,7 @@ mod tests {
     async fn the_largest_possible_height_does_not_panic() {
         let mut h = harness();
         let peer = libp2p::PeerId::random();
-        h.height(peer, u64::MAX);
+        h.report(peer, u64::MAX).await;
         let SyncCommand::GetBlocks {
             start_height,
             end_height,
@@ -942,6 +958,82 @@ mod tests {
         assert_eq!(start_height, 1);
         assert_eq!(end_height, 1 + MAX_RANGE);
         assert!(!h.task.is_finished());
+        h.task.abort();
+    }
+
+    /// Valid empty blocks 1 to `count`, from a chain with the same genesis.
+    async fn chain(count: u64) -> Vec<(mbongo_core::Hash, mbongo_core::Block)> {
+        use mbongo_storage::Storage;
+        let producer = NodeBackend::new(InMemoryStorage::new(), true);
+        producer.ensure_genesis().unwrap();
+        let mut blocks = Vec::new();
+        for height in 1..=count {
+            producer.produce_block().await.unwrap();
+            let block = producer.storage.get_block_by_height(height).unwrap().unwrap();
+            blocks.push((backend::compute_block_hash(&block), block));
+        }
+        blocks
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_next_batch_is_asked_after_progress() {
+        let mut h = harness();
+        let peer = libp2p::PeerId::random();
+        let mut blocks = chain(2).await;
+        let second = blocks.pop().unwrap();
+        h.report(peer, 2).await;
+        assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));
+
+        h.answer(peer, SyncResponse::Blocks(blocks));
+        let SyncCommand::GetBlocks { start_height, .. } = next_command(&mut h.commands).await
+        else {
+            panic!("expected a block request");
+        };
+        assert_eq!(start_height, 2);
+        h.answer(peer, SyncResponse::Blocks(vec![second]));
+        assert_silent(&mut h.commands, std::time::Duration::from_secs(5)).await;
+        assert_eq!(h.node.latest_height().unwrap(), 2);
+        h.task.abort();
+    }
+
+    /// A pushed block overtakes the answer: no fault of the peer.
+    #[tokio::test(start_paused = true)]
+    async fn a_batch_overlapping_a_pushed_block_is_no_failure() {
+        let mut h = harness();
+        let peer = libp2p::PeerId::random();
+        let blocks = chain(1).await;
+        h.report(peer, 2).await;
+        assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));
+
+        h.blocks.send((peer, blocks[0].1.clone())).unwrap();
+        h.answer(peer, SyncResponse::Blocks(blocks));
+        let start = tokio::time::Instant::now();
+        assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));
+        assert_eq!(start.elapsed(), std::time::Duration::ZERO, "no backoff");
+        h.task.abort();
+    }
+
+    /// Old blocks in answer to a request for new ones are not an overlap.
+    #[tokio::test(start_paused = true)]
+    async fn old_blocks_in_place_of_those_asked_back_the_peer_off() {
+        let mut h = harness();
+        let peer = libp2p::PeerId::random();
+        let blocks = chain(1).await;
+        h.report(peer, 0).await;
+        h.blocks.send((peer, blocks[0].1.clone())).unwrap();
+        for _ in 0..1000 {
+            if h.node.latest_height().unwrap() == 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(h.node.latest_height().unwrap(), 1);
+        h.answer(peer, SyncResponse::Height(9));
+        assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));
+
+        h.answer(peer, SyncResponse::Blocks(blocks));
+        assert_silent(&mut h.commands, std::time::Duration::from_millis(900)).await;
+        assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));
         h.task.abort();
     }
 

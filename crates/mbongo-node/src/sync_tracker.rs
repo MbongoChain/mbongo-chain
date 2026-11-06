@@ -60,7 +60,8 @@ impl PeerSync {
 #[derive(Debug, Default)]
 pub struct SyncTracker {
     peers: BTreeMap<PeerId, PeerSync>,
-    blocks_in_flight: Option<PeerId>,
+    /// The peer asked for blocks, and the first height asked for.
+    blocks_in_flight: Option<(PeerId, u64)>,
 }
 
 impl SyncTracker {
@@ -71,28 +72,30 @@ impl SyncTracker {
         entry.wants_height = true;
     }
 
-    /// The last connection to a peer closed. Its entry stays, so that a peer
-    /// reconnecting at once does not escape its backoff.
+    /// The last connection to a peer closed. An entry in backoff stays until
+    /// the backoff ends, so that a peer reconnecting at once does not escape it.
     pub fn peer_disconnected(&mut self, peer: PeerId, abnormal: bool, now: Instant) {
-        if self.blocks_in_flight == Some(peer) {
+        if self.is_source(&peer) {
             self.blocks_in_flight = None;
+        }
+        if abnormal {
+            self.peer_failed(peer, now);
         }
         if let Some(entry) = self.peers.get_mut(&peer) {
             entry.connected = false;
             entry.wants_height = false;
             entry.height_in_flight = false;
         }
-        if abnormal {
-            self.peer_failed(peer, now);
-        }
+        self.prune();
+        self.refresh_heights(peer);
     }
 
     /// A peer announced a block above the next expected one. It may be ahead,
     /// so it is asked: the announced height itself is not believed.
     pub fn ask_height(&mut self, peer: PeerId) {
-        let entry = self.peers.entry(peer).or_default();
-        entry.connected = true;
-        entry.wants_height = true;
+        if let Some(entry) = self.peers.get_mut(&peer) {
+            entry.wants_height = true;
+        }
     }
 
     /// Peers to send a height request to now.
@@ -114,11 +117,10 @@ impl SyncTracker {
 
     /// A peer answered its height. This touches that peer only.
     pub fn height_answered(&mut self, peer: PeerId, height: u64) {
-        let entry = self.peers.entry(peer).or_default();
-        entry.connected = true;
-        entry.reported_height = height;
-        entry.height_in_flight = false;
-        entry.wants_height = false;
+        if let Some(entry) = self.peers.get_mut(&peer) {
+            entry.reported_height = height;
+            entry.height_in_flight = false;
+        }
     }
 
     /// The peer to ask for blocks now, and the height it reported: the highest
@@ -137,14 +139,17 @@ impl SyncTracker {
             })
     }
 
-    /// A block request was handed to the P2P layer.
-    pub fn blocks_requested(&mut self, peer: PeerId) {
-        self.blocks_in_flight = Some(peer);
+    /// A block request from `start` was handed to the P2P layer.
+    pub fn blocks_requested(&mut self, peer: PeerId, start: u64) {
+        self.blocks_in_flight = Some((peer, start));
     }
 
-    /// Whether blocks from this peer answer the request in flight.
-    pub fn expects_blocks(&self, peer: &PeerId) -> bool {
-        self.blocks_in_flight.as_ref() == Some(peer)
+    /// The first height asked of this peer, if a block request to it is in
+    /// flight. Blocks from anyone else answer nothing.
+    pub fn expected_start(&self, peer: &PeerId) -> Option<u64> {
+        self.blocks_in_flight
+            .filter(|(source, _)| source == peer)
+            .map(|(_, start)| start)
     }
 
     /// The answer to the request in flight has been handled.
@@ -153,38 +158,49 @@ impl SyncTracker {
         match outcome {
             BatchOutcome::Progress => self.peer_progressed(peer),
             BatchOutcome::AlreadyHeld => {}
-            BatchOutcome::Empty | BatchOutcome::Refused => self.peer_failed(peer, now),
+            BatchOutcome::Empty | BatchOutcome::Refused => {
+                self.peer_failed(peer, now);
+                self.refresh_heights(peer);
+            }
         }
     }
 
     /// A request failed before any answer. A failed height request is asked
-    /// again once the backoff ends.
+    /// again once the backoff ends. A peer already gone is not counted again:
+    /// its close was.
     pub fn request_failed(&mut self, peer: PeerId, kind: SyncRequestKind, now: Instant) {
+        let connected = self.peers.get(&peer).is_some_and(|p| p.connected);
         match kind {
             SyncRequestKind::Height => {
-                let entry = self.peers.entry(peer).or_default();
-                entry.height_in_flight = false;
-                entry.wants_height = true;
-            }
-            SyncRequestKind::Blocks => {
-                if self.blocks_in_flight == Some(peer) {
-                    self.blocks_in_flight = None;
+                if let Some(entry) = self.peers.get_mut(&peer) {
+                    entry.height_in_flight = false;
+                    entry.wants_height = connected;
                 }
             }
+            SyncRequestKind::Blocks => {
+                if self.is_source(&peer) {
+                    self.blocks_in_flight = None;
+                }
+                self.refresh_heights(peer);
+            }
         }
-        self.peer_failed(peer, now);
+        if connected {
+            self.peer_failed(peer, now);
+        }
     }
 
     /// A peer answered with an error. The answer does not say to which
     /// request, so whatever was in flight to that peer is released.
     pub fn error_answered(&mut self, peer: PeerId, now: Instant) {
-        if self.blocks_in_flight == Some(peer) {
+        if self.is_source(&peer) {
             self.blocks_in_flight = None;
+            self.refresh_heights(peer);
         }
-        let entry = self.peers.entry(peer).or_default();
-        if entry.height_in_flight {
-            entry.height_in_flight = false;
-            entry.wants_height = true;
+        if let Some(entry) = self.peers.get_mut(&peer) {
+            if entry.height_in_flight {
+                entry.height_in_flight = false;
+                entry.wants_height = true;
+            }
         }
         self.peer_failed(peer, now);
     }
@@ -199,15 +215,35 @@ impl SyncTracker {
 
     /// Counts a failure against a peer, and keeps it out of use for a while.
     pub fn peer_failed(&mut self, peer: PeerId, now: Instant) {
-        let entry = self.peers.entry(peer).or_default();
-        entry.failures = entry.failures.saturating_add(1);
-        entry.retry_at = Some(now + backoff(entry.failures));
+        if let Some(entry) = self.peers.get_mut(&peer) {
+            entry.failures = entry.failures.saturating_add(1);
+            entry.retry_at = Some(now + backoff(entry.failures));
+        }
+    }
+
+    fn is_source(&self, peer: &PeerId) -> bool {
+        self.expected_start(peer).is_some()
+    }
+
+    /// The heights held for other peers may date from their connection, so a
+    /// lost source has them asked again.
+    fn refresh_heights(&mut self, except: PeerId) {
+        for (id, entry) in &mut self.peers {
+            if *id != except && entry.connected && !entry.height_in_flight {
+                entry.wants_height = true;
+            }
+        }
+    }
+
+    /// Forgets disconnected peers with no backoff left to remember.
+    fn prune(&mut self) {
+        self.peers.retain(|_, p| p.connected || p.retry_at.is_some());
     }
 
     /// The earliest moment a backoff ends, so that a retry needs no other
     /// event to happen.
     pub fn next_wake(&self) -> Option<Instant> {
-        self.peers.values().filter(|p| p.connected).filter_map(|p| p.retry_at).min()
+        self.peers.values().filter_map(|p| p.retry_at).min()
     }
 
     /// Clears the backoffs that have ended, so that `next_wake` moves on.
@@ -217,6 +253,13 @@ impl SyncTracker {
                 entry.retry_at = None;
             }
         }
+        self.prune();
+    }
+
+    /// How many peers are remembered.
+    #[cfg(test)]
+    pub fn remembered(&self) -> usize {
+        self.peers.len()
     }
 }
 
@@ -281,11 +324,11 @@ mod tests {
         tracker.height_answered(low, 10);
         tracker.height_answered(high, 10);
         assert_eq!(tracker.block_source(0, now), Some((low, 10)));
-        tracker.blocks_requested(low);
+        tracker.blocks_requested(low, 1);
         assert_eq!(tracker.block_source(0, now), None, "one request at a time");
 
         tracker.request_failed(low, SyncRequestKind::Blocks, now);
-        assert!(!tracker.expects_blocks(&low));
+        assert_eq!(tracker.expected_start(&low), None);
         assert_eq!(tracker.block_source(0, now), Some((high, 10)));
     }
 
@@ -315,9 +358,9 @@ mod tests {
     fn only_the_peer_asked_can_answer_a_block_request() {
         let (asked, other) = two_peers();
         let mut tracker = tracker_with(&[asked, other]);
-        tracker.blocks_requested(asked);
-        assert!(tracker.expects_blocks(&asked));
-        assert!(!tracker.expects_blocks(&other));
+        tracker.blocks_requested(asked, 7);
+        assert_eq!(tracker.expected_start(&asked), Some(7));
+        assert_eq!(tracker.expected_start(&other), None);
     }
 
     #[test]
@@ -327,7 +370,7 @@ mod tests {
         let mut tracker = tracker_with(&[gone, stays]);
         tracker.height_answered(gone, 10);
         tracker.height_answered(stays, 8);
-        tracker.blocks_requested(gone);
+        tracker.blocks_requested(gone, 1);
 
         tracker.peer_disconnected(gone, false, now);
         assert_eq!(tracker.block_source(0, now), Some((stays, 8)));
@@ -354,13 +397,13 @@ mod tests {
         let peer = PeerId::random();
         let mut tracker = tracker_with(&[peer]);
         tracker.height_answered(peer, 10);
-        tracker.blocks_requested(peer);
+        tracker.blocks_requested(peer, 1);
         tracker.blocks_answered(peer, BatchOutcome::Refused, now);
         assert_eq!(tracker.block_source(0, now), None);
         let later = now + Duration::from_secs(1);
         assert_eq!(tracker.block_source(0, later), Some((peer, 10)));
 
-        tracker.blocks_requested(peer);
+        tracker.blocks_requested(peer, 1);
         tracker.blocks_answered(peer, BatchOutcome::Empty, later);
         assert_eq!(tracker.next_wake(), Some(later + Duration::from_secs(2)));
     }
@@ -371,7 +414,7 @@ mod tests {
         let peer = PeerId::random();
         let mut tracker = tracker_with(&[peer]);
         tracker.height_answered(peer, 10);
-        tracker.blocks_requested(peer);
+        tracker.blocks_requested(peer, 1);
         tracker.blocks_answered(peer, BatchOutcome::AlreadyHeld, now);
         assert_eq!(tracker.next_wake(), None);
         assert_eq!(tracker.block_source(0, now), Some((peer, 10)));
@@ -385,7 +428,7 @@ mod tests {
         tracker.height_answered(peer, 10);
         tracker.peer_failed(peer, now);
         tracker.peer_failed(peer, now);
-        tracker.blocks_requested(peer);
+        tracker.blocks_requested(peer, 1);
         tracker.blocks_answered(peer, BatchOutcome::Progress, now);
         assert_eq!(tracker.next_wake(), None);
         tracker.peer_failed(peer, now);
@@ -398,9 +441,9 @@ mod tests {
         let peer = PeerId::random();
         let mut tracker = tracker_with(&[peer]);
         tracker.height_requested(peer);
-        tracker.blocks_requested(peer);
+        tracker.blocks_requested(peer, 1);
         tracker.error_answered(peer, now);
-        assert!(!tracker.expects_blocks(&peer));
+        assert_eq!(tracker.expected_start(&peer), None);
         assert_eq!(
             tracker.heights_due(now + Duration::from_secs(1)),
             vec![peer]
@@ -421,6 +464,61 @@ mod tests {
             None,
             "nothing above the answered height"
         );
+    }
+
+    #[test]
+    fn a_lost_source_has_the_other_peers_asked_again() {
+        let now = Instant::now();
+        let (source, other) = two_peers();
+        let mut tracker = tracker_with(&[source, other]);
+        tracker.height_requested(other);
+        tracker.height_answered(other, 3);
+        tracker.height_requested(source);
+        tracker.height_answered(source, 9);
+        tracker.blocks_requested(source, 1);
+        assert!(tracker.heights_due(now).is_empty());
+
+        tracker.request_failed(source, SyncRequestKind::Blocks, now);
+        assert_eq!(tracker.heights_due(now), vec![other]);
+    }
+
+    #[test]
+    fn a_failure_after_a_disconnect_is_not_counted_twice() {
+        let now = Instant::now();
+        let peer = PeerId::random();
+        let mut tracker = tracker_with(&[peer]);
+        tracker.blocks_requested(peer, 1);
+        tracker.peer_disconnected(peer, true, now);
+        tracker.request_failed(peer, SyncRequestKind::Blocks, now);
+        assert_eq!(tracker.next_wake(), Some(now + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn a_peer_gone_is_forgotten_and_events_about_it_create_nothing() {
+        let now = Instant::now();
+        let peer = PeerId::random();
+        let mut tracker = tracker_with(&[peer]);
+        tracker.peer_disconnected(peer, false, now);
+        assert_eq!(tracker.remembered(), 0);
+
+        tracker.ask_height(peer);
+        tracker.height_answered(peer, 9);
+        tracker.peer_failed(peer, now);
+        tracker.request_failed(peer, SyncRequestKind::Height, now);
+        assert_eq!(tracker.remembered(), 0);
+        assert!(tracker.heights_due(now).is_empty());
+    }
+
+    #[test]
+    fn a_backoff_outlives_the_connection_only_until_it_ends() {
+        let now = Instant::now();
+        let peer = PeerId::random();
+        let mut tracker = tracker_with(&[peer]);
+        tracker.peer_disconnected(peer, true, now);
+        assert_eq!(tracker.remembered(), 1);
+        assert_eq!(tracker.next_wake(), Some(now + Duration::from_secs(1)));
+        tracker.release_expired(now + Duration::from_secs(1));
+        assert_eq!(tracker.remembered(), 0);
     }
 
     #[test]

@@ -42,6 +42,23 @@ pub enum SyncRequestKind {
     Blocks,
 }
 
+/// Whether a response is of the kind the request calls for. An error answers
+/// either.
+fn answers(kind: SyncRequestKind, response: &SyncResponse) -> bool {
+    match response {
+        SyncResponse::Height(_) => kind == SyncRequestKind::Height,
+        SyncResponse::Blocks(_) => kind == SyncRequestKind::Blocks,
+        SyncResponse::Error(_) => true,
+    }
+}
+
+/// Whether a closed connection counts against the peer. A local close and an
+/// idle timeout do not. libp2p reports a remote close as I/O, so a graceful one
+/// counts too, which costs that peer one short backoff.
+fn is_abnormal_close(cause: Option<&ConnectionError>) -> bool {
+    !matches!(cause, None | Some(ConnectionError::KeepAliveTimeout))
+}
+
 /// Events pushed out of the P2P layer to the sync orchestrator.
 #[derive(Debug)]
 pub enum SyncEvent {
@@ -486,7 +503,7 @@ impl P2PNode {
             } => {
                 info!("Peer disconnected: {peer_id} (cause: {cause:?})");
                 if num_established == 0 {
-                    let abnormal = !matches!(cause, None | Some(ConnectionError::KeepAliveTimeout));
+                    let abnormal = is_abnormal_close(cause.as_ref());
                     let _ =
                         self.sync_event_tx.send(SyncEvent::PeerDisconnected { peer_id, abnormal });
                 }
@@ -545,12 +562,23 @@ impl P2PNode {
                     },
             })) => {
                 debug!("Sync response from {peer}: {response:?}");
-                self.outbound_sync_requests.remove(&request_id);
-                // Forward the response to the sync orchestrator.
-                let _ = self.sync_event_tx.send(SyncEvent::ResponseReceived {
-                    peer_id: peer,
-                    response,
-                });
+                let kind = self.outbound_sync_requests.remove(&request_id);
+                // An answer of the wrong kind leaves the request unanswered.
+                let event = match kind {
+                    Some(kind) if !answers(kind, &response) => {
+                        warn!("Sync response from {peer} does not answer a {kind:?} request");
+                        SyncEvent::RequestFailed {
+                            peer_id: peer,
+                            kind,
+                        }
+                    }
+                    _ => SyncEvent::ResponseReceived {
+                        peer_id: peer,
+                        response,
+                    },
+                };
+                // Forward it to the sync orchestrator.
+                let _ = self.sync_event_tx.send(event);
             }
             SwarmEvent::Behaviour(BehaviourEvent::Sync(
                 request_response::Event::OutboundFailure {
@@ -702,6 +730,95 @@ mod tests {
             sync_events.try_recv().unwrap(),
             SyncEvent::RequestFailed { peer_id, kind: SyncRequestKind::Blocks } if peer_id == peer
         ));
+    }
+
+    fn respond(
+        node: &mut P2PNode,
+        peer: libp2p::PeerId,
+        request_id: request_response::OutboundRequestId,
+        response: crate::p2p_protocol::SyncResponse,
+    ) {
+        node.handle_swarm_event(libp2p::swarm::SwarmEvent::Behaviour(BehaviourEvent::Sync(
+            request_response::Event::Message {
+                peer,
+                message: request_response::Message::Response {
+                    request_id,
+                    response,
+                },
+            },
+        )));
+    }
+
+    #[test]
+    fn a_response_of_the_wrong_kind_fails_the_request() {
+        use crate::p2p_protocol::SyncResponse;
+        let mut node = P2PNode::new().unwrap();
+        let mut sync_events = node.take_sync_event_rx().unwrap();
+        let peer = libp2p::PeerId::random();
+
+        let blocks = node.send_get_blocks(peer, 1, 2);
+        respond(&mut node, peer, blocks, SyncResponse::Height(9));
+        assert!(matches!(
+            sync_events.try_recv().unwrap(),
+            SyncEvent::RequestFailed {
+                kind: SyncRequestKind::Blocks,
+                ..
+            }
+        ));
+
+        let height = node.send_get_height(peer);
+        respond(&mut node, peer, height, SyncResponse::Blocks(Vec::new()));
+        assert!(matches!(
+            sync_events.try_recv().unwrap(),
+            SyncEvent::RequestFailed {
+                kind: SyncRequestKind::Height,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn a_response_of_the_right_kind_or_an_error_is_forwarded() {
+        use crate::p2p_protocol::SyncResponse;
+        let mut node = P2PNode::new().unwrap();
+        let mut sync_events = node.take_sync_event_rx().unwrap();
+        let peer = libp2p::PeerId::random();
+
+        let height = node.send_get_height(peer);
+        respond(&mut node, peer, height, SyncResponse::Height(9));
+        assert!(matches!(
+            sync_events.try_recv().unwrap(),
+            SyncEvent::ResponseReceived {
+                response: SyncResponse::Height(9),
+                ..
+            }
+        ));
+
+        let blocks = node.send_get_blocks(peer, 1, 2);
+        respond(
+            &mut node,
+            peer,
+            blocks,
+            SyncResponse::Error("no".to_string()),
+        );
+        assert!(matches!(
+            sync_events.try_recv().unwrap(),
+            SyncEvent::ResponseReceived {
+                response: SyncResponse::Error(_),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn only_a_failed_connection_counts_against_a_peer() {
+        use libp2p::swarm::ConnectionError;
+        assert!(!super::is_abnormal_close(None));
+        assert!(!super::is_abnormal_close(Some(
+            &ConnectionError::KeepAliveTimeout
+        )));
+        let reset = std::io::Error::from(std::io::ErrorKind::ConnectionReset);
+        assert!(super::is_abnormal_close(Some(&ConnectionError::IO(reset))));
     }
 
     #[test]
