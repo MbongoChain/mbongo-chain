@@ -1,7 +1,8 @@
 # S3: Transaction Service and Recovery Design
 
-**Status: PROPOSED, with decisions D1 to D5 recorded in section 10.** Only PR 1 is authorized
-for implementation. PR 2 is at design and preparation only, in section 12. Stage S3 of [`MVP_v0.2_NETWORK_READINESS.md`](../product/MVP_v0.2_NETWORK_READINESS.md),
+**Status: PROPOSED, with decisions D1 to D5 recorded in section 10.** PR 1 is merged. PR 2a is
+authorized for implementation. PR 2b is at preparation only, and has its own gate after 2a,
+in section 12. Stage S3 of [`MVP_v0.2_NETWORK_READINESS.md`](../product/MVP_v0.2_NETWORK_READINESS.md),
 tracked in #207. The roadmap stays in #209, and this document holds no schedule.
 
 **Covers:** forwarding to the producer, explicit failure, mempool bounds and eviction,
@@ -376,8 +377,8 @@ Maintainer decisions of 2026-11-05.
 
 ## 12. PR 2 design: sync recovery
 
-**Status: design finalized for review, implementation preparation only.** No production PR
-is authorized.
+**Status: PR 2a authorized for implementation, with no merge without review. PR 2b is
+prepared, and needs a separate gate after 2a.**
 
 ### 12.1 What was measured
 
@@ -494,6 +495,26 @@ not stop a sync served by another. R5d, one peer whose request failed is retried
 other event. R7b, a batch overlapping a pushed block is no failure. R7c, an empty `Blocks`
 answer backs off.
 
-**Decisions needed before implementation:** approval of PRs 2a and 2b, and the values in
-12.2. The harness restart stage runs on push only unless the maintainer wants it on pull
-requests, which costs CI time.
+### 12.8 PR 2b preparation
+
+Scope: bounded backoff, bootnode redial, peer failure recovery, stable node identity.
+
+| Test | Setup | Expected |
+|---|---|---|
+| Backoff | Pure type, time as an argument | 1, 2, 4 and so on to 60 s, within jitter. Reset after 30 s up |
+| Redial trigger | Each trigger in 12.2 | One dial scheduled, none when already connected |
+| Producer restart, bare address | `devnet_harness` stage, `--no-mdns` | Follower rejoins and reaches the producer's head with no operator action |
+| Producer restart, `--node-key-file` and `/p2p/` | Same | Same, and the same `PeerId` after restart |
+| Pinned address, no stable identity | Same | Mismatch logged, backoff stays capped, no hot loop |
+| Producer down for longer than the cap | Same | Reconnects when it returns |
+| Follower restart | Same | Rejoins and catches up |
+| Key file | Unit | Malformed or too open a file refuses to start |
+
+A follower is judged by height and head hash, read through RPC, after the restart, with the
+expected count of nodes stated first.
+
+**Gate for 2b:** PR 2a merged, its review closed, the values in 12.2 approved, and a decision on
+whether the restart stage runs on pull requests, which costs CI time, or on push only.
+
+**RFC 0006:** 2b implements reconnection and `--node-key-file` as section 3 states them. If
+that text changes before acceptance, 12.2 and 12.3 follow it. The release needs 2b at G4.
