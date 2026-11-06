@@ -240,10 +240,11 @@ impl SyncTracker {
         self.peers.retain(|_, p| p.connected || p.retry_at.is_some());
     }
 
-    /// The earliest moment a backoff ends, so that a retry needs no other
-    /// event to happen.
-    pub fn next_wake(&self) -> Option<Instant> {
-        self.peers.values().filter_map(|p| p.retry_at).min()
+    /// The earliest moment after `now` that a backoff ends, so that a retry
+    /// needs no other event to happen. A backoff already over is left out, so
+    /// a wake can never fire again at once.
+    pub fn next_wake(&self, now: Instant) -> Option<Instant> {
+        self.peers.values().filter_map(|p| p.retry_at).filter(|at| *at > now).min()
     }
 
     /// Clears the backoffs that have ended, so that `next_wake` moves on.
@@ -309,7 +310,7 @@ mod tests {
         tracker.height_requested(peer);
         tracker.request_failed(peer, SyncRequestKind::Height, now);
         assert!(tracker.heights_due(now).is_empty(), "still backing off");
-        assert_eq!(tracker.next_wake(), Some(now + Duration::from_secs(1)));
+        assert_eq!(tracker.next_wake(now), Some(now + Duration::from_secs(1)));
         assert_eq!(
             tracker.heights_due(now + Duration::from_secs(1)),
             vec![peer]
@@ -374,7 +375,11 @@ mod tests {
 
         tracker.peer_disconnected(gone, false, now);
         assert_eq!(tracker.block_source(0, now), Some((stays, 8)));
-        assert_eq!(tracker.next_wake(), None, "an ordinary close is no failure");
+        assert_eq!(
+            tracker.next_wake(now),
+            None,
+            "an ordinary close is no failure"
+        );
     }
 
     #[test]
@@ -405,7 +410,7 @@ mod tests {
 
         tracker.blocks_requested(peer, 1);
         tracker.blocks_answered(peer, BatchOutcome::Empty, later);
-        assert_eq!(tracker.next_wake(), Some(later + Duration::from_secs(2)));
+        assert_eq!(tracker.next_wake(now), Some(later + Duration::from_secs(2)));
     }
 
     #[test]
@@ -416,7 +421,7 @@ mod tests {
         tracker.height_answered(peer, 10);
         tracker.blocks_requested(peer, 1);
         tracker.blocks_answered(peer, BatchOutcome::AlreadyHeld, now);
-        assert_eq!(tracker.next_wake(), None);
+        assert_eq!(tracker.next_wake(now), None);
         assert_eq!(tracker.block_source(0, now), Some((peer, 10)));
     }
 
@@ -430,9 +435,9 @@ mod tests {
         tracker.peer_failed(peer, now);
         tracker.blocks_requested(peer, 1);
         tracker.blocks_answered(peer, BatchOutcome::Progress, now);
-        assert_eq!(tracker.next_wake(), None);
+        assert_eq!(tracker.next_wake(now), None);
         tracker.peer_failed(peer, now);
-        assert_eq!(tracker.next_wake(), Some(now + Duration::from_secs(1)));
+        assert_eq!(tracker.next_wake(now), Some(now + Duration::from_secs(1)));
     }
 
     #[test]
@@ -490,7 +495,7 @@ mod tests {
         tracker.blocks_requested(peer, 1);
         tracker.peer_disconnected(peer, true, now);
         tracker.request_failed(peer, SyncRequestKind::Blocks, now);
-        assert_eq!(tracker.next_wake(), Some(now + Duration::from_secs(1)));
+        assert_eq!(tracker.next_wake(now), Some(now + Duration::from_secs(1)));
     }
 
     #[test]
@@ -516,7 +521,7 @@ mod tests {
         let mut tracker = tracker_with(&[peer]);
         tracker.peer_disconnected(peer, true, now);
         assert_eq!(tracker.remembered(), 1);
-        assert_eq!(tracker.next_wake(), Some(now + Duration::from_secs(1)));
+        assert_eq!(tracker.next_wake(now), Some(now + Duration::from_secs(1)));
         tracker.release_expired(now + Duration::from_secs(1));
         assert_eq!(tracker.remembered(), 0);
     }
@@ -528,9 +533,15 @@ mod tests {
         let mut tracker = tracker_with(&[peer]);
         tracker.peer_failed(peer, now);
         tracker.release_expired(now);
-        assert!(tracker.next_wake().is_some(), "not over yet");
-        tracker.release_expired(now + Duration::from_secs(1));
-        assert_eq!(tracker.next_wake(), None);
+        assert!(tracker.next_wake(now).is_some(), "not over yet");
+        let over = now + Duration::from_secs(1);
+        assert_eq!(
+            tracker.next_wake(over),
+            None,
+            "over, even before it is cleared"
+        );
+        tracker.release_expired(over);
+        assert_eq!(tracker.next_wake(now), None);
     }
 
     #[test]

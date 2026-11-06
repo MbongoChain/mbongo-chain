@@ -713,7 +713,7 @@ mod tests {
 
     #[test]
     fn sync_outbound_failure_is_forwarded_to_orchestrator() {
-        let mut node = P2PNode::new().unwrap();
+        let mut node = P2PNode::with_mdns(false).unwrap();
         let mut sync_events = node.take_sync_event_rx().unwrap();
         let peer = libp2p::PeerId::random();
 
@@ -752,7 +752,7 @@ mod tests {
     #[test]
     fn a_response_of_the_wrong_kind_fails_the_request() {
         use crate::p2p_protocol::SyncResponse;
-        let mut node = P2PNode::new().unwrap();
+        let mut node = P2PNode::with_mdns(false).unwrap();
         let mut sync_events = node.take_sync_event_rx().unwrap();
         let peer = libp2p::PeerId::random();
 
@@ -780,7 +780,7 @@ mod tests {
     #[test]
     fn a_response_of_the_right_kind_or_an_error_is_forwarded() {
         use crate::p2p_protocol::SyncResponse;
-        let mut node = P2PNode::new().unwrap();
+        let mut node = P2PNode::with_mdns(false).unwrap();
         let mut sync_events = node.take_sync_event_rx().unwrap();
         let peer = libp2p::PeerId::random();
 
@@ -823,7 +823,7 @@ mod tests {
 
     #[test]
     fn a_failure_with_no_tracked_request_is_not_forwarded() {
-        let mut node = P2PNode::new().unwrap();
+        let mut node = P2PNode::with_mdns(false).unwrap();
         let mut sync_events = node.take_sync_event_rx().unwrap();
         let peer = libp2p::PeerId::random();
         let request_id = node.send_get_height(peer);

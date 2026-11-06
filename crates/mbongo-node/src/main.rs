@@ -358,7 +358,7 @@ async fn run_sync_orchestrator<S: mbongo_storage::Storage + Send + Sync + 'stati
     let mut tracker = SyncTracker::default();
 
     loop {
-        let wake = tracker.next_wake();
+        let wake = tracker.next_wake(tokio::time::Instant::now());
         tokio::select! {
             // ── Inbound block announcements (push) ──────────
             Some((peer_id, block)) = block_rx.recv() => {
