@@ -1,0 +1,60 @@
+name: Rust Advisories
+
+# Audits the committed Cargo.lock against the RustSec database. It stays out of
+# ci.yml so that a newly published advisory fails this workflow, and the weekly
+# run shows it, without blocking pull requests unrelated to dependencies.
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - "Cargo.lock"
+      - "**/Cargo.toml"
+      - "docs/development/rust-advisories.json"
+      - "scripts/check-rust-advisories.mjs"
+      - ".github/workflows/rust-audit.yml"
+  pull_request:
+    branches: [dev]
+    paths:
+      - "Cargo.lock"
+      - "**/Cargo.toml"
+      - "docs/development/rust-advisories.json"
+      - "scripts/check-rust-advisories.mjs"
+      - ".github/workflows/rust-audit.yml"
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Rust Advisories (cargo-audit)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.94.0
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+
+      - name: Audit Cargo.lock
+        run: |
+          set +e
+          cargo audit --file Cargo.lock --json > audit.json
+          rc=$?
+          set -e
+          # 0 is clean, 1 is findings. Anything else is the tool failing.
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
+            echo "cargo audit failed with exit code $rc"
+            exit "$rc"
+          fi
+
+      - name: Compare with the advisory register
+        run: node scripts/check-rust-advisories.mjs audit.json

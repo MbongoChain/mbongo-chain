@@ -1,0 +1,19 @@
+version: 2
+
+# Nothing here merges. Every update is a pull request, reviewed as code.
+# See docs/development/rust-advisories.md.
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    ignore:
+      # Held with the CI runner pin. Move it only with a proven toolchain.
+      - dependency-name: "rocksdb"
+      - dependency-name: "librocksdb-sys"
+      # Major versions are planned work, not routine updates.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
