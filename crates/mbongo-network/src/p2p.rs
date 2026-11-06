@@ -10,7 +10,7 @@
 //! Inbound sync requests are forwarded over an mpsc channel so that
 //! the node binary can answer them with data from storage.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::iter;
 use std::time::Duration;
 
@@ -18,7 +18,7 @@ use futures::StreamExt;
 use libp2p::{
     identify, mdns, noise, ping,
     request_response::{self, ProtocolSupport, ResponseChannel},
-    swarm::{behaviour::toggle::Toggle, NetworkBehaviour, SwarmEvent},
+    swarm::{behaviour::toggle::Toggle, ConnectionError, NetworkBehaviour, SwarmEvent},
     tcp, yamux, Multiaddr, PeerId, Swarm,
 };
 use log::{debug, info, warn};
@@ -32,6 +32,15 @@ use crate::p2p_protocol::{
 };
 
 // ── Sync event / command types ─────────────────────────────────────────
+
+/// Which outbound sync request a failure belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncRequestKind {
+    /// A `GetHeight` request.
+    Height,
+    /// A `GetBlocks` request.
+    Blocks,
+}
 
 /// Events pushed out of the P2P layer to the sync orchestrator.
 #[derive(Debug)]
@@ -48,10 +57,20 @@ pub enum SyncEvent {
         /// The response payload.
         response: SyncResponse,
     },
-    /// An outbound block-range request failed before a response arrived.
+    /// An outbound sync request failed before a response arrived.
     RequestFailed {
         /// The peer the failed request targeted.
         peer_id: PeerId,
+        /// Which request failed.
+        kind: SyncRequestKind,
+    },
+    /// The last connection to a peer closed.
+    PeerDisconnected {
+        /// The remote peer identity.
+        peer_id: PeerId,
+        /// True when the connection failed, rather than closing normally or
+        /// idling out.
+        abnormal: bool,
     },
 }
 
@@ -138,9 +157,9 @@ pub struct P2PNode {
     /// Receive-half; taken by the caller before `run()`.
     sync_rx: Option<mpsc::UnboundedReceiver<InboundSyncRequest>>,
     /// Send-half for forwarding inbound block announcements to the node.
-    block_tx: mpsc::UnboundedSender<Block>,
+    block_tx: mpsc::UnboundedSender<(PeerId, Block)>,
     /// Receive-half for inbound block announcements; taken via [`P2PNode::take_block_rx`].
-    block_rx: Option<mpsc::UnboundedReceiver<Block>>,
+    block_rx: Option<mpsc::UnboundedReceiver<(PeerId, Block)>>,
     /// Receive-half for outbound broadcast requests from the node backend.
     broadcast_rx: mpsc::UnboundedReceiver<Block>,
     /// Cloneable sender for [`BlockBroadcaster`] implementation.
@@ -153,8 +172,8 @@ pub struct P2PNode {
     sync_cmd_rx: mpsc::UnboundedReceiver<SyncCommand>,
     /// Cloneable sender for sync commands.
     sync_cmd_tx: mpsc::UnboundedSender<SyncCommand>,
-    /// Outbound block requests whose failures can release orchestrator state.
-    outbound_block_requests: HashSet<request_response::OutboundRequestId>,
+    /// Outbound sync requests whose failures release orchestrator state.
+    outbound_sync_requests: HashMap<request_response::OutboundRequestId, SyncRequestKind>,
 }
 
 impl P2PNode {
@@ -243,7 +262,7 @@ impl P2PNode {
             sync_event_rx: Some(sync_event_rx),
             sync_cmd_rx,
             sync_cmd_tx,
-            outbound_block_requests: HashSet::new(),
+            outbound_sync_requests: HashMap::new(),
         })
     }
 
@@ -264,7 +283,7 @@ impl P2PNode {
     ///
     /// Must be called exactly once before [`P2PNode::run`]. Returns `None`
     /// on subsequent calls.
-    pub fn take_block_rx(&mut self) -> Option<mpsc::UnboundedReceiver<Block>> {
+    pub fn take_block_rx(&mut self) -> Option<mpsc::UnboundedReceiver<(PeerId, Block)>> {
         self.block_rx.take()
     }
 
@@ -359,7 +378,10 @@ impl P2PNode {
     ///
     /// The response will arrive as a sync event in the event loop.
     pub fn send_get_height(&mut self, peer: PeerId) -> request_response::OutboundRequestId {
-        self.swarm.behaviour_mut().sync.send_request(&peer, SyncRequest::GetHeight)
+        let request_id =
+            self.swarm.behaviour_mut().sync.send_request(&peer, SyncRequest::GetHeight);
+        self.outbound_sync_requests.insert(request_id, SyncRequestKind::Height);
+        request_id
     }
 
     /// Send a `GetBlocks` request to a specific peer.
@@ -376,7 +398,7 @@ impl P2PNode {
                 end_height,
             },
         );
-        self.outbound_block_requests.insert(request_id);
+        self.outbound_sync_requests.insert(request_id, SyncRequestKind::Blocks);
         request_id
     }
 
@@ -456,8 +478,18 @@ impl P2PNode {
                 // Notify the sync orchestrator so it can trigger an initial sync.
                 let _ = self.sync_event_tx.send(SyncEvent::PeerConnected { peer_id });
             }
-            SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
+            SwarmEvent::ConnectionClosed {
+                peer_id,
+                cause,
+                num_established,
+                ..
+            } => {
                 info!("Peer disconnected: {peer_id} (cause: {cause:?})");
+                if num_established == 0 {
+                    let abnormal = !matches!(cause, None | Some(ConnectionError::KeepAliveTimeout));
+                    let _ =
+                        self.sync_event_tx.send(SyncEvent::PeerDisconnected { peer_id, abnormal });
+                }
             }
             SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
                 for (peer_id, addr) in list {
@@ -513,7 +545,7 @@ impl P2PNode {
                     },
             })) => {
                 debug!("Sync response from {peer}: {response:?}");
-                self.outbound_block_requests.remove(&request_id);
+                self.outbound_sync_requests.remove(&request_id);
                 // Forward the response to the sync orchestrator.
                 let _ = self.sync_event_tx.send(SyncEvent::ResponseReceived {
                     peer_id: peer,
@@ -528,8 +560,11 @@ impl P2PNode {
                 },
             )) => {
                 warn!("Sync outbound failure to {peer}: {error}");
-                if self.outbound_block_requests.remove(&request_id) {
-                    let _ = self.sync_event_tx.send(SyncEvent::RequestFailed { peer_id: peer });
+                if let Some(kind) = self.outbound_sync_requests.remove(&request_id) {
+                    let _ = self.sync_event_tx.send(SyncEvent::RequestFailed {
+                        peer_id: peer,
+                        kind,
+                    });
                 }
             }
             SwarmEvent::Behaviour(BehaviourEvent::Sync(
@@ -558,7 +593,7 @@ impl P2PNode {
                             "Block announcement from {peer}: height {}",
                             block.header.height
                         );
-                        if self.block_tx.send(block).is_err() {
+                        if self.block_tx.send((peer, block)).is_err() {
                             warn!("Block receiver dropped; cannot forward announcement");
                         }
                     }
@@ -624,7 +659,7 @@ impl BlockBroadcaster for ChannelBroadcaster {
 mod tests {
     use libp2p::request_response;
 
-    use super::{BehaviourEvent, P2PNode, SyncEvent, IDENTIFY_PROTOCOL_VERSION};
+    use super::{BehaviourEvent, P2PNode, SyncEvent, SyncRequestKind, IDENTIFY_PROTOCOL_VERSION};
 
     #[test]
     fn identify_protocol_version_pinned() {
@@ -634,28 +669,11 @@ mod tests {
         assert_eq!(IDENTIFY_PROTOCOL_VERSION, "/mbongo/0.3.0");
     }
 
-    #[test]
-    fn sync_outbound_failure_is_forwarded_to_orchestrator() {
-        let mut node = P2PNode::new().unwrap();
-        let mut sync_events = node.take_sync_event_rx().unwrap();
-        let peer = libp2p::PeerId::random();
-        let height_request_id = node.send_get_height(peer);
-
-        node.handle_swarm_event(libp2p::swarm::SwarmEvent::Behaviour(BehaviourEvent::Sync(
-            request_response::Event::OutboundFailure {
-                peer,
-                request_id: height_request_id,
-                error: request_response::OutboundFailure::DialFailure,
-            },
-        )));
-
-        assert!(matches!(
-            sync_events.try_recv(),
-            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
-        ));
-
-        let request_id = node.send_get_blocks(peer, 1, 2);
-
+    fn fail(
+        node: &mut P2PNode,
+        peer: libp2p::PeerId,
+        request_id: request_response::OutboundRequestId,
+    ) {
         node.handle_swarm_event(libp2p::swarm::SwarmEvent::Behaviour(BehaviourEvent::Sync(
             request_response::Event::OutboundFailure {
                 peer,
@@ -663,10 +681,42 @@ mod tests {
                 error: request_response::OutboundFailure::DialFailure,
             },
         )));
+    }
 
+    #[test]
+    fn sync_outbound_failure_is_forwarded_to_orchestrator() {
+        let mut node = P2PNode::new().unwrap();
+        let mut sync_events = node.take_sync_event_rx().unwrap();
+        let peer = libp2p::PeerId::random();
+
+        let height_request_id = node.send_get_height(peer);
+        fail(&mut node, peer, height_request_id);
         assert!(matches!(
             sync_events.try_recv().unwrap(),
-            SyncEvent::RequestFailed { peer_id } if peer_id == peer
+            SyncEvent::RequestFailed { peer_id, kind: SyncRequestKind::Height } if peer_id == peer
+        ));
+
+        let block_request_id = node.send_get_blocks(peer, 1, 2);
+        fail(&mut node, peer, block_request_id);
+        assert!(matches!(
+            sync_events.try_recv().unwrap(),
+            SyncEvent::RequestFailed { peer_id, kind: SyncRequestKind::Blocks } if peer_id == peer
+        ));
+    }
+
+    #[test]
+    fn a_failure_with_no_tracked_request_is_not_forwarded() {
+        let mut node = P2PNode::new().unwrap();
+        let mut sync_events = node.take_sync_event_rx().unwrap();
+        let peer = libp2p::PeerId::random();
+        let request_id = node.send_get_height(peer);
+        fail(&mut node, peer, request_id);
+        sync_events.try_recv().unwrap();
+
+        fail(&mut node, peer, request_id);
+        assert!(matches!(
+            sync_events.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
         ));
     }
 }

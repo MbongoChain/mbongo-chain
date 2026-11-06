@@ -23,6 +23,7 @@ pub mod server;
 
 pub use crate::p2p::{
     BlockBroadcaster, ChannelBroadcaster, InboundSyncRequest, P2PNode, SyncCommand, SyncEvent,
+    SyncRequestKind,
 };
 pub use crate::p2p_protocol::{
     BlockNotifyAck, BlockNotifyCodec, SyncCodec, SyncNotification, SyncRequest, SyncResponse,
