@@ -83,23 +83,23 @@ struct NodeCfg {
 const NODES: [NodeCfg; 3] = [
     NodeCfg {
         name: "producer",
-        rpc: 39944,
-        rest: 38080,
-        p2p: 40333,
+        rpc: 26944,
+        rest: 26080,
+        p2p: 26333,
         producer: true,
     },
     NodeCfg {
         name: "follower-a",
-        rpc: 39945,
-        rest: 38081,
-        p2p: 40334,
+        rpc: 26945,
+        rest: 26081,
+        p2p: 26334,
         producer: false,
     },
     NodeCfg {
         name: "follower-b",
-        rpc: 39946,
-        rest: 38082,
-        p2p: 40335,
+        rpc: 26946,
+        rest: 26082,
+        p2p: 26335,
         producer: false,
     },
 ];
@@ -450,7 +450,7 @@ async fn run(base: &Path, trace: &mut Trace) -> Result<(), String> {
         port_free(n.rest, &format!("{} rest", n.name))?;
         port_free(n.p2p, &format!("{} p2p", n.name))?;
     }
-    println!("  ports free: rpc 39944-39946, rest 38080-38082, p2p 40333-40335");
+    println!("  ports free: rpc 26944-26946, rest 26080-26082, p2p 26333-26335");
     if base.exists() {
         println!(
             "  removing previous harness state (only this directory): {}",
