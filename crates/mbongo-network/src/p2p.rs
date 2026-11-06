@@ -10,7 +10,9 @@
 //! Inbound sync requests are forwarded over an mpsc channel so that
 //! the node binary can answer them with data from storage.
 
+use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
+use std::hash::BuildHasher;
 use std::iter;
 use std::time::Duration;
 
@@ -18,7 +20,10 @@ use futures::StreamExt;
 use libp2p::{
     identify, mdns, noise, ping,
     request_response::{self, ProtocolSupport, ResponseChannel},
-    swarm::{behaviour::toggle::Toggle, ConnectionError, NetworkBehaviour, SwarmEvent},
+    swarm::{
+        behaviour::toggle::Toggle, dial_opts::DialOpts, ConnectionError, DialError,
+        NetworkBehaviour, SwarmEvent,
+    },
     tcp, yamux, Multiaddr, PeerId, Swarm,
 };
 use log::{debug, info, warn};
@@ -26,6 +31,7 @@ use tokio::sync::mpsc;
 
 use mbongo_core::Block;
 
+use crate::bootnodes::BootnodeSet;
 use crate::p2p_protocol::{
     BlockNotifyAck, BlockNotifyCodec, SyncCodec, SyncNotification, SyncRequest, SyncResponse,
     BLOCK_NOTIFY_PROTOCOL, SYNC_PROTOCOL,
@@ -50,6 +56,12 @@ fn answers(kind: SyncRequestKind, response: &SyncResponse) -> bool {
         SyncResponse::Blocks(_) => kind == SyncRequestKind::Blocks,
         SyncResponse::Error(_) => true,
     }
+}
+
+/// A value from 0 to 1000, for spreading retries out. It decides nothing else,
+/// so the standard library's per-instance hash seed is random enough.
+fn jitter() -> u16 {
+    u16::try_from(RandomState::new().hash_one(0u8) % 1001).unwrap_or(500)
 }
 
 /// Whether a closed connection counts against the peer. A local close and an
@@ -191,6 +203,8 @@ pub struct P2PNode {
     sync_cmd_tx: mpsc::UnboundedSender<SyncCommand>,
     /// Outbound sync requests whose failures release orchestrator state.
     outbound_sync_requests: HashMap<request_response::OutboundRequestId, SyncRequestKind>,
+    /// The configured bootnodes, redialed whenever they are not connected.
+    bootnodes: BootnodeSet,
 }
 
 impl P2PNode {
@@ -214,7 +228,21 @@ impl P2PNode {
     ///
     /// Returns an error if the transport or mDNS initialisation fails.
     pub fn with_mdns(mdns: bool) -> Result<Self, Box<dyn std::error::Error>> {
-        let swarm = libp2p::SwarmBuilder::with_new_identity()
+        Self::with_identity(mdns, None)
+    }
+
+    /// Creates a new P2P node. With no `keypair`, a fresh identity is generated, so
+    /// the peer id changes at each start. See [`Self::with_mdns`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the swarm cannot be built.
+    pub fn with_identity(
+        mdns: bool,
+        keypair: Option<libp2p::identity::Keypair>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let keypair = keypair.unwrap_or_else(libp2p::identity::Keypair::generate_ed25519);
+        let swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
             .with_tokio()
             .with_tcp(
                 tcp::Config::default(),
@@ -280,6 +308,7 @@ impl P2PNode {
             sync_cmd_rx,
             sync_cmd_tx,
             outbound_sync_requests: HashMap::new(),
+            bootnodes: BootnodeSet::default(),
         })
     }
 
@@ -391,6 +420,35 @@ impl P2PNode {
         Ok(())
     }
 
+    /// Adds a bootnode. It is dialed once the event loop runs, and redialed
+    /// with a bounded backoff whenever it is not connected.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the address cannot be parsed.
+    pub fn add_bootnode(&mut self, addr: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let remote: Multiaddr = addr.parse()?;
+        self.bootnodes.add(remote, tokio::time::Instant::now());
+        Ok(())
+    }
+
+    /// Dials every bootnode that is due.
+    fn dial_due_bootnodes(&mut self) {
+        let now = tokio::time::Instant::now();
+        for (index, addr) in self.bootnodes.dials_due(now) {
+            let opts = DialOpts::unknown_peer_id().address(addr.clone()).build();
+            let connection = opts.connection_id();
+            info!("Dialing bootnode {addr}");
+            match self.swarm.dial(opts) {
+                Ok(()) => self.bootnodes.dial_started(index, connection),
+                Err(e) => {
+                    warn!("Dial of bootnode {addr} refused: {e}");
+                    self.bootnodes.dial_refused(index, now, jitter());
+                }
+            }
+        }
+    }
+
     /// Send a `GetHeight` request to a specific peer.
     ///
     /// The response will arrive as a sync event in the event loop.
@@ -441,6 +499,8 @@ impl P2PNode {
     /// 3. Swarm events (connections, sync messages, block announcements).
     pub async fn run(mut self) {
         loop {
+            self.dial_due_bootnodes();
+            let wake = self.bootnodes.next_wake(tokio::time::Instant::now());
             tokio::select! {
                 // Drain outbound broadcast requests from the backend.
                 Some(block) = self.broadcast_rx.recv() => {
@@ -454,6 +514,9 @@ impl P2PNode {
                 event = self.swarm.select_next_some() => {
                     self.handle_swarm_event(event);
                 }
+                // A bootnode's backoff ended, with nothing else to wake us.
+                () = tokio::time::sleep_until(wake.unwrap_or_else(tokio::time::Instant::now)),
+                    if wake.is_some() => {}
             }
         }
     }
@@ -489,9 +552,13 @@ impl P2PNode {
                 info!("P2P listening on {}/p2p/{}", address, self.peer_id);
             }
             SwarmEvent::ConnectionEstablished {
-                peer_id, endpoint, ..
+                peer_id,
+                connection_id,
+                endpoint,
+                ..
             } => {
                 info!("Peer connected: {peer_id} via {endpoint:?}");
+                self.bootnodes.connected(connection_id, peer_id, tokio::time::Instant::now());
                 // Notify the sync orchestrator so it can trigger an initial sync.
                 let _ = self.sync_event_tx.send(SyncEvent::PeerConnected { peer_id });
             }
@@ -503,10 +570,23 @@ impl P2PNode {
             } => {
                 info!("Peer disconnected: {peer_id} (cause: {cause:?})");
                 if num_established == 0 {
+                    self.bootnodes.disconnected(peer_id, tokio::time::Instant::now(), jitter());
                     let abnormal = is_abnormal_close(cause.as_ref());
                     let _ =
                         self.sync_event_tx.send(SyncEvent::PeerDisconnected { peer_id, abnormal });
                 }
+            }
+            SwarmEvent::OutgoingConnectionError {
+                connection_id,
+                error,
+                ..
+            } => {
+                if matches!(error, DialError::WrongPeerId { .. }) {
+                    warn!("A bootnode's identity changed: {error}");
+                } else {
+                    debug!("Outgoing connection failed: {error}");
+                }
+                self.bootnodes.dial_failed(connection_id, tokio::time::Instant::now(), jitter());
             }
             SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
                 for (peer_id, addr) in list {
