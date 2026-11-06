@@ -508,7 +508,8 @@ chore: update dependencies
 
 **Do NOT report security vulnerabilities in public issues.**
 
-Report privately to: **security@mbongo.money**
+Report privately through GitHub private vulnerability reporting, as
+[`SECURITY.md`](../.github/SECURITY.md) describes.
 
 ---
 
