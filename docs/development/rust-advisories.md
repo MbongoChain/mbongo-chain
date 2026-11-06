@@ -78,7 +78,7 @@ Each step is its own pull request, and removes its entries from the register. No
 
 ### Priority 2: `wasmtime`
 
-`mbongo-runtime` declares `wasmtime` and never uses it: its source has no `wasmtime` item, and `pub mod wasm` is commented out. Removing the declaration from two manifests drops 72 packages from `Cargo.lock`, adds none, and clears 37 findings, 25 of them vulnerabilities: `wasmtime`, `wasmtime-jit-debug`, `zstd-safe`, `zstd-sys`, `bincode`, `fxhash`, `mach`.
+`mbongo-runtime` declares `wasmtime` and never uses it: its source has no `wasmtime` item, and `pub mod wasm` is commented out. Removing the declaration from two manifests drops 72 packages from `Cargo.lock`, adds none, and clears 36 findings, 24 of them vulnerabilities: `wasmtime`, `wasmtime-jit-debug`, `zstd-safe`, `bincode`, `fxhash`, `mach`. `zstd-sys` stays, through `rocksdb`.
 
 ### Priority 3: the rest
 

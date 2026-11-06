@@ -43,7 +43,6 @@ libp2p = { version = "0.53", features = ["tcp", "noise", "yamux", "gossipsub", "
 rocksdb = "0.22"
 
 # WASM runtime
-wasmtime = "16.0"
 
 # Error handling
 thiserror = "1.0"
