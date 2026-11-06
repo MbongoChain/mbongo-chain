@@ -339,7 +339,7 @@ Each PR meets section 10 of the specification, in this order:
 | # | PR | Files | Tier | Needs |
 |---|---|---|---|---|
 | 1 | **Mempool bounds, eviction, post-commit hook** | `mempool.rs`, `main.rs`, and in `backend.rs` admission, `handle_incoming_block` and the removal in `produce_block` | Tier 0 file, no locked surface | Nothing from RFC 0006 |
-| 2 | Sync recovery: #147 refreshed, redial, per-peer state and rotation, stable identity, R1–R7, R11 | `p2p.rs`, `main.rs` | Tier 0 file, no locked surface | Nothing from RFC 0006 |
+| 2 | Sync recovery: #147 refreshed, redial, per-peer state and rotation, stable identity, R1–R7, R11. Split into 2a and 2b, section 12.7 | `p2p.rs`, `main.rs`, `handle_incoming_block` in `backend.rs` | Tier 0 file, no locked surface | Nothing from RFC 0006 |
 | 3 | Forwarding and explicit failure, with the RPC spec revision | `main.rs`, `backend.rs` admission, `server.rs`, `rpc.rs`, new `forwarder.rs` | Tier 0 files, RPC (D2) | PR 1 and S1. It ships with `rpc_v0.4` (D2) |
 | 4 | Status and `/status` | `rest.rs`, `backend.rs` | Tier 0 file, no locked surface | PRs 1, 2 and 3: peer count needs the P2P events from PR 2 |
 | 5 | Eviction of what S1's builder leaves out. No block-building code | `mempool.rs`, hook | Tier 1 | PR 1, S1 |
@@ -474,7 +474,7 @@ update #147 itself or supersede it, with credit, is for the contributor and the 
 |---|---|
 | Section 3, reconnection | Implements it |
 | Section 3, `--node-key-file` | Implements it |
-| Section 3, caught-up rule | Not here. S1 builds it, inside `produce_block`. PR 2a publishes the time of the first answer and of the last progress, pushed blocks included, through a shared handle, because per-peer state is local to the orchestrator task |
+| Section 3, caught-up rule | Not here. S1 builds it, inside `produce_block`. Per-peer state is local to the orchestrator task, so S1 adds a shared handle for the time of the first answer and of the last progress, pushed blocks included. PR 2a adds none: it would have no user yet |
 | Section 7, chain-bound identifiers | Independent. A negotiation failure is a peer failure with backoff |
 | Rollout | Needs this on the release SHA, by the decision placing the lock at G4 |
 
