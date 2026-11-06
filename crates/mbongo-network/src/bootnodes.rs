@@ -195,6 +195,11 @@ mod tests {
         assert_eq!(retry_delay(1, 1000), Duration::from_millis(1200));
         assert_eq!(retry_delay(1, u16::MAX), Duration::from_millis(1200));
         assert_eq!(retry_delay(9, 1000), BACKOFF_CAP);
+        assert_eq!(
+            retry_delay(9, 0),
+            Duration::from_secs(48),
+            "the spread is around the cap"
+        );
     }
 
     #[test]
@@ -310,6 +315,20 @@ mod tests {
         set.add(pinned, now);
         set.connected(id(9), peer, now);
         assert!(set.dials_due(now).is_empty());
+    }
+
+    #[test]
+    fn a_bare_address_learns_its_peer_for_later_connections() {
+        let now = Instant::now();
+        let peer = PeerId::random();
+        let mut set = one(now);
+        set.dial_started(0, id(1));
+        set.connected(id(1), peer, now);
+        set.disconnected(peer, now, MIDDLE);
+
+        // The same peer dials in before the retry: nothing is left to dial.
+        set.connected(id(2), peer, now);
+        assert!(set.dials_due(now + BACKOFF_CAP).is_empty());
     }
 
     #[test]

@@ -10,11 +10,23 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
+/// Otherwise Unix refuses the file for its mode, before reading it.
+fn make_private(path: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
 #[test]
 fn a_malformed_key_file_stops_the_node_before_its_data_directory_is_touched() {
     let dir = scratch("malformed");
     let key = dir.join("node.key");
     std::fs::write(&key, "not a key").unwrap();
+    make_private(&key);
     let data = dir.join("data");
 
     let output = Command::new(env!("CARGO_BIN_EXE_mbongo-node"))
