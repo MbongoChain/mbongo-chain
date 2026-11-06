@@ -368,7 +368,12 @@ async fn run_sync_orchestrator<S: mbongo_storage::Storage + Send + Sync + 'stati
     let mut tracker = SyncTracker::default();
 
     loop {
-        let wake = tracker.next_wake(tokio::time::Instant::now());
+        // One reading of the clock: a retry is either sent now or waited for,
+        // and cannot fall between the two.
+        let now = tokio::time::Instant::now();
+        tracker.release_expired(now);
+        send_due_requests(&backend, &mut tracker, &cmd_tx, now);
+        let wake = tracker.next_wake(now);
         tokio::select! {
             // ── Inbound block announcements (push) ──────────
             Some((peer_id, block)) = block_rx.recv() => {
@@ -438,14 +443,9 @@ async fn run_sync_orchestrator<S: mbongo_storage::Storage + Send + Sync + 'stati
             }
             // ── A backoff ended, with nothing else to wake us ──────
             () = tokio::time::sleep_until(wake.unwrap_or_else(tokio::time::Instant::now)),
-                if wake.is_some() =>
-            {
-                tracker.release_expired(tokio::time::Instant::now());
-            }
+                if wake.is_some() => {}
             else => break,
         }
-
-        send_due_requests(&backend, &mut tracker, &cmd_tx);
     }
 }
 
@@ -499,8 +499,8 @@ fn send_due_requests<S: mbongo_storage::Storage + Send + Sync + 'static>(
     backend: &NodeBackend<S>,
     tracker: &mut SyncTracker,
     cmd_tx: &tokio::sync::mpsc::UnboundedSender<SyncCommand>,
+    now: tokio::time::Instant,
 ) {
-    let now = tokio::time::Instant::now();
     for peer_id in tracker.heights_due(now) {
         if cmd_tx.send(SyncCommand::GetHeight { peer_id }).is_ok() {
             tracker.height_requested(peer_id);

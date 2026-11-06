@@ -22,7 +22,7 @@ pub fn load_node_key(path: &Path) -> Result<Keypair, String> {
 
 /// Builds a keypair from 64 hex characters.
 fn parse_node_key(text: &str) -> Result<Keypair, String> {
-    if text.len() != 64 || !text.is_ascii() {
+    if text.len() != 64 || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("expected 64 hex characters".to_string());
     }
     let mut seed = [0u8; 32];
@@ -31,7 +31,8 @@ fn parse_node_key(text: &str) -> Result<Keypair, String> {
         *byte =
             u8::from_str_radix(pair, 16).map_err(|_| "expected 64 hex characters".to_string())?;
     }
-    Keypair::ed25519_from_bytes(seed).map_err(|e| e.to_string())
+    // Taken by reference: the library wipes the buffer it is given.
+    Keypair::ed25519_from_bytes(&mut seed).map_err(|e| e.to_string())
 }
 
 #[cfg(unix)]
@@ -89,6 +90,10 @@ mod tests {
             assert!(parse_node_key(bad).is_err(), "{bad}");
         }
         assert!(parse_node_key(&"é".repeat(32)).is_err());
+        assert!(
+            parse_node_key(&SEED.replace("0f", "+f")).is_err(),
+            "a sign is not hex"
+        );
     }
 
     #[test]

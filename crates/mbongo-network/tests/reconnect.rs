@@ -3,7 +3,7 @@
 //! The required gate for bootnode redial: it runs in `cargo test`, on every pull
 //! request. Each wait is bounded, and is for an event, not for an amount of time.
 
-use std::net::{Ipv4Addr, TcpListener};
+use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use libp2p::identity::Keypair;
@@ -16,10 +16,13 @@ use tokio::time::timeout;
 /// Far above the first retry delays, far below a CI job's patience.
 const WAIT: Duration = Duration::from_secs(30);
 
-fn free_port() -> u16 {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-    listener.local_addr().unwrap().port()
-}
+// Fixed, and below the ephemeral range: a port free when picked could otherwise
+// be taken by an outbound socket before the restart. One per test, since tests
+// run in parallel. `scripts/check-harness-ports.mjs` covers them.
+const BARE_P2P: u16 = 27101;
+const PINNED_P2P: u16 = 27102;
+const CHANGED_P2P: u16 = 27103;
+const LATE_P2P: u16 = 27104;
 
 /// A node listening on `port`, running in its own task.
 fn listener(port: u16, key: Option<Keypair>) -> (PeerId, JoinHandle<()>) {
@@ -74,7 +77,7 @@ fn bare(port: u16) -> String {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_bootnode_with_a_bare_address_is_rejoined_after_it_restarts() {
-    let port = free_port();
+    let port = BARE_P2P;
     let (first, server) = listener(port, None);
     let (mut events, client) = follower(&bare(port));
     connected_to(&mut events, first).await;
@@ -93,7 +96,7 @@ async fn a_bootnode_with_a_bare_address_is_rejoined_after_it_restarts() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_pinned_bootnode_with_a_stable_identity_is_rejoined_after_it_restarts() {
-    let port = free_port();
+    let port = PINNED_P2P;
     let key = Keypair::generate_ed25519();
     let (first, server) = listener(port, Some(key.clone()));
     let (mut events, client) = follower(&format!("{}/p2p/{first}", bare(port)));
@@ -111,22 +114,29 @@ async fn a_pinned_bootnode_with_a_stable_identity_is_rejoined_after_it_restarts(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_pinned_bootnode_with_a_new_identity_is_not_accepted() {
-    let port = free_port();
-    let (first, server) = listener(port, None);
+async fn a_pinned_bootnode_refuses_a_new_identity_and_keeps_trying() {
+    let port = CHANGED_P2P;
+    let key = Keypair::generate_ed25519();
+    let (first, server) = listener(port, Some(key.clone()));
     let (mut events, client) = follower(&format!("{}/p2p/{first}", bare(port)));
     connected_to(&mut events, first).await;
 
     stop(server).await;
     disconnected_from(&mut events, first).await;
 
-    let (second, server) = listener(port, None);
-    // Several retries fit in this window. None of them may succeed.
-    let joined = timeout(Duration::from_secs(5), connected_to(&mut events, second)).await;
+    // Another identity on the address: at least one retry fits in this window.
+    let (other, server) = listener(port, None);
+    let joined = timeout(Duration::from_secs(5), connected_to(&mut events, other)).await;
     assert!(
         joined.is_err(),
         "connected to an identity that was not pinned"
     );
+    stop(server).await;
+
+    // The node gave up on nothing: the pinned identity is rejoined when it returns.
+    let (again, server) = listener(port, Some(key));
+    assert_eq!(first, again);
+    connected_to(&mut events, again).await;
 
     stop(server).await;
     stop(client).await;
@@ -134,7 +144,7 @@ async fn a_pinned_bootnode_with_a_new_identity_is_not_accepted() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_bootnode_down_at_the_start_is_reached_when_it_comes_up() {
-    let port = free_port();
+    let port = LATE_P2P;
     let (mut events, client) = follower(&bare(port));
     tokio::time::sleep(Duration::from_secs(2)).await;
 

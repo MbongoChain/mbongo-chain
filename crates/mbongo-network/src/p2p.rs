@@ -433,8 +433,7 @@ impl P2PNode {
     }
 
     /// Dials every bootnode that is due.
-    fn dial_due_bootnodes(&mut self) {
-        let now = tokio::time::Instant::now();
+    fn dial_due_bootnodes(&mut self, now: tokio::time::Instant) {
         for (index, addr) in self.bootnodes.dials_due(now) {
             let opts = DialOpts::unknown_peer_id().address(addr.clone()).build();
             let connection = opts.connection_id();
@@ -499,8 +498,11 @@ impl P2PNode {
     /// 3. Swarm events (connections, sync messages, block announcements).
     pub async fn run(mut self) {
         loop {
-            self.dial_due_bootnodes();
-            let wake = self.bootnodes.next_wake(tokio::time::Instant::now());
+            // One reading of the clock: a retry is either dialed now or waited
+            // for, and cannot fall between the two.
+            let now = tokio::time::Instant::now();
+            self.dial_due_bootnodes(now);
+            let wake = self.bootnodes.next_wake(now);
             tokio::select! {
                 // Drain outbound broadcast requests from the backend.
                 Some(block) = self.broadcast_rx.recv() => {
@@ -582,7 +584,8 @@ impl P2PNode {
                 ..
             } => {
                 if matches!(error, DialError::WrongPeerId { .. }) {
-                    warn!("A bootnode's identity changed: {error}");
+                    // Visible at the default log level: an operator has to act.
+                    log::error!("A bootnode's identity changed: {error}");
                 } else {
                     debug!("Outgoing connection failed: {error}");
                 }
