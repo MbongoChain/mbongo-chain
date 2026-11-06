@@ -1,12 +1,103 @@
 //! Minimal deterministic mempool for Phase 2.
+//!
+//! Everything here is node-local policy: bounds, expiry and eviction decide
+//! what this node proposes, never which blocks are valid. Two nodes may differ
+//! on all of it without differing on any block.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::ops::Bound;
+use std::time::{Duration, Instant};
 
 use mbongo_core::{Address, ComputeTask, Hash, Transaction, TransactionPayload};
 
+/// Default bound on pending transactions held by one node.
+pub const DEFAULT_MAX_PENDING: usize = 8192;
+
+/// Largest value accepted for [`MempoolConfig::max_pending`].
+pub const MAX_PENDING_LIMIT: usize = 65_536;
+
+/// Default time a transaction may stay pending, in seconds.
+pub const DEFAULT_TTL_SECS: u64 = 3600;
+
+/// Bounds of a mempool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MempoolConfig {
+    /// Most transactions held at once. A new one beyond this is refused.
+    pub max_pending: usize,
+    /// How long a transaction may stay pending, from its admission.
+    pub ttl: Duration,
+}
+
+impl MempoolConfig {
+    /// Builds a configuration from operator values.
+    ///
+    /// # Errors
+    ///
+    /// Returns a description if `max_pending` is outside
+    /// 1..=[`MAX_PENDING_LIMIT`], or `ttl_secs` is zero.
+    pub fn new(max_pending: usize, ttl_secs: u64) -> Result<Self, String> {
+        if max_pending == 0 || max_pending > MAX_PENDING_LIMIT {
+            return Err(format!(
+                "mempool max pending must be between 1 and {MAX_PENDING_LIMIT}"
+            ));
+        }
+        if ttl_secs == 0 {
+            return Err("mempool ttl must be at least one second".to_string());
+        }
+        Ok(Self {
+            max_pending,
+            ttl: Duration::from_secs(ttl_secs),
+        })
+    }
+}
+
+impl Default for MempoolConfig {
+    fn default() -> Self {
+        Self {
+            max_pending: DEFAULT_MAX_PENDING,
+            ttl: Duration::from_secs(DEFAULT_TTL_SECS),
+        }
+    }
+}
+
+/// Why a transaction left the mempool without this node including it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvictionReason {
+    /// A committed block contains it.
+    Included,
+    /// Its nonce is below the committed nonce of its sender.
+    StaleNonce,
+    /// A committed block made it unable to apply: its task was registered or
+    /// its receipt anchored through another transaction, the balance it needs
+    /// was spent, or its nonce no longer follows the committed one.
+    Superseded,
+    /// It stayed pending longer than the configured time.
+    Expired,
+    /// Something it depends on was evicted.
+    Dependent,
+}
+
+/// One transaction removed from the mempool, and why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Eviction {
+    /// Hash of the removed transaction.
+    pub hash: Hash,
+    /// Why it was removed.
+    pub reason: EvictionReason,
+}
+
+/// One removal still to perform. `with_suffix` says whether the sender's
+/// higher nonces go too: they do when the entry could still have applied, and
+/// do not when it is already behind the committed nonce.
+struct Removal {
+    hash: Hash,
+    reason: EvictionReason,
+    with_suffix: bool,
+}
+
 /// Errors returned by mempool operations.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[allow(clippy::enum_variant_names)] // every admission failure IS a duplicate; the prefix is the semantics
+#[allow(clippy::enum_variant_names)] // nearly every admission failure is a duplicate; the prefix is the semantics
 pub enum MempoolError {
     /// Transaction with this hash already exists in mempool or storage.
     #[error("duplicate transaction hash")]
@@ -24,6 +115,11 @@ pub enum MempoolError {
     /// into the same block, where RFC 0005 rule (p) rejects the block.
     #[error("duplicate pending compute task")]
     DuplicateComputeTask,
+    /// The mempool holds its configured maximum. Nothing is displaced: with
+    /// no fees there is no fair priority, and displacing the oldest would
+    /// let a flood remove honest transactions.
+    #[error("mempool full")]
+    PoolFull,
 }
 
 /// Returns the receipt `task_id` carried by a transaction, if any.
@@ -92,26 +188,50 @@ pub struct Mempool {
     by_sender_nonce: HashMap<(Address, u64), Hash>,
     by_task_id: HashMap<[u8; 32], Hash>,
     by_compute_task_id: HashMap<[u8; 32], Hash>,
-    /// Pending entry count per sender, maintained on every insertion and
-    /// removal. `by_sender_nonce` is keyed by (sender, nonce), so counting
-    /// one sender's entries from it would mean scanning the whole map;
-    /// this keeps the per-sender bound an O(1) question.
-    pending_by_sender: HashMap<Address, usize>,
+    /// Pending nonces per sender, maintained on every insertion and removal.
+    /// `by_sender_nonce` is keyed by (sender, nonce), so finding one sender's
+    /// entries from it would mean scanning the whole map; this keeps the
+    /// per-sender bound an O(1) question, and gives eviction the entries above
+    /// a nonce directly.
+    pending_by_sender: HashMap<Address, BTreeSet<u64>>,
+    /// When each entry was admitted, on the monotonic clock.
+    admitted_at: HashMap<Hash, Instant>,
     order: Vec<Hash>,
+    config: MempoolConfig,
 }
 
 impl Mempool {
-    /// Creates an empty mempool.
+    /// Creates an empty mempool with the default bounds.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_config(MempoolConfig::default())
+    }
+
+    /// Creates an empty mempool with the given bounds.
+    #[must_use]
+    pub fn with_config(config: MempoolConfig) -> Self {
         Self {
             by_hash: HashMap::new(),
             by_sender_nonce: HashMap::new(),
             by_task_id: HashMap::new(),
             by_compute_task_id: HashMap::new(),
             pending_by_sender: HashMap::new(),
+            admitted_at: HashMap::new(),
             order: Vec::new(),
+            config,
         }
+    }
+
+    /// Returns the bound on pending transactions.
+    #[must_use]
+    pub fn max_pending(&self) -> usize {
+        self.config.max_pending
+    }
+
+    /// Returns true if a new transaction would be refused for lack of room.
+    #[must_use]
+    pub fn is_full(&self) -> bool {
+        self.by_hash.len() >= self.config.max_pending
     }
 
     /// Inserts a transaction into the mempool.
@@ -124,7 +244,22 @@ impl Mempool {
     /// the same `task_id` is already pending.
     /// Returns [`MempoolError::DuplicateComputeTask`] if a `ComputeTask`
     /// deriving the same `task_id` is already pending.
+    /// Returns [`MempoolError::PoolFull`] if the mempool is at its bound.
     pub fn insert(&mut self, tx_hash: Hash, tx: Transaction) -> Result<(), MempoolError> {
+        self.insert_at(tx_hash, tx, Instant::now())
+    }
+
+    /// Inserts a transaction admitted at `now`. See [`Self::insert`].
+    ///
+    /// # Errors
+    ///
+    /// As for [`Self::insert`].
+    pub fn insert_at(
+        &mut self,
+        tx_hash: Hash,
+        tx: Transaction,
+        now: Instant,
+    ) -> Result<(), MempoolError> {
         if self.by_hash.contains_key(&tx_hash) {
             return Err(MempoolError::DuplicateHash);
         }
@@ -144,8 +279,12 @@ impl Mempool {
                 return Err(MempoolError::DuplicateComputeTask);
             }
         }
+        if self.is_full() {
+            return Err(MempoolError::PoolFull);
+        }
 
         let sender = tx.sender;
+        let nonce = tx.nonce;
         self.by_hash.insert(tx_hash, tx);
         self.by_sender_nonce.insert(key, tx_hash);
         if let Some(tid) = task_id {
@@ -154,7 +293,8 @@ impl Mempool {
         if let Some(tid) = compute_task_id {
             self.by_compute_task_id.insert(tid, tx_hash);
         }
-        *self.pending_by_sender.entry(sender).or_insert(0) += 1;
+        self.pending_by_sender.entry(sender).or_default().insert(nonce);
+        self.admitted_at.insert(tx_hash, now);
         self.order.push(tx_hash);
         Ok(())
     }
@@ -172,7 +312,7 @@ impl Mempool {
     /// count.
     #[must_use]
     pub fn sender_pending(&self, sender: &Address, committed_nonce: u64) -> SenderPending {
-        let len = self.pending_by_sender.get(sender).copied().unwrap_or(0);
+        let len = self.pending_by_sender.get(sender).map_or(0, BTreeSet::len);
         let mut expected = committed_nonce;
         let mut pending_debit: u128 = 0;
 
@@ -219,20 +359,200 @@ impl Mempool {
         if let Some(tid) = compute_task_id_of(&tx) {
             self.by_compute_task_id.remove(&tid);
         }
-        if let Some(count) = self.pending_by_sender.get_mut(&tx.sender) {
-            *count -= 1;
-            if *count == 0 {
+        if let Some(nonces) = self.pending_by_sender.get_mut(&tx.sender) {
+            nonces.remove(&tx.nonce);
+            if nonces.is_empty() {
                 self.pending_by_sender.remove(&tx.sender);
             }
         }
+        self.admitted_at.remove(hash);
         Some(tx)
+    }
+
+    /// Performs `removals` and everything that depends on them, then compacts
+    /// `order` once.
+    ///
+    /// Blocks follow insertion order, so a removal has to take what would
+    /// otherwise fail every block:
+    ///
+    /// - the sender's higher nonces, or a resubmitted nonce would sit behind
+    ///   its successors;
+    /// - for a `ComputeTask` that never reached the chain, the pending receipt
+    ///   bound to it, whatever its sender, which rule (q) would refuse.
+    ///
+    /// `task_registered` reads committed state. A receipt stays when its task
+    /// is registered, because the task it needs is then on chain.
+    fn remove_with_dependents(
+        &mut self,
+        removals: Vec<Removal>,
+        task_registered: &impl Fn(&[u8; 32]) -> bool,
+    ) -> Vec<Eviction> {
+        let mut queue: VecDeque<Removal> = removals.into();
+        let mut evicted = Vec::new();
+        while let Some(removal) = queue.pop_front() {
+            let Some(tx) = self.unlink(&removal.hash) else {
+                continue;
+            };
+            evicted.push(Eviction {
+                hash: removal.hash,
+                reason: removal.reason,
+            });
+            if removal.with_suffix {
+                if let Some(nonces) = self.pending_by_sender.get(&tx.sender) {
+                    for nonce in nonces.range((Bound::Excluded(tx.nonce), Bound::Unbounded)) {
+                        if let Some(hash) = self.by_sender_nonce.get(&(tx.sender, *nonce)) {
+                            queue.push_back(Removal {
+                                hash: *hash,
+                                reason: EvictionReason::Dependent,
+                                with_suffix: true,
+                            });
+                        }
+                    }
+                }
+            }
+            if removal.reason != EvictionReason::Included {
+                if let Some(task_id) = compute_task_id_of(&tx) {
+                    if let Some(hash) = self.by_task_id.get(&task_id) {
+                        if !task_registered(&task_id) {
+                            queue.push_back(Removal {
+                                hash: *hash,
+                                reason: EvictionReason::Dependent,
+                                with_suffix: true,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        if !evicted.is_empty() {
+            let removed: HashSet<Hash> = evicted.iter().map(|e| e.hash).collect();
+            self.order.retain(|h| !removed.contains(h));
+        }
+        evicted
+    }
+
+    /// Brings the mempool up to date with a committed block.
+    ///
+    /// `block_txs` holds the block's transactions and their hashes.
+    /// `committed` returns a sender's committed nonce and balance, or `None`
+    /// when it cannot answer, which leaves that sender's entries for a later
+    /// block. `task_registered` reads committed state too. Entries above an
+    /// included or stale one stay, unless a gap or a spent balance rules them out.
+    ///
+    /// Only a block's own senders can lose a pending entry this way: nonces
+    /// and debits are the sender's own, and a task or receipt id binds its
+    /// sender.
+    pub fn after_commit(
+        &mut self,
+        block_txs: &[(Hash, Transaction)],
+        committed: impl Fn(&Address) -> Option<(u64, u128)>,
+        task_registered: impl Fn(&[u8; 32]) -> bool,
+    ) -> Vec<Eviction> {
+        let mut removals = Vec::new();
+        let mut views: HashMap<Address, Option<(u64, u128)>> = HashMap::new();
+        for (hash, tx) in block_txs {
+            views.entry(tx.sender).or_insert_with(|| committed(&tx.sender));
+            if self.by_hash.contains_key(hash) {
+                removals.push(Removal {
+                    hash: *hash,
+                    reason: EvictionReason::Included,
+                    with_suffix: false,
+                });
+            }
+        }
+        for (sender, view) in &views {
+            let (Some((nonce_now, _)), Some(nonces)) = (view, self.pending_by_sender.get(sender))
+            else {
+                continue;
+            };
+            for nonce in nonces.range(..*nonce_now) {
+                if let Some(hash) = self.by_sender_nonce.get(&(*sender, *nonce)) {
+                    removals.push(Removal {
+                        hash: *hash,
+                        reason: EvictionReason::StaleNonce,
+                        with_suffix: false,
+                    });
+                }
+            }
+        }
+        for (hash, tx) in block_txs {
+            let rival = task_id_of(tx).and_then(|tid| self.by_task_id.get(&tid)).or_else(|| {
+                compute_task_id_of(tx).and_then(|tid| self.by_compute_task_id.get(&tid))
+            });
+            if let Some(rival) = rival {
+                if rival != hash {
+                    removals.push(Removal {
+                        hash: *rival,
+                        reason: EvictionReason::Superseded,
+                        with_suffix: true,
+                    });
+                }
+            }
+        }
+        let mut evicted = self.remove_with_dependents(removals, &task_registered);
+
+        // What is left must start at the committed nonce, run without a gap,
+        // and be affordable. The first entry that breaks this goes, with what
+        // follows it: it would otherwise fail every block.
+        let mut removals = Vec::new();
+        for (sender, view) in &views {
+            let (Some((nonce_now, balance)), Some(nonces)) =
+                (view, self.pending_by_sender.get(sender))
+            else {
+                continue;
+            };
+            let mut expected = *nonce_now;
+            let mut debit: u128 = 0;
+            for nonce in nonces {
+                let Some(hash) = self.by_sender_nonce.get(&(*sender, *nonce)) else {
+                    continue;
+                };
+                let amount = self.by_hash.get(hash).map_or(0, |tx| tx.amount);
+                debit = debit.saturating_add(amount);
+                if *nonce != expected || debit > *balance {
+                    removals.push(Removal {
+                        hash: *hash,
+                        reason: EvictionReason::Superseded,
+                        with_suffix: true,
+                    });
+                    break;
+                }
+                expected = expected.saturating_add(1);
+            }
+        }
+        evicted.extend(self.remove_with_dependents(removals, &task_registered));
+        evicted
+    }
+
+    /// Evicts every entry older than the configured time, with its dependents.
+    pub fn sweep_expired(
+        &mut self,
+        now: Instant,
+        task_registered: impl Fn(&[u8; 32]) -> bool,
+    ) -> Vec<Eviction> {
+        let ttl = self.config.ttl;
+        let removals = self
+            .order
+            .iter()
+            .filter(|hash| {
+                self.admitted_at
+                    .get(*hash)
+                    .is_some_and(|at| now.saturating_duration_since(*at) >= ttl)
+            })
+            .map(|hash| Removal {
+                hash: *hash,
+                reason: EvictionReason::Expired,
+                with_suffix: true,
+            })
+            .collect();
+        self.remove_with_dependents(removals, &task_registered)
     }
 
     /// Returns up to `max` transactions in insertion order **without**
     /// removing them.
     ///
     /// Block production peeks, applies, and only then calls
-    /// [`Mempool::remove_included`]. A destructive drain before application
+    /// [`Mempool::after_commit`]. A destructive drain before application
     /// would lose every transaction in the batch when application fails,
     /// and issue #100 turns that from one transaction into a sender's whole
     /// pending chain. There is deliberately no destructive drain to reach
@@ -251,6 +571,7 @@ impl Mempool {
     /// Unknown hashes are ignored, so this is idempotent. `order` is
     /// compacted once for the whole batch, preserving the relative order of
     /// everything that remains.
+    #[cfg(test)]
     pub fn remove_included(&mut self, hashes: &[Hash]) {
         let mut removed: HashSet<Hash> = HashSet::new();
         for hash in hashes {
@@ -306,6 +627,43 @@ impl Mempool {
 impl Default for Mempool {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+impl Mempool {
+    /// Moves an entry's admission time, for tests of expiry.
+    pub fn set_admitted_at(&mut self, hash: &Hash, at: Instant) {
+        self.admitted_at.insert(*hash, at);
+    }
+
+    /// Asserts that every index describes the same set of entries.
+    pub fn assert_consistent(&self) {
+        let len = self.by_hash.len();
+        assert_eq!(self.order.len(), len, "order");
+        assert_eq!(self.admitted_at.len(), len, "admitted_at");
+        assert_eq!(self.by_sender_nonce.len(), len, "by_sender_nonce");
+        let per_sender: usize = self.pending_by_sender.values().map(BTreeSet::len).sum();
+        assert_eq!(per_sender, len, "pending_by_sender");
+        assert!(len <= self.config.max_pending, "bound exceeded");
+        let unique: HashSet<&Hash> = self.order.iter().collect();
+        assert_eq!(unique.len(), len, "order holds a duplicate");
+        for hash in &self.order {
+            let tx = self.by_hash.get(hash).expect("order names a missing entry");
+            assert_eq!(self.by_sender_nonce.get(&(tx.sender, tx.nonce)), Some(hash));
+            assert!(self.pending_by_sender[&tx.sender].contains(&tx.nonce));
+            assert!(self.admitted_at.contains_key(hash));
+            if let Some(tid) = task_id_of(tx) {
+                assert_eq!(self.by_task_id.get(&tid), Some(hash));
+            }
+            if let Some(tid) = compute_task_id_of(tx) {
+                assert_eq!(self.by_compute_task_id.get(&tid), Some(hash));
+            }
+        }
+        let receipts = self.by_hash.values().filter(|tx| task_id_of(tx).is_some()).count();
+        assert_eq!(self.by_task_id.len(), receipts, "by_task_id");
+        let tasks = self.by_hash.values().filter(|tx| compute_task_id_of(tx).is_some()).count();
+        assert_eq!(self.by_compute_task_id.len(), tasks, "by_compute_task_id");
     }
 }
 
@@ -764,5 +1122,431 @@ mod tests {
         // The id is free again.
         let (h2, tx2, _) = make_task_tx(1, 0, 36, [0x5Du8; 32]);
         pool.insert(h2, tx2).unwrap();
+    }
+
+    // ── Bounds and eviction (S3) ──
+
+    fn bounded(max_pending: usize, ttl_secs: u64) -> Mempool {
+        Mempool::with_config(MempoolConfig::new(max_pending, ttl_secs).unwrap())
+    }
+
+    fn reasons(evicted: &[Eviction]) -> Vec<(Hash, EvictionReason)> {
+        evicted.iter().map(|e| (e.hash, e.reason)).collect()
+    }
+
+    fn no_task(_: &[u8; 32]) -> bool {
+        false
+    }
+
+    #[test]
+    fn config_refuses_values_outside_its_range() {
+        assert!(MempoolConfig::new(0, 1).is_err());
+        assert!(MempoolConfig::new(MAX_PENDING_LIMIT + 1, 1).is_err());
+        assert!(MempoolConfig::new(1, 0).is_err());
+        assert!(MempoolConfig::new(1, 1).is_ok());
+        assert!(MempoolConfig::new(MAX_PENDING_LIMIT, u64::MAX).is_ok());
+    }
+
+    #[test]
+    fn a_full_pool_refuses_and_stays_as_it_was() {
+        let mut pool = bounded(2, 60);
+        insert_chain(&mut pool, 1, &[0, 1]);
+        let (hash, tx) = make_tx_with_hash(2, 0, 50);
+        assert_eq!(pool.insert(hash, tx), Err(MempoolError::PoolFull));
+        assert_eq!(pool.len(), 2);
+        assert!(!pool.contains_hash(&hash));
+        pool.assert_consistent();
+    }
+
+    #[test]
+    fn a_duplicate_on_a_full_pool_stays_a_duplicate() {
+        let mut pool = bounded(1, 60);
+        let (hash, tx) = make_tx_with_hash(1, 0, 7);
+        pool.insert(hash, tx.clone()).unwrap();
+        assert_eq!(pool.insert(hash, tx), Err(MempoolError::DuplicateHash));
+    }
+
+    #[test]
+    fn room_returns_after_an_eviction() {
+        let mut pool = bounded(1, 60);
+        let (hash, tx) = make_tx_with_hash(1, 0, 7);
+        let start = Instant::now();
+        pool.insert_at(hash, tx, start).unwrap();
+        pool.sweep_expired(start + Duration::from_secs(60), no_task);
+        let (next, tx) = make_tx_with_hash(2, 0, 8);
+        pool.insert(next, tx).unwrap();
+        pool.assert_consistent();
+    }
+
+    #[test]
+    fn nothing_expires_before_its_time_or_on_an_earlier_reading() {
+        let mut pool = bounded(4, 60);
+        let start = Instant::now() + Duration::from_secs(1000);
+        let (hash, tx) = make_tx_with_hash(1, 0, 7);
+        pool.insert_at(hash, tx, start).unwrap();
+        assert!(pool.sweep_expired(start + Duration::from_secs(59), no_task).is_empty());
+        assert!(pool.sweep_expired(start - Duration::from_secs(500), no_task).is_empty());
+        assert_eq!(
+            reasons(&pool.sweep_expired(start + Duration::from_secs(60), no_task)),
+            vec![(hash, EvictionReason::Expired)]
+        );
+        pool.assert_consistent();
+    }
+
+    #[test]
+    fn expiry_takes_the_higher_nonces_of_that_sender_and_nobody_else() {
+        let mut pool = bounded(8, 60);
+        let start = Instant::now();
+        let (a0, tx) = make_tx_with_hash(1, 5, 10);
+        pool.insert_at(a0, tx, start).unwrap();
+        let later = start + Duration::from_secs(30);
+        let (a1, tx) = make_tx_with_hash(1, 6, 11);
+        pool.insert_at(a1, tx, later).unwrap();
+        let (a2, tx) = make_tx_with_hash(1, 7, 12);
+        pool.insert_at(a2, tx, later).unwrap();
+        let (other, tx) = make_tx_with_hash(2, 0, 13);
+        pool.insert_at(other, tx, start + Duration::from_secs(1)).unwrap();
+
+        let evicted = pool.sweep_expired(start + Duration::from_secs(60), no_task);
+        assert_eq!(
+            evicted.len(),
+            3,
+            "the other sender's entry expires one second later"
+        );
+        assert_eq!(
+            evicted[0],
+            Eviction {
+                hash: a0,
+                reason: EvictionReason::Expired
+            }
+        );
+        assert!(evicted[1..].iter().all(|e| e.reason == EvictionReason::Dependent));
+        assert!(pool.contains_hash(&other));
+        assert_eq!(
+            pool.sender_pending(&Address([1u8; 32]), 5).expected_nonce,
+            Some(5)
+        );
+        pool.assert_consistent();
+    }
+
+    #[test]
+    fn a_commit_removes_included_and_stale_entries_alone() {
+        let mut pool = bounded(8, 60);
+        let (stale, tx) = make_tx_with_hash(1, 5, 10);
+        pool.insert(stale, tx).unwrap();
+        let (included, block_tx) = make_tx_with_hash(1, 6, 11);
+        pool.insert(included, block_tx.clone()).unwrap();
+        let (valid, tx) = make_tx_with_hash(1, 7, 12);
+        pool.insert(valid, tx).unwrap();
+        let (also_valid, tx) = make_tx_with_hash(1, 8, 13);
+        pool.insert(also_valid, tx).unwrap();
+
+        let evicted = pool.after_commit(&[(included, block_tx)], |_| Some((7, u128::MAX)), no_task);
+        assert_eq!(evicted.len(), 2);
+        assert!(evicted.contains(&Eviction {
+            hash: included,
+            reason: EvictionReason::Included
+        }));
+        assert!(evicted.contains(&Eviction {
+            hash: stale,
+            reason: EvictionReason::StaleNonce
+        }));
+        assert!(pool.contains_hash(&valid) && pool.contains_hash(&also_valid));
+        pool.assert_consistent();
+    }
+
+    #[test]
+    fn a_commit_with_no_nonce_answer_leaves_the_sender_alone() {
+        let mut pool = bounded(8, 60);
+        let (kept, tx) = make_tx_with_hash(1, 5, 10);
+        pool.insert(kept, tx).unwrap();
+        let (_, block_tx) = make_tx_with_hash(1, 9, 11);
+        assert!(pool.after_commit(&[(Hash([11u8; 32]), block_tx)], |_| None, no_task).is_empty());
+        assert!(pool.contains_hash(&kept));
+    }
+
+    #[test]
+    fn peek_keeps_nonce_order_after_an_eviction_and_a_resubmission() {
+        let mut pool = bounded(8, 60);
+        let start = Instant::now();
+        let (a0, tx0) = make_tx_with_hash(1, 0, 10);
+        pool.insert_at(a0, tx0.clone(), start).unwrap();
+        let (a1, tx1) = make_tx_with_hash(1, 1, 11);
+        pool.insert_at(a1, tx1.clone(), start + Duration::from_secs(30)).unwrap();
+        pool.sweep_expired(start + Duration::from_secs(60), no_task);
+        pool.insert(a0, tx0).unwrap();
+        pool.insert(a1, tx1).unwrap();
+        let nonces: Vec<u64> = pool.peek_for_block(10).iter().map(|(_, tx)| tx.nonce).collect();
+        assert_eq!(nonces, vec![0, 1]);
+    }
+
+    #[test]
+    fn a_chain_with_a_gap_above_the_committed_nonce_goes() {
+        let mut pool = bounded(8, 60);
+        let (ahead, tx) = make_tx_with_hash(1, 6, 10);
+        pool.insert(ahead, tx).unwrap();
+        let (above, tx) = make_tx_with_hash(1, 7, 11);
+        pool.insert(above, tx).unwrap();
+        let (block_hash, block_tx) = make_tx_with_hash(1, 3, 12);
+
+        // Nothing pending fills nonces 4 and 5, so neither entry can ever apply.
+        let evicted =
+            pool.after_commit(&[(block_hash, block_tx)], |_| Some((4, u128::MAX)), no_task);
+        assert_eq!(evicted.len(), 2, "{evicted:?}");
+        assert_eq!(evicted[0].reason, EvictionReason::Superseded);
+        assert_eq!(evicted[1].reason, EvictionReason::Dependent);
+        pool.assert_consistent();
+    }
+
+    /// The model of committed state that the generated run drives.
+    struct Chain {
+        nonces: [u64; 8],
+        balances: [u128; 8],
+        registered: HashSet<[u8; 32]>,
+    }
+
+    impl Chain {
+        fn view(&self, a: &Address) -> Option<(u64, u128)> {
+            let i = usize::from(a.0[0] - 1);
+            Some((self.nonces[i], self.balances[i]))
+        }
+    }
+
+    fn transfer(sender: Address, nonce: u64, amount: u128) -> Transaction {
+        Transaction {
+            tx_type: TransactionType::Transfer,
+            sender,
+            receiver: Address([99u8; 32]),
+            amount,
+            nonce,
+            payload: TransactionPayload::None,
+            signature: [0u8; 64],
+        }
+    }
+
+    fn task(sender: Address, nonce: u64, salt: u64) -> Transaction {
+        let mut bytes = [0u8; 32];
+        bytes[..8].copy_from_slice(&salt.to_le_bytes());
+        let payload = ComputeTask {
+            version: 1,
+            submitter: sender,
+            executor: Address([7u8; 32]),
+            salt: bytes,
+            input_commitment: [1u8; 32],
+            execution_spec: Vec::new(),
+        };
+        Transaction {
+            tx_type: TransactionType::ComputeTask,
+            sender,
+            receiver: Address::zero(),
+            amount: 0,
+            nonce,
+            payload: TransactionPayload::ComputeTask(Box::new(payload)),
+            signature: [0u8; 64],
+        }
+    }
+
+    fn receipt(sender: Address, nonce: u64, task_id: [u8; 32]) -> Transaction {
+        let payload = mbongo_core::Receipt {
+            version: 1,
+            task_id,
+            input_commitment: [1u8; 32],
+            output_commitment: [2u8; 32],
+            executor: sender,
+            metadata: Vec::new(),
+            signature: [0u8; 64],
+        };
+        Transaction {
+            tx_type: TransactionType::AnchorReceipt,
+            sender,
+            receiver: Address::zero(),
+            amount: 0,
+            nonce,
+            payload: TransactionPayload::AnchorReceipt(Box::new(payload)),
+            signature: [0u8; 64],
+        }
+    }
+
+    fn hash_of(step: u64, salt: u8) -> Hash {
+        let mut bytes = [salt; 32];
+        bytes[..8].copy_from_slice(&step.to_le_bytes());
+        Hash(bytes)
+    }
+
+    /// After a commit or a sweep: indexes agree, every chain starts at its
+    /// committed nonce with no gap, is affordable, and every pending receipt
+    /// still has its task, pending or registered.
+    fn assert_applicable(pool: &Mempool, chain: &Chain) {
+        pool.assert_consistent();
+        for i in 0..8u8 {
+            let who = Address([i + 1; 32]);
+            let (nonce, balance) = chain.view(&who).unwrap();
+            let walked = pool.sender_pending(&who, nonce);
+            let held = u64::try_from(walked.len).unwrap();
+            assert_eq!(
+                walked.expected_nonce,
+                Some(nonce + held),
+                "chain of {i} has a gap"
+            );
+            assert!(
+                walked.pending_debit <= balance,
+                "chain of {i} is not affordable"
+            );
+        }
+        for task_id in pool.by_task_id.keys() {
+            assert!(
+                pool.by_compute_task_id.contains_key(task_id) || chain.registered.contains(task_id),
+                "a receipt lost its task"
+            );
+        }
+    }
+
+    /// A deterministic run of admissions, own and foreign blocks, and sweeps,
+    /// over transfers, tasks and receipts. Every eviction reason has to occur.
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn generated_operations_keep_the_pool_consistent_and_applicable() {
+        const STEPS: u64 = 30_000;
+        let mut pool = bounded(24, 60);
+        let start = Instant::now();
+        let mut chain = Chain {
+            nonces: [0; 8],
+            balances: [1_000_000; 8],
+            registered: HashSet::new(),
+        };
+        let mut clock = 0u64;
+        let mut seed = 0x5EED_u64;
+        let mut next = |bound: u64| {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (seed >> 33) % bound
+        };
+        let mut seen: HashMap<String, u64> = HashMap::new();
+        let mut full = 0u64;
+        for step in 0..STEPS {
+            let i = usize::try_from(next(8)).unwrap();
+            let who = Address([u8::try_from(i).unwrap() + 1; 32]);
+            clock += next(2);
+            let now = start + Duration::from_secs(clock);
+            let walked = pool.sender_pending(&who, chain.nonces[i]);
+            let nonce = walked.expected_nonce.unwrap();
+            let mut evicted = Vec::new();
+            match next(12) {
+                0..=3 => {
+                    let amount = u128::from(next(1000));
+                    if walked.pending_debit + amount <= chain.balances[i] {
+                        match pool.insert_at(hash_of(step, 1), transfer(who, nonce, amount), now) {
+                            Ok(()) | Err(MempoolError::DuplicateSenderNonce) => {}
+                            Err(MempoolError::PoolFull) => full += 1,
+                            Err(e) => panic!("{e}"),
+                        }
+                    }
+                }
+                4 => {
+                    let tx = task(who, nonce, next(64));
+                    if !chain.registered.contains(&compute_task_id_of(&tx).unwrap()) {
+                        match pool.insert_at(hash_of(step, 2), tx, now) {
+                            Ok(()) | Err(MempoolError::DuplicateComputeTask) => {}
+                            Err(MempoolError::PoolFull) => full += 1,
+                            Err(e) => panic!("{e}"),
+                        }
+                    }
+                }
+                5 | 6 => {
+                    let mut pending: Vec<[u8; 32]> =
+                        pool.by_compute_task_id.keys().copied().collect();
+                    pending.sort_unstable();
+                    if !pending.is_empty() {
+                        let index = usize::try_from(next(pending.len() as u64)).unwrap();
+                        let tx = receipt(who, nonce, pending[index]);
+                        match pool.insert_at(hash_of(step, 3), tx, now) {
+                            Ok(()) | Err(MempoolError::DuplicateTaskId) => {}
+                            Err(MempoolError::PoolFull) => full += 1,
+                            Err(e) => panic!("{e}"),
+                        }
+                    }
+                }
+                7 | 8 => {
+                    // A block from this pool: the head of one chain.
+                    if let Some(hash) = pool.by_sender_nonce.get(&(who, chain.nonces[i])).copied() {
+                        let tx = pool.by_hash[&hash].clone();
+                        chain.nonces[i] += 1;
+                        chain.balances[i] -= tx.amount;
+                        if let Some(tid) = compute_task_id_of(&tx) {
+                            chain.registered.insert(tid);
+                        }
+                        let view = |a: &Address| chain.view(a);
+                        let known = |t: &[u8; 32]| chain.registered.contains(t);
+                        evicted = pool.after_commit(&[(hash, tx)], view, known);
+                    }
+                }
+                9 | 10 => {
+                    // A block from elsewhere, at this sender's committed nonce.
+                    let at = chain.nonces[i];
+                    let tx = if next(2) == 0 {
+                        let spend = u128::from(next(1000)) * 50;
+                        transfer(who, at, spend.min(chain.balances[i]))
+                    } else {
+                        let rival = pool.pending_by_sender.get(&who).and_then(|nonces| {
+                            nonces
+                                .iter()
+                                .filter_map(|n| pool.by_sender_nonce.get(&(who, *n)))
+                                .filter_map(|h| pool.by_hash.get(h))
+                                .find(|t| compute_task_id_of(t).is_some())
+                        });
+                        match rival.and_then(compute_task_salt) {
+                            Some(salt) => task(who, at, salt),
+                            None => transfer(who, at, 0),
+                        }
+                    };
+                    chain.nonces[i] += 1;
+                    chain.balances[i] -= tx.amount;
+                    if let Some(tid) = compute_task_id_of(&tx) {
+                        chain.registered.insert(tid);
+                    }
+                    let view = |a: &Address| chain.view(a);
+                    let known = |t: &[u8; 32]| chain.registered.contains(t);
+                    evicted = pool.after_commit(&[(hash_of(step, 4), tx)], view, known);
+                }
+                _ => {
+                    let known = |t: &[u8; 32]| chain.registered.contains(t);
+                    evicted = pool.sweep_expired(now, known);
+                }
+            }
+            for eviction in &evicted {
+                *seen.entry(format!("{:?}", eviction.reason)).or_insert(0) += 1;
+            }
+            if !evicted.is_empty() {
+                assert_applicable(&pool, &chain);
+            } else {
+                pool.assert_consistent();
+            }
+        }
+        println!("{seen:?} full={full}");
+        for reason in [
+            "Included",
+            "StaleNonce",
+            "Superseded",
+            "Expired",
+            "Dependent",
+        ] {
+            assert!(
+                seen.get(reason).copied().unwrap_or(0) > 20,
+                "{reason}: {seen:?}"
+            );
+        }
+        assert!(full > 20, "{full}");
+    }
+
+    fn compute_task_salt(tx: &Transaction) -> Option<u64> {
+        match &tx.payload {
+            TransactionPayload::ComputeTask(task) => {
+                let mut bytes = [0u8; 8];
+                bytes.copy_from_slice(&task.salt[..8]);
+                Some(u64::from_le_bytes(bytes))
+            }
+            TransactionPayload::None | TransactionPayload::AnchorReceipt(_) => None,
+        }
     }
 }
