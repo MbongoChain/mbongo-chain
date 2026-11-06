@@ -1,7 +1,7 @@
 //! Storage-backed implementation of [`RpcBackend`] and [`ApiBackend`].
 
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use log::{info, warn};
@@ -21,7 +21,7 @@ use mbongo_verification::{verify_receipt_signature, ReceiptError, ReceiptIndex, 
 use parity_scale_codec::{Decode, Encode};
 use tokio::sync::RwLock;
 
-use crate::mempool::{Mempool, MempoolError};
+use crate::mempool::{Eviction, EvictionReason, Mempool, MempoolConfig, MempoolError};
 
 /// Maximum transactions per block.
 const MAX_TX_PER_BLOCK: usize = 1000;
@@ -249,10 +249,16 @@ impl<S: Storage> NodeBackend<S> {
     ///
     /// `is_producer` controls whether this node is allowed to produce blocks.
     /// When `false`, calls to [`RpcBackend::produce_block`] will return an error.
+    #[cfg(test)]
     pub fn new(storage: S, is_producer: bool) -> Self {
+        Self::with_mempool_config(storage, is_producer, MempoolConfig::default())
+    }
+
+    /// Creates a backend with the given mempool bounds. See [`Self::new`].
+    pub fn with_mempool_config(storage: S, is_producer: bool, config: MempoolConfig) -> Self {
         Self {
             storage: Arc::new(storage),
-            mempool: Arc::new(RwLock::new(Mempool::new())),
+            mempool: Arc::new(RwLock::new(Mempool::with_config(config))),
             broadcaster: None,
             is_producer,
         }
@@ -679,13 +685,14 @@ impl<S: Storage> NodeBackend<S> {
     /// one height. Blocks at unexpected heights are silently ignored.
     /// Invalid blocks are logged and discarded.
     ///
-    /// Does NOT return errors to the network layer.
-    pub fn handle_incoming_block(&self, block: Block) {
+    /// Does NOT return errors to the network layer. Returns the block when it
+    /// was applied, so that the caller can run [`Self::after_block_committed`].
+    pub fn handle_incoming_block(&self, block: Block) -> Option<Block> {
         let local_height = match self.storage.get_latest_height() {
             Ok(h) => h,
             Err(e) => {
                 warn!("Failed to read local height: {e}");
-                return;
+                return None;
             }
         };
 
@@ -694,7 +701,7 @@ impl<S: Storage> NodeBackend<S> {
                 "Ignoring block at height {} (local height is {local_height})",
                 block.header.height
             );
-            return;
+            return None;
         }
 
         match self.apply_block(&block) {
@@ -703,13 +710,73 @@ impl<S: Storage> NodeBackend<S> {
                     "Applied incoming block: height={}, hash={hash}",
                     block.header.height
                 );
+                Some(block)
             }
             Err(e) => {
                 warn!(
                     "Rejected incoming block at height {}: {e}",
                     block.header.height
                 );
+                None
             }
+        }
+    }
+
+    /// Brings the mempool up to date with a block that has just been committed.
+    ///
+    /// Every commit path runs this: produced, pushed and synced. It changes
+    /// nothing on chain.
+    pub async fn after_block_committed(&self, block: &Block) {
+        let block_txs: Vec<(Hash, Transaction)> = block
+            .body
+            .transactions
+            .iter()
+            .map(|tx| (compute_tx_hash(tx), tx.clone()))
+            .collect();
+        let storage = &self.storage;
+        let mut pool = self.mempool.write().await;
+        let mut evicted = pool.after_commit(
+            &block_txs,
+            |sender| storage.get_account(sender).ok().flatten().map(|a| (a.nonce, a.balance)),
+            |task_id| Self::task_registered(storage, task_id),
+        );
+        evicted.extend(pool.sweep_expired(Instant::now(), |task_id| {
+            Self::task_registered(storage, task_id)
+        }));
+        drop(pool);
+        log_evictions(&evicted);
+    }
+
+    /// Evicts what has stayed pending too long.
+    pub async fn sweep_mempool(&self) {
+        let storage = &self.storage;
+        let evicted = self.mempool.write().await.sweep_expired(Instant::now(), |task_id| {
+            Self::task_registered(storage, task_id)
+        });
+        log_evictions(&evicted);
+    }
+
+    /// Whether this hash is pending here.
+    #[cfg(test)]
+    pub(crate) async fn is_pending(&self, hash: &Hash) -> bool {
+        self.mempool.read().await.contains_hash(hash)
+    }
+
+    /// Whether committed state holds this task. On a storage error it answers
+    /// yes, which keeps a pending receipt rather than evicting on no evidence.
+    fn task_registered(storage: &S, task_id: &[u8; 32]) -> bool {
+        storage.has_task(task_id).unwrap_or(true)
+    }
+}
+
+/// Logs evictions by reason. Inclusion is the normal path, so it stays out.
+fn log_evictions(evicted: &[Eviction]) {
+    for eviction in evicted {
+        if eviction.reason != EvictionReason::Included {
+            info!(
+                "Evicted pending transaction {}: {:?}",
+                eviction.hash, eviction.reason
+            );
         }
     }
 }
@@ -995,6 +1062,16 @@ impl<S: Storage + Send + Sync + 'static> RpcBackend for NodeBackend<S> {
                 )));
             }
 
+            // Bound total pending growth (node-local resource policy). This
+            // sits after the idempotent return above, so a retry of a pending
+            // transaction still gets its hash from a full pool.
+            if pool.is_full() {
+                return Err(BackendError::Internal(format!(
+                    "mempool full (max {})",
+                    pool.max_pending()
+                )));
+            }
+
             // Anchor-specific admission (rules e–i; RFC 0002 §2).
             if let Some((receipt, task_id)) = &anchor {
                 // (e) Metadata size cap.
@@ -1118,6 +1195,7 @@ impl<S: Storage + Send + Sync + 'static> RpcBackend for NodeBackend<S> {
                 MempoolError::DuplicateComputeTask => {
                     BackendError::Internal("compute task already pending".to_string())
                 }
+                MempoolError::PoolFull => BackendError::Internal("mempool full".to_string()),
             })?;
 
             Ok(tx_hash.to_string())
@@ -1201,10 +1279,7 @@ impl<S: Storage + Send + Sync + 'static> RpcBackend for NodeBackend<S> {
 
             // Applied and committed — only now do the included transactions
             // leave the mempool.
-            {
-                let hashes: Vec<Hash> = selected.into_iter().map(|(h, _)| h).collect();
-                mempool.write().await.remove_included(&hashes);
-            }
+            backend.after_block_committed(&block).await;
 
             // Broadcast the newly produced block to connected peers.
             if let Some(ref broadcaster) = backend.broadcaster {
@@ -5670,5 +5745,434 @@ mod tests {
         // task shape, and one rejection per rule.
         assert_eq!(outcomes.values().filter(|ok| **ok).count(), 2);
         assert_eq!(outcomes.values().filter(|ok| !**ok).count(), 3);
+    }
+
+    // ── Mempool bounds and eviction (S3 PR 1) ──
+
+    fn account(backend: &NodeBackend<InMemoryStorage>, addr: Address) -> Account {
+        backend.storage.get_account(&addr).unwrap().unwrap()
+    }
+
+    fn bounded_backend(max_pending: usize, ttl_secs: u64) -> NodeBackend<InMemoryStorage> {
+        let config = MempoolConfig::new(max_pending, ttl_secs).unwrap();
+        let backend = NodeBackend::with_mempool_config(InMemoryStorage::new(), true, config);
+        backend.ensure_genesis().unwrap();
+        backend
+    }
+
+    /// A task whose input commitment is the one `signed_receipt_for` uses,
+    /// submitted by `submitter` for `executor` to answer.
+    fn task_tx_for(
+        submitter: &SigningKey,
+        executor: &SigningKey,
+        nonce: u64,
+        salt: u8,
+    ) -> (Transaction, [u8; 32]) {
+        let task = ComputeTask {
+            version: COMPUTE_TASK_VERSION,
+            submitter: Address(submitter.verifying_key().to_bytes()),
+            executor: Address(executor.verifying_key().to_bytes()),
+            salt: [salt; 32],
+            input_commitment: [1u8; 32],
+            execution_spec: vec![1, 2, 3],
+        };
+        let task_id = task.task_id();
+        (signed_task_tx(submitter, nonce, task), task_id)
+    }
+
+    async fn expire(backend: &NodeBackend<InMemoryStorage>, hash: &Hash) -> Vec<Eviction> {
+        let mut pool = backend.mempool.write().await;
+        let long_ago = Instant::now();
+        pool.set_admitted_at(hash, long_ago);
+        let now = long_ago + pool_ttl(&pool);
+        let evicted = pool.sweep_expired(now, |t| {
+            NodeBackend::<InMemoryStorage>::task_registered(&backend.storage, t)
+        });
+        pool.assert_consistent();
+        evicted
+    }
+
+    /// The test TTL. `expire` sweeps exactly one TTL after the moment it gives
+    /// `hash`, and `keep_fresh` puts the entries that must survive after it.
+    fn pool_ttl(_: &Mempool) -> std::time::Duration {
+        std::time::Duration::from_secs(TEST_TTL_SECS)
+    }
+
+    const TEST_TTL_SECS: u64 = 3600;
+
+    /// Moves everything else forward, so that only `hash` is old enough.
+    async fn keep_fresh(backend: &NodeBackend<InMemoryStorage>, hashes: &[Hash]) {
+        let mut pool = backend.mempool.write().await;
+        for hash in hashes {
+            pool.set_admitted_at(
+                hash,
+                Instant::now() + std::time::Duration::from_secs(TEST_TTL_SECS),
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_full_pool_refuses_a_new_transaction_at_admission() {
+        let backend = bounded_backend(2, TEST_TTL_SECS);
+        let sk = SigningKey::from_bytes(&[0x51u8; 32]);
+        fund(&backend, &sk, 1000);
+        let other = SigningKey::from_bytes(&[0x52u8; 32]);
+        fund(&backend, &other, 1000);
+        backend
+            .submit_transaction(signed_transfer(&sk, Address([1u8; 32]), 1, 0))
+            .await
+            .unwrap();
+        backend
+            .submit_transaction(signed_transfer(&sk, Address([1u8; 32]), 1, 1))
+            .await
+            .unwrap();
+
+        let refused = signed_transfer(&other, Address([1u8; 32]), 1, 0);
+        let err = backend.submit_transaction(refused.clone()).await.unwrap_err();
+        assert!(err.to_string().contains("mempool full (max 2)"), "{err}");
+        assert!(!backend.is_pending(&compute_tx_hash(&refused)).await);
+        assert_eq!(backend.mempool.read().await.len(), 2);
+
+        // A block makes room, and the refused transaction then gets in.
+        backend.produce_block().await.unwrap();
+        backend.submit_transaction(refused).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_retry_of_a_pending_transaction_gets_its_hash_from_a_full_pool() {
+        let backend = bounded_backend(1, TEST_TTL_SECS);
+        let sk = SigningKey::from_bytes(&[0x53u8; 32]);
+        fund(&backend, &sk, 1000);
+        let tx = signed_transfer(&sk, Address([1u8; 32]), 1, 0);
+        let first = backend.submit_transaction(tx.clone()).await.unwrap();
+        let again = backend.submit_transaction(tx).await.unwrap();
+        assert_eq!(first, again);
+        assert_eq!(backend.mempool.read().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn the_per_sender_bound_holds_inside_a_larger_global_bound() {
+        let backend = bounded_backend(MAX_PENDING_PER_SENDER * 2, TEST_TTL_SECS);
+        let sk = SigningKey::from_bytes(&[0x54u8; 32]);
+        fund(&backend, &sk, 1_000_000);
+        for nonce in 0..u64::try_from(MAX_PENDING_PER_SENDER).unwrap() {
+            backend
+                .submit_transaction(signed_transfer(&sk, Address([1u8; 32]), 1, nonce))
+                .await
+                .unwrap();
+        }
+        let next = u64::try_from(MAX_PENDING_PER_SENDER).unwrap();
+        let err = backend
+            .submit_transaction(signed_transfer(&sk, Address([1u8; 32]), 1, next))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("too many pending"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn an_expired_nonce_can_be_resubmitted_and_the_next_block_is_valid() {
+        let backend = bounded_backend(16, TEST_TTL_SECS);
+        let sk = SigningKey::from_bytes(&[0x55u8; 32]);
+        let addr = fund(&backend, &sk, 1000);
+        let first = signed_transfer(&sk, Address([1u8; 32]), 10, 0);
+        let second = signed_transfer(&sk, Address([1u8; 32]), 10, 1);
+        backend.submit_transaction(first.clone()).await.unwrap();
+        backend.submit_transaction(second.clone()).await.unwrap();
+        keep_fresh(&backend, &[compute_tx_hash(&second)]).await;
+
+        let evicted = expire(&backend, &compute_tx_hash(&first)).await;
+        assert_eq!(evicted.len(), 2, "the higher nonce goes with it");
+        assert_eq!(evicted[1].reason, EvictionReason::Dependent);
+
+        backend.submit_transaction(first).await.unwrap();
+        backend.submit_transaction(second).await.unwrap();
+        backend.produce_block().await.unwrap();
+        assert_eq!(account(&backend, addr).nonce, 2);
+    }
+
+    #[tokio::test]
+    async fn an_expired_task_takes_the_receipt_bound_to_it_and_what_follows_that() {
+        let backend = bounded_backend(16, TEST_TTL_SECS);
+        let (client, executor) = (
+            SigningKey::from_bytes(&[0x56u8; 32]),
+            SigningKey::from_bytes(&[0x57u8; 32]),
+        );
+        fund(&backend, &client, 100);
+        let executor_addr = fund(&backend, &executor, 100);
+        let (task, task_id) = task_tx_for(&client, &executor, 0, 1);
+        let receipt = valid_anchor_tx(&executor, 0, task_id);
+        let after = signed_transfer(&executor, Address([1u8; 32]), 1, 1);
+        backend.submit_transaction(task.clone()).await.unwrap();
+        backend.submit_transaction(receipt.clone()).await.unwrap();
+        backend.submit_transaction(after.clone()).await.unwrap();
+        keep_fresh(
+            &backend,
+            &[compute_tx_hash(&receipt), compute_tx_hash(&after)],
+        )
+        .await;
+
+        let evicted = expire(&backend, &compute_tx_hash(&task)).await;
+        assert_eq!(evicted.len(), 3, "{evicted:?}");
+        assert_eq!(evicted[0].reason, EvictionReason::Expired);
+        assert!(evicted[1..].iter().all(|e| e.reason == EvictionReason::Dependent));
+
+        backend.submit_transaction(task).await.unwrap();
+        backend.submit_transaction(receipt).await.unwrap();
+        backend.submit_transaction(after).await.unwrap();
+        backend.produce_block().await.unwrap();
+        assert_eq!(account(&backend, executor_addr).nonce, 2);
+    }
+
+    #[tokio::test]
+    async fn dependants_are_followed_across_senders_to_the_end() {
+        let backend = bounded_backend(16, TEST_TTL_SECS);
+        let (client, first, second) = (
+            SigningKey::from_bytes(&[0x62u8; 32]),
+            SigningKey::from_bytes(&[0x63u8; 32]),
+            SigningKey::from_bytes(&[0x64u8; 32]),
+        );
+        fund(&backend, &client, 100);
+        fund(&backend, &first, 100);
+        fund(&backend, &second, 100);
+        let (task_one, id_one) = task_tx_for(&client, &first, 0, 5);
+        let receipt_one = valid_anchor_tx(&first, 0, id_one);
+        let (task_two, id_two) = task_tx_for(&first, &second, 1, 6);
+        let receipt_two = valid_anchor_tx(&second, 0, id_two);
+        let chain = [task_one.clone(), receipt_one, task_two, receipt_two];
+        for tx in &chain {
+            backend.submit_transaction(tx.clone()).await.unwrap();
+        }
+        let rest: Vec<Hash> = chain[1..].iter().map(compute_tx_hash).collect();
+        keep_fresh(&backend, &rest).await;
+
+        let evicted = expire(&backend, &compute_tx_hash(&task_one)).await;
+        assert_eq!(evicted.len(), 4, "{evicted:?}");
+        assert_eq!(backend.mempool.read().await.len(), 0);
+        backend.produce_block().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_pending_transfer_whose_balance_was_spent_elsewhere_is_superseded() {
+        let backend = bounded_backend(16, TEST_TTL_SECS);
+        let sk = SigningKey::from_bytes(&[0x65u8; 32]);
+        let addr = fund(&backend, &sk, 100);
+        let spent_here = signed_transfer(&sk, Address([1u8; 32]), 10, 0);
+        let affordable = signed_transfer(&sk, Address([1u8; 32]), 5, 1);
+        let too_much = signed_transfer(&sk, Address([1u8; 32]), 30, 2);
+        let after = signed_transfer(&sk, Address([1u8; 32]), 1, 3);
+        for tx in [
+            spent_here,
+            affordable.clone(),
+            too_much.clone(),
+            after.clone(),
+        ] {
+            backend.submit_transaction(tx).await.unwrap();
+        }
+
+        // A block from elsewhere spends most of the balance at nonce 0.
+        let block = build_valid_block(
+            &backend,
+            vec![signed_transfer(&sk, Address([2u8; 32]), 80, 0)],
+        );
+        let applied = backend.handle_incoming_block(block).expect("block applies");
+        backend.after_block_committed(&applied).await;
+
+        assert!(backend.is_pending(&compute_tx_hash(&affordable)).await);
+        assert!(!backend.is_pending(&compute_tx_hash(&too_much)).await);
+        assert!(!backend.is_pending(&compute_tx_hash(&after)).await);
+        backend.produce_block().await.unwrap();
+        assert_eq!(account(&backend, addr).balance, 15);
+    }
+
+    #[tokio::test]
+    async fn a_produced_block_removes_what_it_included() {
+        let backend = bounded_backend(16, TEST_TTL_SECS);
+        let sk = SigningKey::from_bytes(&[0x66u8; 32]);
+        fund(&backend, &sk, 100);
+        let tx = signed_transfer(&sk, Address([1u8; 32]), 1, 0);
+        backend.submit_transaction(tx.clone()).await.unwrap();
+        backend.produce_block().await.unwrap();
+        assert!(!backend.is_pending(&compute_tx_hash(&tx)).await);
+        backend.mempool.read().await.assert_consistent();
+    }
+
+    #[tokio::test]
+    async fn a_receipt_stays_when_its_task_reached_the_chain() {
+        let backend = bounded_backend(16, TEST_TTL_SECS);
+        let (client, executor) = (
+            SigningKey::from_bytes(&[0x58u8; 32]),
+            SigningKey::from_bytes(&[0x59u8; 32]),
+        );
+        fund(&backend, &client, 100);
+        fund(&backend, &executor, 100);
+        let (task, task_id) = task_tx_for(&client, &executor, 0, 2);
+        let receipt = valid_anchor_tx(&executor, 0, task_id);
+        backend.submit_transaction(task.clone()).await.unwrap();
+        backend.submit_transaction(receipt.clone()).await.unwrap();
+
+        // The task arrives in a block from elsewhere; the receipt does not.
+        let block = build_valid_block(&backend, vec![task.clone()]);
+        let applied = backend.handle_incoming_block(block).expect("block applies");
+        backend.after_block_committed(&applied).await;
+        assert!(!backend.is_pending(&compute_tx_hash(&task)).await);
+        assert!(backend.is_pending(&compute_tx_hash(&receipt)).await);
+
+        backend.produce_block().await.unwrap();
+        assert!(backend.storage.has_receipt(&task_id).unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_stale_task_takes_its_receipt_when_the_task_never_reached_the_chain() {
+        let backend = bounded_backend(16, TEST_TTL_SECS);
+        let (client, executor) = (
+            SigningKey::from_bytes(&[0x5Au8; 32]),
+            SigningKey::from_bytes(&[0x5Bu8; 32]),
+        );
+        fund(&backend, &client, 100);
+        fund(&backend, &executor, 100);
+        let (task, task_id) = task_tx_for(&client, &executor, 0, 3);
+        let receipt = valid_anchor_tx(&executor, 0, task_id);
+        backend.submit_transaction(task.clone()).await.unwrap();
+        backend.submit_transaction(receipt.clone()).await.unwrap();
+
+        // Another transaction takes the client's nonce 0 in a block from elsewhere.
+        let rival = signed_transfer(&client, Address([1u8; 32]), 1, 0);
+        let block = build_valid_block(&backend, vec![rival]);
+        let applied = backend.handle_incoming_block(block).expect("block applies");
+        backend.after_block_committed(&applied).await;
+
+        assert_eq!(backend.mempool.read().await.len(), 0);
+        backend.produce_block().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_pending_task_registered_through_another_transaction_is_superseded() {
+        let backend = bounded_backend(16, TEST_TTL_SECS);
+        let (client, executor) = (
+            SigningKey::from_bytes(&[0x5Cu8; 32]),
+            SigningKey::from_bytes(&[0x5Du8; 32]),
+        );
+        let client_addr = fund(&backend, &client, 100);
+        fund(&backend, &executor, 100);
+        let filler = signed_transfer(&client, Address([1u8; 32]), 1, 0);
+        let (pending_task, task_id) = task_tx_for(&client, &executor, 1, 4);
+        let later = signed_transfer(&client, Address([1u8; 32]), 1, 2);
+        let receipt = valid_anchor_tx(&executor, 0, task_id);
+        backend.submit_transaction(filler).await.unwrap();
+        backend.submit_transaction(pending_task).await.unwrap();
+        backend.submit_transaction(later).await.unwrap();
+        backend.submit_transaction(receipt.clone()).await.unwrap();
+
+        // A block from elsewhere registers the same task at nonce 0.
+        let (same_task, _) = task_tx_for(&client, &executor, 0, 4);
+        let block = build_valid_block(&backend, vec![same_task]);
+        let applied = backend.handle_incoming_block(block).expect("block applies");
+        backend.after_block_committed(&applied).await;
+
+        // Left in place, the pending copy would fail every block at rule (p).
+        // The receipt stays: the task it needs is now on chain.
+        assert_eq!(
+            backend.mempool.read().await.len(),
+            1,
+            "stale, superseded, dependent"
+        );
+        assert!(backend.is_pending(&compute_tx_hash(&receipt)).await);
+        backend.produce_block().await.unwrap();
+        assert_eq!(account(&backend, client_addr).nonce, 1);
+        assert!(backend.storage.has_receipt(&task_id).unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_pending_receipt_anchored_through_another_transaction_is_superseded() {
+        let backend = bounded_backend(16, TEST_TTL_SECS);
+        let executor = SigningKey::from_bytes(&[0x5Eu8; 32]);
+        let addr = fund(&backend, &executor, 100);
+        let task_id = seed_task(&backend, &executor, [0x5Fu8; 32]);
+        let filler = signed_transfer(&executor, Address([1u8; 32]), 1, 0);
+        let filler_two = signed_transfer(&executor, Address([1u8; 32]), 1, 1);
+        let pending = valid_anchor_tx(&executor, 2, task_id);
+        let after = signed_transfer(&executor, Address([1u8; 32]), 1, 3);
+        for tx in [filler.clone(), filler_two, pending.clone(), after.clone()] {
+            backend.submit_transaction(tx).await.unwrap();
+        }
+
+        // A block from elsewhere anchors the task with a different receipt,
+        // at a nonce below the pending one.
+        let other = signed_anchor_tx(
+            &executor,
+            1,
+            signed_receipt_for(&executor, task_id, vec![9], 1),
+        );
+        let block = build_valid_block(&backend, vec![filler, other]);
+        let applied = backend.handle_incoming_block(block).expect("block applies");
+        backend.after_block_committed(&applied).await;
+
+        assert!(!backend.is_pending(&compute_tx_hash(&pending)).await);
+        assert!(
+            !backend.is_pending(&compute_tx_hash(&after)).await,
+            "its suffix goes too"
+        );
+        backend.produce_block().await.unwrap();
+        assert_eq!(account(&backend, addr).nonce, 2);
+    }
+
+    #[tokio::test]
+    async fn eviction_changes_nothing_on_chain() {
+        let backend = bounded_backend(16, TEST_TTL_SECS);
+        let sk = SigningKey::from_bytes(&[0x60u8; 32]);
+        let addr = fund(&backend, &sk, 1000);
+        let tx = signed_transfer(&sk, Address([1u8; 32]), 10, 0);
+        backend.submit_transaction(tx.clone()).await.unwrap();
+        let (height, head) = (
+            backend.latest_height().unwrap(),
+            backend.get_latest_block_hash().await.unwrap(),
+        );
+
+        assert_eq!(expire(&backend, &compute_tx_hash(&tx)).await.len(), 1);
+
+        assert_eq!(backend.latest_height().unwrap(), height);
+        assert_eq!(backend.get_latest_block_hash().await.unwrap(), head);
+        assert_eq!(account(&backend, addr).balance, 1000);
+        assert_eq!(account(&backend, addr).nonce, 0);
+        assert!(backend.storage.get_transaction(&compute_tx_hash(&tx)).unwrap().is_none());
+    }
+
+    /// A real store, closed and reopened: committed state survives, nothing
+    /// pending does, and resubmission includes the transaction once.
+    #[tokio::test]
+    async fn a_reopened_store_keeps_committed_state_and_a_resubmission_is_included_once() {
+        use mbongo_storage::RocksDbStorage;
+        let dir = std::env::temp_dir().join(format!("mbongo-s3-restart-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let sk = SigningKey::from_bytes(&[0x61u8; 32]);
+        let addr = Address(sk.verifying_key().to_bytes());
+        let included = signed_transfer(&sk, Address([1u8; 32]), 10, 0);
+        let pending = signed_transfer(&sk, Address([1u8; 32]), 10, 1);
+        {
+            let backend = NodeBackend::new(RocksDbStorage::open(&dir).unwrap(), true);
+            backend.ensure_genesis().unwrap();
+            let mut funded = Account::new(addr);
+            funded.balance = 1000;
+            backend.storage.put_account(&addr, &funded).unwrap();
+            backend.submit_transaction(included.clone()).await.unwrap();
+            backend.produce_block().await.unwrap();
+            backend.submit_transaction(pending.clone()).await.unwrap();
+            assert_eq!(backend.mempool.read().await.len(), 1);
+        }
+
+        let restarted = NodeBackend::new(RocksDbStorage::open(&dir).unwrap(), true);
+        restarted.ensure_genesis().unwrap();
+        assert_eq!(restarted.latest_height().unwrap(), 1);
+
+        // The included one answers from storage and is not admitted again.
+        restarted.submit_transaction(included).await.unwrap();
+        assert_eq!(restarted.mempool.read().await.len(), 0);
+        restarted.submit_transaction(pending).await.unwrap();
+        restarted.produce_block().await.unwrap();
+        let after = restarted.storage.get_account(&addr).unwrap().unwrap();
+        assert_eq!((after.nonce, after.balance), (2, 980));
+        restarted.mempool.read().await.assert_consistent();
+        drop(restarted);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
