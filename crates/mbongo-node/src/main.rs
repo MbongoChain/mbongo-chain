@@ -25,6 +25,7 @@
 mod backend;
 mod mempool;
 mod sync_service;
+mod sync_tracker;
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -34,6 +35,7 @@ use clap::Parser;
 use backend::NodeBackend;
 use mbongo_network::{P2PNode, RpcBackend, SyncCommand, SyncEvent, SyncResponse, MAX_RANGE};
 use mbongo_storage::RocksDbStorage;
+use sync_tracker::{BatchOutcome, SyncTracker};
 
 #[derive(Parser, Debug)]
 #[command(name = "mbongo-node")]
@@ -309,66 +311,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //   2. `sync_event_rx` – PeerConnected + sync responses from the P2P layer
 //   3. Internal state  – tracks which peer we are syncing from
 //
-// Strategy (single-peer, devnet-safe):
+// Strategy, with the per-peer rules in `sync_tracker`:
 //   - On PeerConnected → send GetHeight
-//   - On Height(h) response → if h > local, send GetBlocks for next range
-//   - On Blocks([..]) response → apply each block sequentially, then
-//     request next range if not yet caught up
-//   - On NewBlock at height > local+1 → trigger GetHeight from known peer
+//   - On Height(h) response → record it for that peer only
+//   - On Blocks([..]) response → apply each block sequentially
+//   - On NewBlock at height > local+1 → ask that peer its height
+//   - On a failed request, an error or a refused block → back that peer off,
+//     and move to another
+//   - After every event, and when a backoff ends → send what is now due
+
+/// Request the next batch of blocks from `peer`, starting at
+/// `local_height + 1` up to `remote_height`. Returns `true` only when the
+/// command was accepted by the P2P event loop's channel.
+fn request_next_batch(
+    cmd_tx: &tokio::sync::mpsc::UnboundedSender<SyncCommand>,
+    peer: libp2p::PeerId,
+    local_height: u64,
+    remote_height: u64,
+) -> bool {
+    if local_height >= remote_height {
+        return false;
+    }
+    let start = local_height.saturating_add(1);
+    let end = std::cmp::min(
+        remote_height.saturating_add(1),
+        start.saturating_add(MAX_RANGE),
+    );
+    log::info!("Requesting blocks [{start}..{end}) from {peer}");
+    cmd_tx
+        .send(SyncCommand::GetBlocks {
+            peer_id: peer,
+            start_height: start,
+            end_height: end,
+        })
+        .is_ok()
+}
 
 /// Runs the sync orchestrator loop.  Never returns under normal operation.
 #[allow(clippy::too_many_lines)]
 async fn run_sync_orchestrator<S: mbongo_storage::Storage + Send + Sync + 'static>(
     backend: NodeBackend<S>,
-    mut block_rx: tokio::sync::mpsc::UnboundedReceiver<mbongo_core::Block>,
+    mut block_rx: tokio::sync::mpsc::UnboundedReceiver<(libp2p::PeerId, mbongo_core::Block)>,
     mut sync_event_rx: tokio::sync::mpsc::UnboundedReceiver<SyncEvent>,
     cmd_tx: tokio::sync::mpsc::UnboundedSender<SyncCommand>,
 ) {
-    use libp2p::PeerId;
-
-    /// The peer we are currently syncing from, if any.
-    struct SyncState {
-        /// Peer we are syncing from.
-        peer: Option<PeerId>,
-        /// The known remote tip height (from the last Height response).
-        remote_height: u64,
-        /// Whether we have an in-flight GetBlocks request.
-        in_flight: bool,
-    }
-
-    let mut state = SyncState {
-        peer: None,
-        remote_height: 0,
-        in_flight: false,
-    };
-
-    /// Request the next batch of blocks from `peer`, starting at
-    /// `local_height + 1` up to `remote_height`.  Sends a `GetBlocks`
-    /// command via `cmd_tx`.  Returns `true` if a request was sent.
-    fn request_next_batch(
-        cmd_tx: &tokio::sync::mpsc::UnboundedSender<SyncCommand>,
-        peer: PeerId,
-        local_height: u64,
-        remote_height: u64,
-    ) -> bool {
-        if local_height >= remote_height {
-            return false;
-        }
-        let start = local_height + 1;
-        let end = std::cmp::min(remote_height + 1, start + MAX_RANGE);
-        log::info!("Requesting blocks [{start}..{end}) from {peer}");
-        let _ = cmd_tx.send(SyncCommand::GetBlocks {
-            peer_id: peer,
-            start_height: start,
-            end_height: end,
-        });
-        true
-    }
+    let mut tracker = SyncTracker::default();
 
     loop {
+        let wake = tracker.next_wake(tokio::time::Instant::now());
         tokio::select! {
-            // ── Inbound block announcements (push) ────────────────────
-            Some(block) = block_rx.recv() => {
+            // ── Inbound block announcements (push) ──────────
+            Some((peer_id, block)) = block_rx.recv() => {
                 let incoming_height = block.header.height;
                 let local_height = match backend.latest_height() {
                     Ok(h) => h,
@@ -378,124 +371,141 @@ async fn run_sync_orchestrator<S: mbongo_storage::Storage + Send + Sync + 'stati
                     }
                 };
 
-                if incoming_height == local_height + 1 {
+                if incoming_height == local_height.saturating_add(1) {
                     // Next expected block — apply directly.
                     if let Some(applied) = backend.handle_incoming_block(block) {
                         backend.after_block_committed(&applied).await;
+                        tracker.peer_progressed(peer_id);
+                    } else {
+                        tracker.peer_failed(peer_id, tokio::time::Instant::now());
                     }
-                } else if incoming_height > local_height + 1 {
-                    // Gap detected — trigger sync from a known peer.
+                } else if incoming_height > local_height {
+                    // Gap: the peer may be ahead, so ask it. The announced
+                    // height itself proves nothing.
                     log::info!(
                         "Gap detected: local={local_height}, incoming={incoming_height}; \
-                         triggering sync"
+                         asking {peer_id}"
                     );
-                    if let Some(peer) = state.peer {
-                        if !state.in_flight {
-                            // Update remote height to at least incoming_height.
-                            if incoming_height > state.remote_height {
-                                state.remote_height = incoming_height;
-                            }
-                            state.in_flight = request_next_batch(
-                                &cmd_tx,
-                                peer,
-                                local_height,
-                                state.remote_height,
-                            );
-                        }
-                    }
-                    // else: incoming_height <= local_height → already have it, ignore.
+                    tracker.ask_height(peer_id);
                 }
+                // else: incoming_height <= local_height → already have it, ignore.
             }
-            // ── Sync events from P2P layer ────────────────────────────
+            // ── Sync events from P2P layer ──────────────
             Some(event) = sync_event_rx.recv() => {
+                let now = tokio::time::Instant::now();
                 match event {
                     SyncEvent::PeerConnected { peer_id } => {
-                        log::info!("Peer connected: {peer_id}; sending GetHeight");
-                        // Remember this peer for future sync requests.
-                        if state.peer.is_none() {
-                            state.peer = Some(peer_id);
-                        }
-                        // Ask for their height.
-                        let _ = cmd_tx.send(SyncCommand::GetHeight { peer_id });
+                        log::info!("Peer connected: {peer_id}");
+                        tracker.peer_connected(peer_id);
                     }
-                    SyncEvent::ResponseReceived { peer_id, response } => {
-                        match response {
-                            SyncResponse::Height(remote_h) => {
-                                let local_height = match backend.latest_height() {
-                                    Ok(h) => h,
-                                    Err(e) => {
-                                        log::warn!("Failed to read local height: {e}");
-                                        continue;
-                                    }
-                                };
-                                log::info!(
-                                    "Peer {peer_id} height={remote_h}, local={local_height}"
-                                );
-                                state.peer = Some(peer_id);
-                                state.remote_height = remote_h;
-
-                                if remote_h > local_height && !state.in_flight {
-                                    state.in_flight = request_next_batch(
-                                        &cmd_tx,
-                                        peer_id,
-                                        local_height,
-                                        remote_h,
-                                    );
-                                }
-                            }
-                            SyncResponse::Blocks(blocks) => {
-                                state.in_flight = false;
-                                let count = blocks.len();
-                                log::info!(
-                                    "Received {count} blocks from {peer_id}"
-                                );
-                                // Apply blocks sequentially.
-                                for (_hash, block) in blocks {
-                                    let h = block.header.height;
-                                    match backend.apply_block(&block) {
-                                        Ok(bh) => {
-                                            log::info!(
-                                                "Applied synced block: height={h}, hash={bh}"
-                                            );
-                                            backend.after_block_committed(&block).await;
-                                        }
-                                        Err(e) => {
-                                            log::warn!(
-                                                "Failed to apply synced block at height {h}: {e}"
-                                            );
-                                            // Stop this batch — blocks are sequential.
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                // Check if we need more blocks.
-                                let local_height = match backend.latest_height() {
-                                    Ok(h) => h,
-                                    Err(e) => {
-                                        log::warn!("Failed to read local height: {e}");
-                                        continue;
-                                    }
-                                };
-                                if local_height < state.remote_height {
-                                    if let Some(peer) = state.peer {
-                                        state.in_flight = request_next_batch(
-                                            &cmd_tx,
-                                            peer,
-                                            local_height,
-                                            state.remote_height,
-                                        );
-                                    }
-                                }
-                            }
-                            SyncResponse::Error(e) => {
-                                state.in_flight = false;
-                                log::warn!("Sync error from {peer_id}: {e}");
+                    SyncEvent::PeerDisconnected { peer_id, abnormal } => {
+                        tracker.peer_disconnected(peer_id, abnormal, now);
+                    }
+                    SyncEvent::RequestFailed { peer_id, kind } => {
+                        log::warn!("Sync request to {peer_id} failed: {kind:?}");
+                        tracker.request_failed(peer_id, kind, now);
+                    }
+                    SyncEvent::ResponseReceived { peer_id, response } => match response {
+                        SyncResponse::Height(remote_h) => {
+                            log::info!("Peer {peer_id} height={remote_h}");
+                            tracker.height_answered(peer_id, remote_h);
+                        }
+                        SyncResponse::Blocks(blocks) => {
+                            if let Some(start) = tracker.expected_start(&peer_id) {
+                                log::info!("Received {} blocks from {peer_id}", blocks.len());
+                                let outcome = apply_synced_blocks(&backend, blocks, start).await;
+                                tracker.blocks_answered(peer_id, outcome, now);
+                            } else {
+                                log::warn!("Ignoring blocks from {peer_id}: none were asked");
                             }
                         }
-                    }
+                        SyncResponse::Error(e) => {
+                            log::warn!("Sync error from {peer_id}: {e}");
+                            tracker.error_answered(peer_id, now);
+                        }
+                    },
                 }
             }
+            // ── A backoff ended, with nothing else to wake us ──────
+            () = tokio::time::sleep_until(wake.unwrap_or_else(tokio::time::Instant::now)),
+                if wake.is_some() =>
+            {
+                tracker.release_expired(tokio::time::Instant::now());
+            }
+            else => break,
+        }
+
+        send_due_requests(&backend, &mut tracker, &cmd_tx);
+    }
+}
+
+/// Applies a block answer in order, and says what it amounted to. Blocks at or
+/// below the local height are skipped: a pushed block may have arrived first.
+/// That also moves the local height to `start` or past it, so an answer that
+/// applies nothing and leaves the node below `start` did not answer the request.
+async fn apply_synced_blocks<S: mbongo_storage::Storage + Send + Sync + 'static>(
+    backend: &NodeBackend<S>,
+    blocks: Vec<(mbongo_core::Hash, mbongo_core::Block)>,
+    start: u64,
+) -> BatchOutcome {
+    if blocks.is_empty() {
+        return BatchOutcome::Empty;
+    }
+    let mut applied = 0usize;
+    for (_hash, block) in blocks {
+        let h = block.header.height;
+        match backend.latest_height() {
+            Ok(local) if h <= local => continue,
+            Ok(_) => {}
+            Err(e) => {
+                log::warn!("Failed to read local height: {e}");
+                return BatchOutcome::Refused;
+            }
+        }
+        match backend.apply_block(&block) {
+            Ok(bh) => {
+                log::info!("Applied synced block: height={h}, hash={bh}");
+                backend.after_block_committed(&block).await;
+                applied += 1;
+            }
+            Err(e) => {
+                log::warn!("Failed to apply synced block at height {h}: {e}");
+                // Stop this batch — blocks are sequential.
+                return BatchOutcome::Refused;
+            }
+        }
+    }
+    if applied > 0 {
+        return BatchOutcome::Progress;
+    }
+    match backend.latest_height() {
+        Ok(local) if local >= start => BatchOutcome::AlreadyHeld,
+        _ => BatchOutcome::Refused,
+    }
+}
+
+/// Sends what is due now: height requests, and at most one block request.
+fn send_due_requests<S: mbongo_storage::Storage + Send + Sync + 'static>(
+    backend: &NodeBackend<S>,
+    tracker: &mut SyncTracker,
+    cmd_tx: &tokio::sync::mpsc::UnboundedSender<SyncCommand>,
+) {
+    let now = tokio::time::Instant::now();
+    for peer_id in tracker.heights_due(now) {
+        if cmd_tx.send(SyncCommand::GetHeight { peer_id }).is_ok() {
+            tracker.height_requested(peer_id);
+        }
+    }
+    let local_height = match backend.latest_height() {
+        Ok(h) => h,
+        Err(e) => {
+            log::warn!("Failed to read local height: {e}");
+            return;
+        }
+    };
+    if let Some((peer, remote_height)) = tracker.block_source(local_height, now) {
+        if request_next_batch(cmd_tx, peer, local_height, remote_height) {
+            tracker.blocks_requested(peer, local_height.saturating_add(1));
         }
     }
 }
@@ -503,6 +513,7 @@ async fn run_sync_orchestrator<S: mbongo_storage::Storage + Send + Sync + 'stati
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mbongo_storage::InMemoryStorage;
 
     #[test]
     fn it_works() {
@@ -676,7 +687,7 @@ mod tests {
             event_rx,
             cmd_tx,
         ));
-        block_tx.send(block).unwrap();
+        block_tx.send((libp2p::PeerId::random(), block)).unwrap();
         wait_until_not_pending(&node, &hash).await;
         assert_eq!(node.latest_height().unwrap(), 1);
         task.abort();
@@ -686,7 +697,7 @@ mod tests {
         let (node, hash, block) = node_with_a_pending_transaction_and_a_block(pending_amount).await;
         let (_block_tx, block_rx) = tokio::sync::mpsc::unbounded_channel();
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel();
         let task = tokio::spawn(run_sync_orchestrator(
             node.clone(),
             block_rx,
@@ -695,6 +706,14 @@ mod tests {
         ));
         let peer_id = libp2p::PeerId::random();
         event_tx.send(SyncEvent::PeerConnected { peer_id }).unwrap();
+        next_command(&mut cmd_rx).await;
+        event_tx
+            .send(SyncEvent::ResponseReceived {
+                peer_id,
+                response: SyncResponse::Height(1),
+            })
+            .unwrap();
+        next_command(&mut cmd_rx).await;
         let block_hash = backend::compute_block_hash(&block);
         event_tx
             .send(SyncEvent::ResponseReceived {
@@ -725,5 +744,318 @@ mod tests {
     #[tokio::test]
     async fn the_orchestrator_removes_a_stale_transaction_on_a_synced_block() {
         synced_block_clears(6).await;
+    }
+
+    #[test]
+    fn next_batch_is_not_in_flight_when_command_channel_is_closed() {
+        let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+        drop(cmd_rx);
+
+        assert!(!request_next_batch(&cmd_tx, libp2p::PeerId::random(), 0, 1));
+    }
+
+    type Commands = tokio::sync::mpsc::UnboundedReceiver<SyncCommand>;
+
+    async fn next_command(commands: &mut Commands) -> SyncCommand {
+        tokio::time::timeout(std::time::Duration::from_secs(1), commands.recv())
+            .await
+            .expect("no command in time")
+            .expect("channel open")
+    }
+
+    /// Lets the orchestrator run, then proves it sent nothing.
+    async fn assert_silent(commands: &mut Commands, wait: std::time::Duration) {
+        assert!(
+            tokio::time::timeout(wait, commands.recv()).await.is_err(),
+            "unexpected command"
+        );
+    }
+
+    struct Harness {
+        events: tokio::sync::mpsc::UnboundedSender<SyncEvent>,
+        blocks: tokio::sync::mpsc::UnboundedSender<(libp2p::PeerId, mbongo_core::Block)>,
+        commands: Commands,
+        task: tokio::task::JoinHandle<()>,
+        node: NodeBackend<InMemoryStorage>,
+    }
+
+    fn harness() -> Harness {
+        let node = NodeBackend::new(InMemoryStorage::new(), false);
+        node.ensure_genesis().unwrap();
+        let (blocks, block_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (events, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (cmd_tx, commands) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(run_sync_orchestrator(
+            node.clone(),
+            block_rx,
+            event_rx,
+            cmd_tx,
+        ));
+        Harness {
+            events,
+            blocks,
+            commands,
+            task,
+            node,
+        }
+    }
+
+    impl Harness {
+        /// A peer connects, is asked its height, and answers.
+        async fn report(&mut self, peer_id: libp2p::PeerId, height: u64) {
+            self.events.send(SyncEvent::PeerConnected { peer_id }).unwrap();
+            assert!(is_height_to(
+                &next_command(&mut self.commands).await,
+                peer_id
+            ));
+            self.answer(peer_id, SyncResponse::Height(height));
+        }
+
+        /// Waits for a pushed block: the two channels have no order between them.
+        async fn applied(&self, height: u64) {
+            for _ in 0..1000 {
+                if self.node.latest_height().unwrap() == height {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+            panic!("height {height} was not reached");
+        }
+
+        fn answer(&self, peer_id: libp2p::PeerId, response: SyncResponse) {
+            self.events.send(SyncEvent::ResponseReceived { peer_id, response }).unwrap();
+        }
+
+        fn failed(&self, peer_id: libp2p::PeerId, kind: mbongo_network::SyncRequestKind) {
+            self.events.send(SyncEvent::RequestFailed { peer_id, kind }).unwrap();
+        }
+    }
+
+    fn is_blocks_to(command: &SyncCommand, peer: libp2p::PeerId) -> bool {
+        matches!(command, SyncCommand::GetBlocks { peer_id, .. } if *peer_id == peer)
+    }
+
+    fn is_height_to(command: &SyncCommand, peer: libp2p::PeerId) -> bool {
+        matches!(command, SyncCommand::GetHeight { peer_id } if *peer_id == peer)
+    }
+
+    /// A single peer, whose request fails, is asked again with no other event.
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_block_request_is_retried_on_its_own_after_the_backoff() {
+        let mut h = harness();
+        let peer = libp2p::PeerId::random();
+        h.report(peer, 1).await;
+        assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));
+
+        h.failed(peer, mbongo_network::SyncRequestKind::Blocks);
+        assert_silent(&mut h.commands, std::time::Duration::from_millis(900)).await;
+        assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));
+        h.task.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_height_request_is_retried_on_its_own_after_the_backoff() {
+        let mut h = harness();
+        let peer = libp2p::PeerId::random();
+        h.events.send(SyncEvent::PeerConnected { peer_id: peer }).unwrap();
+        assert!(is_height_to(&next_command(&mut h.commands).await, peer));
+
+        h.failed(peer, mbongo_network::SyncRequestKind::Height);
+        assert_silent(&mut h.commands, std::time::Duration::from_millis(900)).await;
+        assert!(is_height_to(&next_command(&mut h.commands).await, peer));
+        h.task.abort();
+    }
+
+    /// Repeated failures slow down, up to the cap, and never spin.
+    #[tokio::test(start_paused = true)]
+    async fn repeated_failures_do_not_hot_loop() {
+        let mut h = harness();
+        let peer = libp2p::PeerId::random();
+        h.report(peer, 1).await;
+        let mut requests = 0u32;
+        let start = tokio::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_secs(300) {
+            let Ok(Some(command)) =
+                tokio::time::timeout(std::time::Duration::from_secs(70), h.commands.recv()).await
+            else {
+                panic!("the retries stopped");
+            };
+            assert!(is_blocks_to(&command, peer));
+            requests += 1;
+            assert!(requests <= 11, "too many requests");
+            h.answer(peer, SyncResponse::Blocks(Vec::new()));
+        }
+        // At 0, 1, 3, 7, 15, 31, 63, then every 60 seconds: the last at 303.
+        assert_eq!(requests, 11);
+        h.task.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_lost_peer_releases_the_request_and_another_takes_over() {
+        let mut h = harness();
+        let (gone, stays) = (libp2p::PeerId::random(), libp2p::PeerId::random());
+        h.report(gone, 5).await;
+        assert!(is_blocks_to(&next_command(&mut h.commands).await, gone));
+        h.report(stays, 4).await;
+        assert_silent(&mut h.commands, std::time::Duration::from_millis(50)).await;
+
+        h.events
+            .send(SyncEvent::PeerDisconnected {
+                peer_id: gone,
+                abnormal: true,
+            })
+            .unwrap();
+        assert!(is_height_to(&next_command(&mut h.commands).await, stays));
+        assert!(is_blocks_to(&next_command(&mut h.commands).await, stays));
+        h.task.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn blocks_from_a_peer_not_asked_change_nothing() {
+        let mut h = harness();
+        let (asked, other) = (libp2p::PeerId::random(), libp2p::PeerId::random());
+        h.report(asked, 1).await;
+        assert!(is_blocks_to(&next_command(&mut h.commands).await, asked));
+
+        h.answer(other, SyncResponse::Blocks(Vec::new()));
+        assert_silent(&mut h.commands, std::time::Duration::from_secs(5)).await;
+        h.failed(asked, mbongo_network::SyncRequestKind::Blocks);
+        assert_silent(&mut h.commands, std::time::Duration::from_millis(900)).await;
+        assert!(is_blocks_to(&next_command(&mut h.commands).await, asked));
+        h.task.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_gap_asks_the_announcing_peer_and_does_not_believe_it() {
+        let mut h = harness();
+        let peer = libp2p::PeerId::random();
+        h.report(peer, 0).await;
+        h.blocks.send((peer, sample_block(50))).unwrap();
+        assert!(is_height_to(&next_command(&mut h.commands).await, peer));
+        assert_silent(&mut h.commands, std::time::Duration::from_secs(5)).await;
+        assert_eq!(h.node.latest_height().unwrap(), 0);
+        h.task.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_refused_block_backs_off_instead_of_asking_again_at_once() {
+        let mut h = harness();
+        let peer = libp2p::PeerId::random();
+        h.report(peer, 1).await;
+        assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));
+
+        let bad = sample_block(1);
+        let hash = backend::compute_block_hash(&bad);
+        h.answer(peer, SyncResponse::Blocks(vec![(hash, bad)]));
+        assert_silent(&mut h.commands, std::time::Duration::from_millis(900)).await;
+        assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));
+        assert_eq!(h.node.latest_height().unwrap(), 0);
+        h.task.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_largest_possible_height_does_not_panic() {
+        let mut h = harness();
+        let peer = libp2p::PeerId::random();
+        h.report(peer, u64::MAX).await;
+        let SyncCommand::GetBlocks {
+            start_height,
+            end_height,
+            ..
+        } = next_command(&mut h.commands).await
+        else {
+            panic!("expected a block request");
+        };
+        assert_eq!(start_height, 1);
+        assert_eq!(end_height, 1 + MAX_RANGE);
+        assert!(!h.task.is_finished());
+        h.task.abort();
+    }
+
+    /// Valid empty blocks 1 to `count`, from a chain with the same genesis.
+    async fn chain(count: u64) -> Vec<(mbongo_core::Hash, mbongo_core::Block)> {
+        use mbongo_storage::Storage;
+        let producer = NodeBackend::new(InMemoryStorage::new(), true);
+        producer.ensure_genesis().unwrap();
+        let mut blocks = Vec::new();
+        for height in 1..=count {
+            producer.produce_block().await.unwrap();
+            let block = producer.storage.get_block_by_height(height).unwrap().unwrap();
+            blocks.push((backend::compute_block_hash(&block), block));
+        }
+        blocks
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_next_batch_is_asked_after_progress() {
+        let mut h = harness();
+        let peer = libp2p::PeerId::random();
+        let mut blocks = chain(2).await;
+        let second = blocks.pop().unwrap();
+        h.report(peer, 2).await;
+        assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));
+
+        h.answer(peer, SyncResponse::Blocks(blocks));
+        let SyncCommand::GetBlocks { start_height, .. } = next_command(&mut h.commands).await
+        else {
+            panic!("expected a block request");
+        };
+        assert_eq!(start_height, 2);
+        h.answer(peer, SyncResponse::Blocks(vec![second]));
+        assert_silent(&mut h.commands, std::time::Duration::from_secs(5)).await;
+        assert_eq!(h.node.latest_height().unwrap(), 2);
+        h.task.abort();
+    }
+
+    /// A pushed block overtakes the answer: no fault of the peer.
+    #[tokio::test(start_paused = true)]
+    async fn a_batch_overlapping_a_pushed_block_is_no_failure() {
+        let mut h = harness();
+        let peer = libp2p::PeerId::random();
+        let blocks = chain(1).await;
+        h.report(peer, 2).await;
+        assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));
+
+        h.blocks.send((peer, blocks[0].1.clone())).unwrap();
+        h.applied(1).await;
+        h.answer(peer, SyncResponse::Blocks(blocks));
+        let start = tokio::time::Instant::now();
+        assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));
+        assert_eq!(start.elapsed(), std::time::Duration::ZERO, "no backoff");
+        h.task.abort();
+    }
+
+    /// Old blocks in answer to a request for new ones are not an overlap.
+    #[tokio::test(start_paused = true)]
+    async fn old_blocks_in_place_of_those_asked_back_the_peer_off() {
+        let mut h = harness();
+        let peer = libp2p::PeerId::random();
+        let blocks = chain(1).await;
+        h.report(peer, 0).await;
+        h.blocks.send((peer, blocks[0].1.clone())).unwrap();
+        h.applied(1).await;
+        h.answer(peer, SyncResponse::Height(9));
+        assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));
+
+        h.answer(peer, SyncResponse::Blocks(blocks));
+        assert_silent(&mut h.commands, std::time::Duration::from_millis(900)).await;
+        assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));
+        h.task.abort();
+    }
+
+    /// A block with a parent this node does not have: refused by `apply_block`.
+    fn sample_block(height: u64) -> mbongo_core::Block {
+        mbongo_core::Block {
+            header: mbongo_core::BlockHeader {
+                parent_hash: mbongo_core::Hash([9u8; 32]),
+                state_root: mbongo_core::Hash::zero(),
+                transactions_root: mbongo_core::Hash::zero(),
+                timestamp: 1,
+                height,
+            },
+            body: mbongo_core::BlockBody {
+                transactions: Vec::new(),
+            },
+        }
     }
 }
