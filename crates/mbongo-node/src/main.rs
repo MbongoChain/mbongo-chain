@@ -811,6 +811,17 @@ mod tests {
             self.answer(peer_id, SyncResponse::Height(height));
         }
 
+        /// Waits for a pushed block: the two channels have no order between them.
+        async fn applied(&self, height: u64) {
+            for _ in 0..1000 {
+                if self.node.latest_height().unwrap() == height {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+            panic!("height {height} was not reached");
+        }
+
         fn answer(&self, peer_id: libp2p::PeerId, response: SyncResponse) {
             self.events.send(SyncEvent::ResponseReceived { peer_id, response }).unwrap();
         }
@@ -1006,6 +1017,7 @@ mod tests {
         assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));
 
         h.blocks.send((peer, blocks[0].1.clone())).unwrap();
+        h.applied(1).await;
         h.answer(peer, SyncResponse::Blocks(blocks));
         let start = tokio::time::Instant::now();
         assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));
@@ -1021,13 +1033,7 @@ mod tests {
         let blocks = chain(1).await;
         h.report(peer, 0).await;
         h.blocks.send((peer, blocks[0].1.clone())).unwrap();
-        for _ in 0..1000 {
-            if h.node.latest_height().unwrap() == 1 {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-        assert_eq!(h.node.latest_height().unwrap(), 1);
+        h.applied(1).await;
         h.answer(peer, SyncResponse::Height(9));
         assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));
 
