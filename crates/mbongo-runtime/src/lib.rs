@@ -1,7 +1,7 @@
 //! WebAssembly smart contract runtime for Mbongo Chain.
 //!
 //! This crate provides the execution environment for smart contracts:
-//! - WASM VM (wasmtime)
+//! - WASM VM (not implemented)
 //! - Native precompiled contracts
 //! - Gas metering
 //! - Contract storage interface

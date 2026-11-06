@@ -104,7 +104,14 @@ struct Args {
     #[arg(long, default_value_t = mempool::DEFAULT_TTL_SECS)]
     mempool_ttl_secs: u64,
 
-    /// Bootnodes (multiaddr format)
+    /// File holding this node's P2P identity: a 32-byte seed as 64 hex
+    /// characters. Without it, the peer id changes at each start. Not an
+    /// authority or account key.
+    #[arg(long)]
+    node_key_file: Option<std::path::PathBuf>,
+
+    /// Bootnodes (multiaddr format). They are redialed whenever they are not
+    /// connected, with a bounded backoff
     #[arg(long)]
     bootnodes: Vec<String>,
 
@@ -174,6 +181,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mempool_config =
         mempool::MempoolConfig::new(args.mempool_max_pending, args.mempool_ttl_secs)?;
 
+    let node_identity =
+        args.node_key_file.as_deref().map(mbongo_network::load_node_key).transpose()?;
+
     // Initialize storage
     let storage =
         RocksDbStorage::open(&args.data_dir).map_err(|e| format!("failed to open storage: {e}"))?;
@@ -188,7 +198,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Genesis:  OK");
 
     // ── P2P ────────────────────────────────────────────────────────────
-    let mut p2p = P2PNode::with_mdns(!args.no_mdns)?;
+    let mut p2p = P2PNode::with_identity(!args.no_mdns, node_identity)?;
     println!("  PeerId:   {}", p2p.peer_id);
     // Printed only with --no-mdns: the default node's output is unchanged.
     if !p2p.mdns_enabled() {
@@ -198,8 +208,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     p2p.listen_on_host(args.p2p_host, args.p2p_port)?;
 
     for addr in &args.bootnodes {
-        if let Err(e) = p2p.dial(addr) {
-            eprintln!("  Failed to dial bootnode {addr}: {e}");
+        if let Err(e) = p2p.add_bootnode(addr) {
+            eprintln!("  Invalid bootnode {addr}: {e}");
         }
     }
 
@@ -358,7 +368,12 @@ async fn run_sync_orchestrator<S: mbongo_storage::Storage + Send + Sync + 'stati
     let mut tracker = SyncTracker::default();
 
     loop {
-        let wake = tracker.next_wake(tokio::time::Instant::now());
+        // One reading of the clock: a retry is either sent now or waited for,
+        // and cannot fall between the two.
+        let now = tokio::time::Instant::now();
+        tracker.release_expired(now);
+        send_due_requests(&backend, &mut tracker, &cmd_tx, now);
+        let wake = tracker.next_wake(now);
         tokio::select! {
             // ── Inbound block announcements (push) ──────────
             Some((peer_id, block)) = block_rx.recv() => {
@@ -428,14 +443,9 @@ async fn run_sync_orchestrator<S: mbongo_storage::Storage + Send + Sync + 'stati
             }
             // ── A backoff ended, with nothing else to wake us ──────
             () = tokio::time::sleep_until(wake.unwrap_or_else(tokio::time::Instant::now)),
-                if wake.is_some() =>
-            {
-                tracker.release_expired(tokio::time::Instant::now());
-            }
+                if wake.is_some() => {}
             else => break,
         }
-
-        send_due_requests(&backend, &mut tracker, &cmd_tx);
     }
 }
 
@@ -489,8 +499,8 @@ fn send_due_requests<S: mbongo_storage::Storage + Send + Sync + 'static>(
     backend: &NodeBackend<S>,
     tracker: &mut SyncTracker,
     cmd_tx: &tokio::sync::mpsc::UnboundedSender<SyncCommand>,
+    now: tokio::time::Instant,
 ) {
-    let now = tokio::time::Instant::now();
     for peer_id in tracker.heights_due(now) {
         if cmd_tx.send(SyncCommand::GetHeight { peer_id }).is_ok() {
             tracker.height_requested(peer_id);
