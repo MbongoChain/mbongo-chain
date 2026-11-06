@@ -13,7 +13,7 @@
       "kind": "unmaintained",
       "package": "mach",
       "version": "0.3.2",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -27,7 +27,7 @@
       "kind": "vulnerability",
       "package": "rsa",
       "version": "0.9.10",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-compute",
         "mbongo-node"
@@ -41,7 +41,7 @@
       "kind": "unmaintained",
       "package": "proc-macro-error",
       "version": "1.0.4",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-api",
         "mbongo-node"
@@ -55,7 +55,7 @@
       "kind": "unmaintained",
       "package": "instant",
       "version": "0.1.13",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-network",
         "mbongo-node"
@@ -69,7 +69,7 @@
       "kind": "unmaintained",
       "package": "paste",
       "version": "1.0.15",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-network",
         "mbongo-node",
@@ -84,7 +84,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -98,7 +98,7 @@
       "kind": "unsound",
       "package": "wasmtime-jit-debug",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -112,7 +112,7 @@
       "kind": "vulnerability",
       "package": "ring",
       "version": "0.16.20",
-      "scope": "runtime",
+      "scope": "compiled-build-or-test",
       "reached_by": [
         "mbongo-network",
         "mbongo-node"
@@ -126,7 +126,7 @@
       "kind": "unmaintained",
       "package": "ring",
       "version": "0.16.20",
-      "scope": "runtime",
+      "scope": "compiled-build-or-test",
       "reached_by": [
         "mbongo-network",
         "mbongo-node"
@@ -140,7 +140,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -154,7 +154,7 @@
       "kind": "unmaintained",
       "package": "fxhash",
       "version": "0.2.1",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -168,7 +168,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -182,7 +182,7 @@
       "kind": "unmaintained",
       "package": "bincode",
       "version": "1.3.3",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -196,7 +196,7 @@
       "kind": "unsound",
       "package": "lru",
       "version": "0.12.5",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-network",
         "mbongo-node"
@@ -210,7 +210,7 @@
       "kind": "vulnerability",
       "package": "bytes",
       "version": "1.11.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-api",
         "mbongo-compute",
@@ -228,7 +228,7 @@
       "kind": "vulnerability",
       "package": "time",
       "version": "0.3.44",
-      "scope": "runtime",
+      "scope": "compiled-build-or-test",
       "reached_by": [
         "mbongo-network",
         "mbongo-node"
@@ -242,7 +242,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -256,7 +256,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -270,12 +270,8 @@
       "kind": "vulnerability",
       "package": "quinn-proto",
       "version": "0.11.13",
-      "scope": "runtime",
-      "reached_by": [
-        "mbongo-compute",
-        "mbongo-network",
-        "mbongo-node"
-      ],
+      "scope": "lock-only",
+      "reached_by": [],
       "title": "Denial of service in Quinn endpoints",
       "status": "open",
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
@@ -285,7 +281,7 @@
       "kind": "vulnerability",
       "package": "rustls-webpki",
       "version": "0.103.8",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-compute",
         "mbongo-network",
@@ -300,7 +296,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -314,7 +310,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -328,7 +324,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -342,7 +338,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -356,7 +352,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -370,7 +366,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -384,7 +380,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -398,7 +394,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -412,7 +408,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -426,7 +422,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -440,7 +436,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -454,7 +450,7 @@
       "kind": "unsound",
       "package": "rand",
       "version": "0.8.5",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-compute",
         "mbongo-network",
@@ -469,7 +465,7 @@
       "kind": "unsound",
       "package": "rand",
       "version": "0.9.2",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-compute",
         "mbongo-network",
@@ -484,11 +480,8 @@
       "kind": "vulnerability",
       "package": "rustls-webpki",
       "version": "0.101.7",
-      "scope": "runtime",
-      "reached_by": [
-        "mbongo-network",
-        "mbongo-node"
-      ],
+      "scope": "lock-only",
+      "reached_by": [],
       "title": "Name constraints for URI names were incorrectly accepted",
       "status": "open",
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
@@ -498,7 +491,7 @@
       "kind": "vulnerability",
       "package": "rustls-webpki",
       "version": "0.103.8",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-compute",
         "mbongo-network",
@@ -513,11 +506,8 @@
       "kind": "vulnerability",
       "package": "rustls-webpki",
       "version": "0.101.7",
-      "scope": "runtime",
-      "reached_by": [
-        "mbongo-network",
-        "mbongo-node"
-      ],
+      "scope": "lock-only",
+      "reached_by": [],
       "title": "Name constraints were accepted for certificates asserting a wildcard name",
       "status": "open",
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
@@ -527,7 +517,7 @@
       "kind": "vulnerability",
       "package": "rustls-webpki",
       "version": "0.103.8",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-compute",
         "mbongo-network",
@@ -542,11 +532,8 @@
       "kind": "vulnerability",
       "package": "rustls-webpki",
       "version": "0.101.7",
-      "scope": "runtime",
-      "reached_by": [
-        "mbongo-network",
-        "mbongo-node"
-      ],
+      "scope": "lock-only",
+      "reached_by": [],
       "title": "Reachable panic in certificate revocation list parsing",
       "status": "open",
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
@@ -556,7 +543,7 @@
       "kind": "vulnerability",
       "package": "rustls-webpki",
       "version": "0.103.8",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-compute",
         "mbongo-network",
@@ -571,7 +558,7 @@
       "kind": "unmaintained",
       "package": "core2",
       "version": "0.4.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-network",
         "mbongo-node"
@@ -585,7 +572,7 @@
       "kind": "vulnerability",
       "package": "hickory-proto",
       "version": "0.24.4",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-network",
         "mbongo-node"
@@ -599,12 +586,8 @@
       "kind": "vulnerability",
       "package": "quinn-proto",
       "version": "0.11.13",
-      "scope": "runtime",
-      "reached_by": [
-        "mbongo-compute",
-        "mbongo-network",
-        "mbongo-node"
-      ],
+      "scope": "lock-only",
+      "reached_by": [],
       "title": "Remote memory exhaustion in quinn-proto from unbounded out-of-order stream reassembly",
       "status": "open",
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
@@ -614,7 +597,7 @@
       "kind": "unsound",
       "package": "anyhow",
       "version": "1.0.100",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-api",
         "mbongo-compute",
@@ -636,7 +619,7 @@
       "kind": "vulnerability",
       "package": "crossbeam-epoch",
       "version": "0.9.18",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -650,7 +633,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -664,7 +647,7 @@
       "kind": "unsound",
       "package": "lru",
       "version": "0.12.5",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-network",
         "mbongo-node"
@@ -678,11 +661,8 @@
       "kind": "vulnerability",
       "package": "h2",
       "version": "0.3.27",
-      "scope": "runtime",
-      "reached_by": [
-        "mbongo-network",
-        "mbongo-node"
-      ],
+      "scope": "lock-only",
+      "reached_by": [],
       "title": "h2 unbounded empty DATA frames",
       "status": "open",
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
@@ -692,7 +672,7 @@
       "kind": "vulnerability",
       "package": "h2",
       "version": "0.4.13",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-api",
         "mbongo-compute",
@@ -708,7 +688,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -722,7 +702,7 @@
       "kind": "vulnerability",
       "package": "rustls",
       "version": "0.23.35",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-compute",
         "mbongo-network",
@@ -737,7 +717,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -751,12 +731,8 @@
       "kind": "vulnerability",
       "package": "quinn-proto",
       "version": "0.11.13",
-      "scope": "runtime",
-      "reached_by": [
-        "mbongo-compute",
-        "mbongo-network",
-        "mbongo-node"
-      ],
+      "scope": "lock-only",
+      "reached_by": [],
       "title": "Remote peer can panic quinn-proto with zero-length STREAM frames during unordered reads",
       "status": "open",
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
@@ -766,12 +742,8 @@
       "kind": "vulnerability",
       "package": "quinn-proto",
       "version": "0.11.13",
-      "scope": "runtime",
-      "reached_by": [
-        "mbongo-compute",
-        "mbongo-network",
-        "mbongo-node"
-      ],
+      "scope": "lock-only",
+      "reached_by": [],
       "title": "Unbounded growth of pending connection ID retirements in quinn-proto",
       "status": "open",
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
@@ -781,12 +753,8 @@
       "kind": "vulnerability",
       "package": "quinn-proto",
       "version": "0.11.13",
-      "scope": "runtime",
-      "reached_by": [
-        "mbongo-compute",
-        "mbongo-network",
-        "mbongo-node"
-      ],
+      "scope": "lock-only",
+      "reached_by": [],
       "title": "Peer minimum ACK delay can panic quinn-proto when ACK_FREQUENCY transmission is enabled",
       "status": "open",
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
@@ -796,12 +764,8 @@
       "kind": "vulnerability",
       "package": "quinn-proto",
       "version": "0.11.13",
-      "scope": "runtime",
-      "reached_by": [
-        "mbongo-compute",
-        "mbongo-network",
-        "mbongo-node"
-      ],
+      "scope": "lock-only",
+      "reached_by": [],
       "title": "Zero-length DATAGRAM frames bypass the receive buffer limit in quinn-proto",
       "status": "open",
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
@@ -811,7 +775,7 @@
       "kind": "vulnerability",
       "package": "rustls",
       "version": "0.23.35",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-compute",
         "mbongo-network",
@@ -826,7 +790,7 @@
       "kind": "vulnerability",
       "package": "rustls",
       "version": "0.23.35",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-compute",
         "mbongo-network",
@@ -841,7 +805,7 @@
       "kind": "vulnerability",
       "package": "rustls",
       "version": "0.23.35",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-compute",
         "mbongo-network",
@@ -856,7 +820,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -870,7 +834,7 @@
       "kind": "vulnerability",
       "package": "zip",
       "version": "1.1.4",
-      "scope": "build-or-dev",
+      "scope": "compiled-build-or-test",
       "reached_by": [
         "mbongo-api",
         "mbongo-node"
@@ -884,7 +848,7 @@
       "kind": "vulnerability",
       "package": "zip",
       "version": "1.1.4",
-      "scope": "build-or-dev",
+      "scope": "compiled-build-or-test",
       "reached_by": [
         "mbongo-api",
         "mbongo-node"
@@ -898,7 +862,7 @@
       "kind": "vulnerability",
       "package": "zip",
       "version": "1.1.4",
-      "scope": "build-or-dev",
+      "scope": "compiled-build-or-test",
       "reached_by": [
         "mbongo-api",
         "mbongo-node"
@@ -912,7 +876,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -926,7 +890,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -940,7 +904,7 @@
       "kind": "vulnerability",
       "package": "webpki-roots",
       "version": "1.0.4",
-      "scope": "runtime",
+      "scope": "compiled-build-or-test",
       "reached_by": [
         "mbongo-compute",
         "mbongo-node"
@@ -954,11 +918,8 @@
       "kind": "vulnerability",
       "package": "rustls-webpki",
       "version": "0.101.7",
-      "scope": "runtime",
-      "reached_by": [
-        "mbongo-network",
-        "mbongo-node"
-      ],
+      "scope": "lock-only",
+      "reached_by": [],
       "title": "Certificate verification may accept distrusted intermediates",
       "status": "open",
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
@@ -968,7 +929,7 @@
       "kind": "vulnerability",
       "package": "rustls-webpki",
       "version": "0.103.8",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-compute",
         "mbongo-network",
@@ -983,7 +944,7 @@
       "kind": "unsound",
       "package": "tokio",
       "version": "1.48.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-api",
         "mbongo-compute",
@@ -1001,7 +962,7 @@
       "kind": "vulnerability",
       "package": "crypto-bigint",
       "version": "0.5.5",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-compute",
         "mbongo-node"
@@ -1015,7 +976,7 @@
       "kind": "unsound",
       "package": "zstd-safe",
       "version": "5.0.2+zstd.1.5.2",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -1029,7 +990,7 @@
       "kind": "unsound",
       "package": "zstd-safe",
       "version": "5.0.2+zstd.1.5.2",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -1043,7 +1004,7 @@
       "kind": "unsound",
       "package": "zstd-safe",
       "version": "5.0.2+zstd.1.5.2",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -1057,7 +1018,7 @@
       "kind": "unsound",
       "package": "zstd-safe",
       "version": "5.0.2+zstd.1.5.2",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -1071,7 +1032,7 @@
       "kind": "unsound",
       "package": "zstd-safe",
       "version": "5.0.2+zstd.1.5.2",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -1085,7 +1046,7 @@
       "kind": "unsound",
       "package": "zstd-safe",
       "version": "5.0.2+zstd.1.5.2",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -1099,7 +1060,7 @@
       "kind": "vulnerability",
       "package": "zstd-safe",
       "version": "5.0.2+zstd.1.5.2",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -1113,7 +1074,7 @@
       "kind": "unsound",
       "package": "zstd-safe",
       "version": "5.0.2+zstd.1.5.2",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -1127,7 +1088,7 @@
       "kind": "unsound",
       "package": "zstd-safe",
       "version": "5.0.2+zstd.1.5.2",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -1141,7 +1102,7 @@
       "kind": "vulnerability",
       "package": "zstd-sys",
       "version": "2.0.16+zstd.1.5.7",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime",
@@ -1156,7 +1117,7 @@
       "kind": "vulnerability",
       "package": "libz-sys",
       "version": "1.1.23",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-storage"
@@ -1170,7 +1131,7 @@
       "kind": "vulnerability",
       "package": "wasmtime",
       "version": "16.0.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-node",
         "mbongo-runtime"
@@ -1184,7 +1145,7 @@
       "kind": "vulnerability",
       "package": "zip",
       "version": "1.1.4",
-      "scope": "build-or-dev",
+      "scope": "compiled-build-or-test",
       "reached_by": [
         "mbongo-api",
         "mbongo-node"
@@ -1198,7 +1159,7 @@
       "kind": "unmaintained",
       "package": "pin-utils",
       "version": "0.1.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-api",
         "mbongo-compute",
@@ -1214,7 +1175,7 @@
       "kind": "yanked",
       "package": "core2",
       "version": "0.4.0",
-      "scope": "runtime",
+      "scope": "compiled-runtime",
       "reached_by": [
         "mbongo-network",
         "mbongo-node"

@@ -42,6 +42,19 @@ Dependabot security updates are enabled in the repository settings, and are revi
 GitHub's dependency graph does not list `Cargo.lock` for this repository, so Dependabot alerts do
 not cover Rust dependencies today. **This workflow is the only coverage of them.**
 
+## Scope
+
+`cargo-audit` reads `Cargo.lock`, which also lists optional dependencies that nothing compiles. Each entry's `scope` says what `cargo tree` found, across all targets:
+
+| Scope | Meaning |
+|---|---|
+| `compiled-runtime` | Built into a workspace crate through normal dependencies |
+| `compiled-build-or-test` | Built only for build scripts or tests |
+| `feature-only` | Built only with a feature that is off by default |
+| `lock-only` | In `Cargo.lock`, built by nothing |
+
+`compiled-runtime` says a package is built, not that a defect in it can be reached. `lock-only` findings stay in the register: enabling a feature would make them real.
+
 ## Baseline
 
 Recorded on 2026-11-06, from `dev` `4502d0c2`, with `cargo-audit` 0.22.2: 617 packages, 59
