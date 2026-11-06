@@ -37,7 +37,7 @@ blake3 = "1.5"
 sha2 = "0.10"
 
 # Networking
-libp2p = { version = "0.53", features = ["tcp", "noise", "yamux", "gossipsub", "kad", "mdns", "identify", "ping", "request-response", "tokio", "macros"] }
+libp2p = { version = "0.53", features = ["tcp", "noise", "yamux", "kad", "mdns", "identify", "ping", "request-response", "tokio", "macros"] }
 
 # Storage
 rocksdb = "0.22"
