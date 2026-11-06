@@ -39,8 +39,12 @@ Dependabot security updates are enabled in the repository settings, and are revi
 
 ## Coverage
 
-GitHub's dependency graph does not list `Cargo.lock` for this repository, so Dependabot alerts do
-not cover Rust dependencies today. **This workflow is the only coverage of them.**
+Two sources cover Rust dependencies, and they differ.
+
+- `cargo-audit` reads the RustSec database, against every package in `Cargo.lock`.
+- Dependabot alerts read GitHub's advisory database. They began to cover Rust once `.github/dependabot.yml` configured Cargo, although `Cargo.lock` is still not listed among the dependency graph's manifests.
+
+Neither is a subset of the other: GitHub reports advisories on `openssl` that RustSec does not list, and RustSec lists advisories GitHub does not report here. The register follows RustSec. Dependabot alerts are read in the repository's Security tab.
 
 ## Scope
 
@@ -78,13 +82,13 @@ Each step is its own pull request, and removes its entries from the register. No
 
 ### Priority 2: `wasmtime`
 
-`mbongo-runtime` declares `wasmtime` and never uses it: its source has no `wasmtime` item, and `pub mod wasm` is commented out. Removing the declaration from two manifests drops 72 packages from `Cargo.lock`, adds none, and clears 37 findings, 25 of them vulnerabilities: `wasmtime`, `wasmtime-jit-debug`, `zstd-safe`, `zstd-sys`, `bincode`, `fxhash`, `mach`.
+`mbongo-runtime` declares `wasmtime` and never uses it: its source has no `wasmtime` item, and `pub mod wasm` is commented out. Removing the declaration from two manifests drops 72 packages from `Cargo.lock`, adds none, and clears 36 findings, 24 of them vulnerabilities: `wasmtime`, `wasmtime-jit-debug`, `zstd-safe`, `bincode`, `fxhash`, `mach`. `zstd-sys` stays, through `rocksdb`.
 
 ### Priority 3: the rest
 
 | Group | Packages | Option |
 |---|---|---|
-| Patch available in the same line | `bytes`, `crossbeam-epoch`, `h2` 0.4, `libz-sys`, `webpki-roots` | `cargo update --precise`, one pull request, after checking each patched version stays compatible |
+| Patch available in the same line | `openssl` 0.10.75, 8 GitHub alerts, none in RustSec, fixed by 0.10.80, `bytes`, `crossbeam-epoch`, `h2` 0.4, `libz-sys`, `webpki-roots` | `cargo update --precise`, one pull request, after checking each patched version stays compatible |
 | Test or build only | `time`, `ring` 0.16, `zip`, `webpki-roots` | Through `rcgen` and build scripts. Lower priority, still open |
 | Held by `libp2p` 0.53 | `hickory-proto`, `core2`, `instant`, `lru`, and others | Needs a `libp2p` upgrade, which is planned work. `hickory-proto` needs mDNS: `--no-mdns` narrows it |
 | No fixed version | `rsa` | Timing side channel. Whether private-key operations occur here is not assessed |
