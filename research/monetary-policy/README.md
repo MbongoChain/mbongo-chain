@@ -164,6 +164,26 @@ exists during the year, `available_supply = starting_supply + gross_issuance`.
 | `velocity_dependent` | Fee pool above `available_supply`, its burn within it | Flagged. Possible only if MBO changes hands more than once in the year, and the model has no velocity |
 | `infeasible` | Required burn above `available_supply`, or fees with no MBO at all | **Not valid.** The burn is capped, and the fee, treasury and security-budget figures of the year could not have been paid |
 
+The classification rests on these assumptions, and on nothing else:
+
+1. **Only MBO that exists can be destroyed.** A year's burn cannot exceed
+   `available_supply`. This is the only hard bound, and the only thing that
+   makes a year with MBO in it `infeasible`.
+2. **Unburned fees are transfers, not destruction.** Validators and the
+   treasury can spend what they receive again in the same year, so the same
+   MBO can pay fees more than once. A fee pool larger than the supply is
+   therefore not impossible: it needs recirculation, at a velocity the model
+   does not represent, and is flagged `velocity_dependent`, never rejected.
+3. **Transaction volume is never compared with supply.** Transfers can move
+   many times the supply in a year. Only fees enter the classification, and
+   only their burned part is held to the stock.
+4. **With no MBO at all, nothing can be paid even once,** so fees due in such
+   a year are `infeasible`.
+5. **The bound is the most generous one:** all MBO that exists in the year,
+   staked and illiquid included, and the year's issuance counted from its
+   start. A bound that took liquidity into account could only flag more
+   years, never fewer.
+
 Nothing is clamped or recomputed to make a year feasible. The CSV gains
 `available_supply`, `fee_pool`, `burn_requested`, `burn_shortfall` and
 `fee_funding` after the existing columns, which are unchanged. `model.py`
