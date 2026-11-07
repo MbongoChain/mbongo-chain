@@ -761,6 +761,13 @@ details changed or were not recorded:
 These are recorded, not resolved. Each document now carries a HISTORICAL,
 NON-NORMATIVE banner, and none of its text was changed.
 
+**Line references.** The banner adds 13 lines under each title (15 in
+`tokenomics.md`). Every `file:line` reference into these documents, in §2.2
+above, in RFC 0003 and in the research code, points to the text as it stood
+before the banner, at `fe6e5e4`. At later revisions, add the banner's length.
+All 12 distinct references were checked to land on the same text at that
+offset.
+
 | # | Inconsistency | Where |
 |---|---|---|
 | A1 | **Allocation versus emission.** The emission schedule alone, 0.1 MBO per block halving every 5 years at 31,536,000 blocks a year, issues the whole 31,536,000 (§2.4: `I × S / (1 − F)`), and the supply documents say all MBO comes from block rewards, with a genesis supply of 0. The allocation tables put 40% outside emission (ecosystem 15%, foundation 10%, community 10%, early contributors 5%) and only 60% in per-block emission. Both cannot hold: together they reach 140% of the figure | `supply_schedule.md`, `monetary_policy.md` against `token_distribution.md`, `tokenomics.md`, `economic_summary.md` |
