@@ -13,6 +13,21 @@ No hype. No fundraising language. Content aligns with the repository.
 
 The production deployment is the `out/` directory served by Cloudflare Workers. No server-side rendering, no backend, no API routes.
 
+### The repository does not deploy the site
+
+Nothing in this repository builds or publishes `website/`: no workflow deploys it, and
+the Cloudflare Worker's configuration is not kept here. A change merged into `dev`
+reaches mbongochain.org only when someone builds `out/` and deploys it by hand. **Each
+deployment needs its own authorization.** Merging a pull request is not one.
+
+So the live site can differ from the repository, and nothing records which commit it
+was built from. Its pages carry a Next.js build identifier, which is random and does
+not map to a revision.
+
+As of 2026-11-07, `source-map-js` (#222) and `nanoid` (#226) are updated in the
+repository, and no deployment of them is recorded. Both are build-time dependencies:
+neither ships in `out/`, and the exported CSS is byte-identical with and without them.
+
 ## Tech Stack
 
 - **Next.js 14** — React framework with App Router
