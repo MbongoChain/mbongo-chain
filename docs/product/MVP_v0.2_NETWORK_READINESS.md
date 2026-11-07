@@ -124,10 +124,18 @@ file whose `chain_id` the network reports.
    locked surface changes.
 3. Separately, rebuild the complete account state from genesis: start from the genesis
    allocations, read every block from 1 to `H` in order, and apply every transaction in it,
-   with an implementation other than the node's `apply_block`. Transfers follow RFC 0006
-   §6, and every applied transaction advances its sender's nonce (invariant I2). Blocks are
-   read through the existing `get_block_by_height`, or from the copy's own block column
-   family: no new RPC method. State the number of blocks and transactions read before
+   with an implementation other than the node's `apply_block`. Every supported
+   transaction type is handled:
+   - `Transfer` and `Stake` follow RFC 0006 §6. `Stake` moves balance exactly as a
+     transfer does, because there is no staking state;
+   - `ComputeTask` and `AnchorReceipt` move no balance;
+   - every applied transaction advances its sender's nonce (invariant I2), and a skipped
+     stored `Transfer` or `Stake` changes nothing;
+   - a transaction type the rebuild does not recognise fails the test.
+
+   Blocks are read through the existing `get_block_by_height`, which returns every
+   transaction in full, or from the copy's own block column family: no new RPC method and
+   no new consensus rule. State the number of blocks and transactions read before
    comparing.
 
 The account state is the whole of the state that holds balances. Tasks and receipts hold
