@@ -61,7 +61,7 @@ impl JobProfile {
                     && need
                         .binary_sha256
                         .as_ref()
-                        .map_or(true, |pinned| id.binary_sha256.as_ref() == Some(pinned))
+                        .is_none_or(|pinned| id.binary_sha256.as_ref() == Some(pinned))
             })
             .map(Arc::clone)
             .ok_or(JobError::RuntimeMismatch)

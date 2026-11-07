@@ -5,7 +5,7 @@
 # in this file changes how the node behaves -- it only packages it.
 
 # Exact toolchain pin. The repository declares no canonical rust-toolchain
-# file, and the workspace rust-version = "1.75" is the MSRV, not the version
+# file, and the workspace rust-version = "1.85" is the MSRV, not the version
 # the project is validated on; 1.94.0 is what the check suite (fmt, clippy
 # -D warnings, tests, replay and devnet harnesses) is currently green on.
 # A floating tag drifts: rust:1-bookworm already resolves to a different

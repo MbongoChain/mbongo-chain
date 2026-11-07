@@ -425,7 +425,7 @@ impl<C: ChainClient + Clone + 'static> Front<C> {
             return;
         }
         let quiet = core.registered.keys().all(|id| {
-            core.cp.task(*id).map_or(true, |r| {
+            core.cp.task(*id).is_none_or(|r| {
                 matches!(
                     r.state,
                     TaskState::Discovered | TaskState::Failed | TaskState::Completed

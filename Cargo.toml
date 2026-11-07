@@ -18,7 +18,7 @@ members = [
 version = "0.1.0"
 authors = ["Mbongo Chain Contributors"]
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.85"
 license = "Apache-2.0"
 repository = "https://github.com/mbongo-chain/mbongo-chain"
 homepage = "https://mbongochain.com"
@@ -37,13 +37,12 @@ blake3 = "1.5"
 sha2 = "0.10"
 
 # Networking
-libp2p = { version = "0.53", features = ["tcp", "noise", "yamux", "gossipsub", "kad", "mdns", "identify", "ping", "request-response", "tokio", "macros"] }
+libp2p = { version = "0.53", features = ["tcp", "noise", "yamux", "kad", "mdns", "identify", "ping", "request-response", "tokio", "macros"] }
 
 # Storage
 rocksdb = "0.22"
 
 # WASM runtime
-wasmtime = "16.0"
 
 # Error handling
 thiserror = "1.0"

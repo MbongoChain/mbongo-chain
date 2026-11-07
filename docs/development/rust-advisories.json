@@ -9,20 +9,6 @@
   },
   "findings": [
     {
-      "id": "RUSTSEC-2020-0168",
-      "kind": "unmaintained",
-      "package": "mach",
-      "version": "0.3.2",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "mach is unmaintained",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
       "id": "RUSTSEC-2023-0071",
       "kind": "vulnerability",
       "package": "rsa",
@@ -80,34 +66,6 @@
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
     },
     {
-      "id": "RUSTSEC-2024-0438",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Wasmtime doesn't fully sandbox all the Windows device filenames",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2024-0442",
-      "kind": "unsound",
-      "package": "wasmtime-jit-debug",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Dump Undefined Memory by `JitDumpFile`",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
       "id": "RUSTSEC-2025-0009",
       "kind": "vulnerability",
       "package": "ring",
@@ -132,62 +90,6 @@
         "mbongo-node"
       ],
       "title": "Versions of *ring* prior to 0.17 are unmaintained.",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2025-0046",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Host panic with `fd_renumber` WASIp1 function",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2025-0057",
-      "kind": "unmaintained",
-      "package": "fxhash",
-      "version": "0.2.1",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "fxhash - no longer maintained",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2025-0118",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Unsound API access to a WebAssembly shared linear memory",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2025-0141",
-      "kind": "unmaintained",
-      "package": "bincode",
-      "version": "1.3.3",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Bincode is unmaintained",
       "status": "open",
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
     },
@@ -238,34 +140,6 @@
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
     },
     {
-      "id": "RUSTSEC-2026-0020",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Guest-controlled resource exhaustion in WASI implementations",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0021",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Panic adding excessive fields to a `wasi:http/types.fields` instance",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
       "id": "RUSTSEC-2026-0037",
       "kind": "vulnerability",
       "package": "quinn-proto",
@@ -273,175 +147,6 @@
       "scope": "lock-only",
       "reached_by": [],
       "title": "Denial of service in Quinn endpoints",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0049",
-      "kind": "vulnerability",
-      "package": "rustls-webpki",
-      "version": "0.103.8",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-compute",
-        "mbongo-network",
-        "mbongo-node"
-      ],
-      "title": "CRLs not considered authoritative by Distribution Point due to faulty matching logic",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0085",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Panic when lifting `flags` component value",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0086",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Host data leakage with 64-bit tables and Winch",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0087",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Wasmtime segfault or unused out-of-sandbox load with `f64x2.splat` operator on Cranelift x86-64",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0088",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Data leakage between pooling allocator instances",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0089",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Host panic when Winch compiler executes `table.fill`",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0091",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Out-of-bounds write or crash when transcoding component model strings",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0092",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Panic when transcoding misaligned component model UTF-16 strings",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0093",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Heap OOB read in component model UTF-16 to latin1+utf16 string transcoding",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0094",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Improperly masked return value from `table.grow` with Winch compiler backend",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0095",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Wasmtime with Winch compiler backend may allow a sandbox-escaping memory access",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0096",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Miscompiled guest heap access enables sandbox escape on aarch64 Cranelift",
       "status": "open",
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
     },
@@ -487,21 +192,6 @@
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
     },
     {
-      "id": "RUSTSEC-2026-0098",
-      "kind": "vulnerability",
-      "package": "rustls-webpki",
-      "version": "0.103.8",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-compute",
-        "mbongo-network",
-        "mbongo-node"
-      ],
-      "title": "Name constraints for URI names were incorrectly accepted",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
       "id": "RUSTSEC-2026-0099",
       "kind": "vulnerability",
       "package": "rustls-webpki",
@@ -513,42 +203,12 @@
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
     },
     {
-      "id": "RUSTSEC-2026-0099",
-      "kind": "vulnerability",
-      "package": "rustls-webpki",
-      "version": "0.103.8",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-compute",
-        "mbongo-network",
-        "mbongo-node"
-      ],
-      "title": "Name constraints were accepted for certificates asserting a wildcard name",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
       "id": "RUSTSEC-2026-0104",
       "kind": "vulnerability",
       "package": "rustls-webpki",
       "version": "0.101.7",
       "scope": "lock-only",
       "reached_by": [],
-      "title": "Reachable panic in certificate revocation list parsing",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0104",
-      "kind": "vulnerability",
-      "package": "rustls-webpki",
-      "version": "0.103.8",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-compute",
-        "mbongo-network",
-        "mbongo-node"
-      ],
       "title": "Reachable panic in certificate revocation list parsing",
       "status": "open",
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
@@ -629,20 +289,6 @@
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
     },
     {
-      "id": "RUSTSEC-2026-0222",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Stores can mix up type indices between engines",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
       "id": "RUSTSEC-2026-0253",
       "kind": "unsound",
       "package": "lru",
@@ -680,49 +326,6 @@
         "mbongo-node"
       ],
       "title": "h2 unbounded empty DATA frames",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0269",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Filesystem sandbox escape when paths or symlinks contain trailing slashes",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0285",
-      "kind": "vulnerability",
-      "package": "rustls",
-      "version": "0.23.35",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-compute",
-        "mbongo-network",
-        "mbongo-node"
-      ],
-      "title": "TLS 1.3 handshake messages incorrectly accepted across encryption level boundaries",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0316",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Dynamic record lifting can allocate beyond the hostcall fuel limit",
       "status": "open",
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
     },
@@ -771,65 +374,6 @@
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
     },
     {
-      "id": "RUSTSEC-2026-0346",
-      "kind": "vulnerability",
-      "package": "rustls",
-      "version": "0.23.35",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-compute",
-        "mbongo-network",
-        "mbongo-node"
-      ],
-      "title": "`Debug` impls for client session values expose TLS secrets",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0348",
-      "kind": "vulnerability",
-      "package": "rustls",
-      "version": "0.23.35",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-compute",
-        "mbongo-network",
-        "mbongo-node"
-      ],
-      "title": "Brotli certificate decompression can allocate up to 1 GiB before authentication",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0349",
-      "kind": "vulnerability",
-      "package": "rustls",
-      "version": "0.23.35",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-compute",
-        "mbongo-network",
-        "mbongo-node"
-      ],
-      "title": "Unauthenticated ServerHello can downgrade later connections to classical key exchange",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0363",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Component-model handle tables are capped only per instance and charged to no limit",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
       "id": "RUSTSEC-2026-0367",
       "kind": "vulnerability",
       "package": "zip",
@@ -872,34 +416,6 @@
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
     },
     {
-      "id": "RUSTSEC-2026-0379",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Cranelift backend on aarch64 can jump to incorrect target on large Wasm `br_table` instruction",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0380",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Bit-packing in Cranelift compiler causes silent overflow and miscompilation",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
       "id": "RUSTSEC-2026-0381",
       "kind": "vulnerability",
       "package": "webpki-roots",
@@ -920,21 +436,6 @@
       "version": "0.101.7",
       "scope": "lock-only",
       "reached_by": [],
-      "title": "Certificate verification may accept distrusted intermediates",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0382",
-      "kind": "vulnerability",
-      "package": "rustls-webpki",
-      "version": "0.103.8",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-compute",
-        "mbongo-network",
-        "mbongo-node"
-      ],
       "title": "Certificate verification may accept distrusted intermediates",
       "status": "open",
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
@@ -972,132 +473,6 @@
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
     },
     {
-      "id": "RUSTSEC-2026-0395",
-      "kind": "unsound",
-      "package": "zstd-safe",
-      "version": "5.0.2+zstd.1.5.2",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Use-after-free with `CParameter::StableInBuffer`",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0397",
-      "kind": "unsound",
-      "package": "zstd-safe",
-      "version": "5.0.2+zstd.1.5.2",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "`OutBuffer::around_pos` exposes uninitialized memory",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0399",
-      "kind": "unsound",
-      "package": "zstd-safe",
-      "version": "5.0.2+zstd.1.5.2",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Use-after-free through `init_using_cdict` and `init_using_ddict`",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0400",
-      "kind": "unsound",
-      "package": "zstd-safe",
-      "version": "5.0.2+zstd.1.5.2",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Use-after-free of a dictionary after a one-shot call on a context with an open stream",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0401",
-      "kind": "unsound",
-      "package": "zstd-safe",
-      "version": "5.0.2+zstd.1.5.2",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Out-of-bounds read in `train_from_buffer` when sample sizes overflow",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0402",
-      "kind": "unsound",
-      "package": "zstd-safe",
-      "version": "5.0.2+zstd.1.5.2",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Heap buffer overflow in `CCtx::try_clone` on a multithreaded context",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0403",
-      "kind": "vulnerability",
-      "package": "zstd-safe",
-      "version": "5.0.2+zstd.1.5.2",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Uninitialized memory exposed when streaming decompression of a legacy frame fails",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0404",
-      "kind": "unsound",
-      "package": "zstd-safe",
-      "version": "5.0.2+zstd.1.5.2",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Double free in `DCtx::try_clone`",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0406",
-      "kind": "unsound",
-      "package": "zstd-safe",
-      "version": "5.0.2+zstd.1.5.2",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Use-after-free when changing a multithreaded context with an unfinished frame",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
       "id": "RUSTSEC-2026-0410",
       "kind": "vulnerability",
       "package": "zstd-sys",
@@ -1123,20 +498,6 @@
         "mbongo-storage"
       ],
       "title": "libz-sys build script leaks environment variables in the build directory",
-      "status": "open",
-      "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
-    },
-    {
-      "id": "RUSTSEC-2026-0424",
-      "kind": "vulnerability",
-      "package": "wasmtime",
-      "version": "16.0.0",
-      "scope": "compiled-runtime",
-      "reached_by": [
-        "mbongo-node",
-        "mbongo-runtime"
-      ],
-      "title": "Unchecked memory usage in transferring borrowed resources between components",
       "status": "open",
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
     },

@@ -7,7 +7,7 @@
 Mbongo Chain verifies cryptographic receipts from off-chain AI inference. It does not execute AI models on-chain. Validators verify receipts deterministically and settle economic outcomes. Execution is off-chain; the chain provides trust and settlement.
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Rust Version](https://img.shields.io/badge/rust-1.75%2B-blue.svg)](https://www.rust-lang.org)
+[![Rust Version](https://img.shields.io/badge/rust-1.85%2B-blue.svg)](https://www.rust-lang.org)
 
 ---
 
@@ -90,7 +90,7 @@ Testing:
 
 ### Prerequisites
 
-- **Rust** 1.75+ ([install via rustup](https://rustup.rs/))
+- **Rust** 1.85+ ([install via rustup](https://rustup.rs/)). CI tests on 1.94.0, and checks that 1.85 builds
 - **Git**
 
 ### Clone, Build, Test
