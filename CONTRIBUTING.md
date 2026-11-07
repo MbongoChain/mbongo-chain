@@ -84,7 +84,7 @@ git rebase origin/dev
 
 ## Rust Toolchain
 
-- **Rust:** 1.75 or higher
+- **Rust:** 1.85 or higher. CI tests on 1.94.0, and checks that the workspace builds on 1.85.0
 - **Components:** `rustfmt`, `clippy`
 
 ```powershell

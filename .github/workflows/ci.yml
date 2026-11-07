@@ -197,6 +197,35 @@ jobs:
   # P2: the provider flow under the reference launcher, on the supported
   # configuration, with attacks from inside the runner. Needs root, to create
   # the accounts and the cgroup; the service and the runner never have it.
+  # The minimum Rust version the workspace declares (`rust-version`), checked
+  # so that it cannot drift unnoticed again. Linux x86_64 only, and a build
+  # check, not a test run: tests run on the pinned toolchain above.
+  msrv:
+    name: Rust 1.85 (minimum supported version)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Free disk space
+        run: sudo rm -rf /usr/local/lib/android
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.85.0
+        uses: dtolnay/rust-toolchain@1.85.0
+
+      - name: Cache cargo registry + build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv
+
+      - name: Check the workspace, default features
+        run: cargo check --workspace --all-targets --locked
+
+      - name: Check the workspace, all features
+        run: cargo check --workspace --all-targets --all-features --locked
+
   provider-containment:
     name: Mbongo Provider Containment (Linux)
     runs-on: ubuntu-24.04

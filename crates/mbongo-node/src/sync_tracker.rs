@@ -51,7 +51,7 @@ struct PeerSync {
 
 impl PeerSync {
     fn ready(&self, now: Instant) -> bool {
-        self.connected && self.retry_at.map_or(true, |at| at <= now)
+        self.connected && self.retry_at.is_none_or(|at| at <= now)
     }
 }
 
