@@ -16,6 +16,10 @@ Usage:
     python3 model.py --list
     python3 model.py --scenario base --years 100
     python3 model.py --scenario base --years 100 --output /tmp/base.csv
+
+Exit status: 0 for a valid run, 1 if an accounting identity is violated, 2 for
+a configuration error, 3 if fees are infeasible in some year. With 3 the output
+is still printed and written, for inspection, but it is not a valid result.
 """
 
 from __future__ import annotations
@@ -35,6 +39,22 @@ DEFAULT_CONFIG = Path(__file__).with_name("scenarios.json")
 # Relative tolerance used when the model checks its own accounting identities.
 IDENTITY_TOLERANCE = 1e-9
 
+# Fee funding status of one simulated year. Accounting identities say the
+# books balance; these say whether the fees the scenario assumes could have
+# been paid at all. They are measured against the most generous bound, all
+# the MBO that exists during the year (starting supply plus issuance), so a
+# flag never depends on a liquidity assumption.
+FEE_FUNDING_FEASIBLE = "feasible"
+# The fee pool exceeds the MBO that exists, but its burned part does not.
+# Possible only if MBO changes hands more than once in the year. The model has
+# no velocity, so this is flagged, not rejected.
+FEE_FUNDING_VELOCITY_DEPENDENT = "velocity_dependent"
+# The fees cannot have been paid: the burn they require exceeds the MBO that
+# exists, or there is no MBO at all. The model caps the burn at what exists,
+# but still reports the validator and treasury shares of the full fee pool.
+# Those figures are not valid for the year.
+FEE_FUNDING_INFEASIBLE = "infeasible"
+
 
 class ConfigError(ValueError):
     """A scenario configuration is internally inconsistent or out of range."""
@@ -47,7 +67,11 @@ class ConfigError(ValueError):
 class YearRow:
     """One simulated year. Every field is either MBO or a pure ratio, except
     the two fields whose name ends in ``reference_value``/``reference_price``,
-    which are denominated in the scenario's arbitrary reference unit."""
+    which are denominated in the scenario's arbitrary reference unit, and
+    ``fee_funding``, one of the ``FEE_FUNDING_*`` statuses.
+
+    The last five fields describe fee funding. They are derived from values
+    the year already computes, and change none of the fields before them."""
 
     year: int
     starting_supply: float
@@ -69,6 +93,11 @@ class YearRow:
     transaction_fee_revenue: float
     treasury_revenue: float
     security_value_at_risk: float
+    available_supply: float
+    fee_pool: float
+    burn_requested: float
+    burn_shortfall: float
+    fee_funding: str
 
 
 CSV_COLUMNS = [f.name for f in fields(YearRow)]
@@ -454,13 +483,18 @@ def simulate(scenario: Dict[str, Any], years: int) -> List[YearRow]:
         validator_fee_revenue = fee_pool * fee_validator
         treasury_revenue = fee_pool * fee_treasury
         burned = fee_pool * fee_burn
+        burn_requested = burned
+        available_supply = starting_supply + gross_issuance
 
         ending_supply = starting_supply + gross_issuance - burned
         # Burn is capped by what exists: a scenario cannot burn supply into
-        # negative territory.
+        # negative territory. The cap is not silent: the shortfall is kept,
+        # and the year is classified below.
         if ending_supply < 0.0:
             burned = starting_supply + gross_issuance
             ending_supply = 0.0
+        burn_shortfall = burn_requested - burned
+        fee_funding = classify_fee_funding(available_supply, fee_pool, burn_requested)
 
         validator_issuance_revenue = gross_issuance * validator_issuance_share
         security_budget_mbo = validator_issuance_revenue + validator_fee_revenue
@@ -502,6 +536,11 @@ def simulate(scenario: Dict[str, Any], years: int) -> List[YearRow]:
                 transaction_fee_revenue=tx_fee_revenue,
                 treasury_revenue=treasury_revenue,
                 security_value_at_risk=security_value_at_risk,
+                available_supply=available_supply,
+                fee_pool=fee_pool,
+                burn_requested=burn_requested,
+                burn_shortfall=burn_shortfall,
+                fee_funding=fee_funding,
             )
         )
 
@@ -551,6 +590,46 @@ def identity_violations(rows: List[YearRow]) -> List[str]:
             if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
                 problems.append(f"year {row.year}: {name} is not finite")
     return problems
+
+
+# ── Economic feasibility ────────────────────────────────────────────────
+#
+# Separate from the accounting identities on purpose. An identity checks that
+# the books balance: supply in, supply out. Feasibility checks that the flows
+# the scenario assumes could have happened with the MBO that existed. A year
+# can satisfy every identity and still be infeasible, and that is exactly the
+# case these functions exist to expose.
+
+
+def classify_fee_funding(available_supply: float, fee_pool: float, burn_requested: float) -> str:
+    """Classify one year's fee funding. See the ``FEE_FUNDING_*`` constants."""
+    slack = 1e-6
+    if fee_pool > slack and available_supply <= slack:
+        return FEE_FUNDING_INFEASIBLE
+    if burn_requested > available_supply * (1.0 + IDENTITY_TOLERANCE) + slack:
+        return FEE_FUNDING_INFEASIBLE
+    if fee_pool > available_supply * (1.0 + IDENTITY_TOLERANCE) + slack:
+        return FEE_FUNDING_VELOCITY_DEPENDENT
+    return FEE_FUNDING_FEASIBLE
+
+
+def years_with_fee_funding(rows: List[YearRow], status: str) -> List[int]:
+    """The years of a run whose fee funding has this status, in order."""
+    return [row.year for row in rows if row.fee_funding == status]
+
+
+def fee_funding_run_status(rows: List[YearRow]) -> str:
+    """The run's fee funding, from its worst year: ``infeasible`` if any year
+    is, else ``velocity_dependent`` if any year is, else ``feasible``.
+
+    A velocity-dependent run is conditional, not shown feasible: its results
+    hold only if MBO recirculates faster than the model can represent. It is
+    not rejected, but it is never counted as feasible either."""
+    if years_with_fee_funding(rows, FEE_FUNDING_INFEASIBLE):
+        return FEE_FUNDING_INFEASIBLE
+    if years_with_fee_funding(rows, FEE_FUNDING_VELOCITY_DEPENDENT):
+        return FEE_FUNDING_VELOCITY_DEPENDENT
+    return FEE_FUNDING_FEASIBLE
 
 
 # ── Configuration loading ───────────────────────────────────────────────
@@ -608,7 +687,41 @@ def format_summary(name: str, scenario: Dict[str, Any], rows: List[YearRow]) -> 
     out.append(f"accounting identities       : {'OK' if not problems else 'VIOLATED'}")
     for problem in problems[:5]:
         out.append(f"  - {problem}")
+    out.extend(format_fee_funding(rows))
     return "\n".join(out)
+
+
+def _year_span(years: List[int]) -> str:
+    if not years:
+        return "none"
+    return f"{len(years)} (years {years[0]}..{years[-1]})"
+
+
+def format_fee_funding(rows: List[YearRow]) -> List[str]:
+    infeasible = years_with_fee_funding(rows, FEE_FUNDING_INFEASIBLE)
+    velocity = years_with_fee_funding(rows, FEE_FUNDING_VELOCITY_DEPENDENT)
+    status = fee_funding_run_status(rows)
+    label = {
+        FEE_FUNDING_FEASIBLE: "feasible",
+        FEE_FUNDING_VELOCITY_DEPENDENT: "CONDITIONAL on velocity, not shown feasible",
+        FEE_FUNDING_INFEASIBLE: "INFEASIBLE, not a valid result",
+    }[status]
+    out = [
+        f"fee funding, run status    : {label}",
+        f"fee funding, infeasible    : {_year_span(infeasible)}",
+        f"fee funding, needs velocity: {_year_span(velocity)}",
+    ]
+    if infeasible:
+        out.append(
+            "  NOT VALID: in those years the assumed fees exceed the MBO that exists. "
+            "Fee revenue, treasury revenue and security budget are reported, but could not have been paid."
+        )
+    if velocity:
+        out.append(
+            "  CONDITIONAL: in those years the fee pool exceeds the MBO that exists. "
+            "The figures hold only if MBO is paid as fees more than once in the year."
+        )
+    return out
 
 
 def write_csv(rows: List[YearRow], path: Path) -> None:
@@ -667,7 +780,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         write_csv(rows, args.output)
         print(f"\nCSV written to {args.output}")
 
-    return 1 if identity_violations(rows) else 0
+    if identity_violations(rows):
+        return 1
+    # Infeasible fee funding is rejected with its own exit code: the output is
+    # printed for inspection, but it is not a valid result. A velocity-dependent
+    # run exits 0, and its summary says it is conditional.
+    return 3 if fee_funding_run_status(rows) == FEE_FUNDING_INFEASIBLE else 0
 
 
 if __name__ == "__main__":
