@@ -241,7 +241,7 @@ mod linux {
                     0 as c_ulong,
                 ) == 0,
             )?;
-            checked(capset(&mut header, nothing.as_ptr()) == 0)?;
+            checked(capset(&raw mut header, nothing.as_ptr()) == 0)?;
             // Whatever opened a descriptor, and however: none survives exec.
             checked(
                 syscall(

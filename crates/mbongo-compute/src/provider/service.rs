@@ -919,7 +919,7 @@ impl<C: ChainClient + Clone + 'static> ProviderService<C> {
     /// No task depends on a live lease.
     fn quiet(core: &Core) -> bool {
         core.open.iter().all(|id| {
-            core.cp.task(*id).map_or(true, |r| {
+            core.cp.task(*id).is_none_or(|r| {
                 matches!(
                     r.state,
                     TaskState::Discovered | TaskState::Failed | TaskState::Completed
@@ -1059,7 +1059,7 @@ impl<C: ChainClient + Clone + 'static> ProviderService<C> {
                 && need
                     .binary_sha256
                     .as_ref()
-                    .map_or(true, |pinned| i.binary_sha256.as_ref() == Some(pinned))
+                    .is_none_or(|pinned| i.binary_sha256.as_ref() == Some(pinned))
         });
         if !matched {
             return Err(JobError::RuntimeMismatch);

@@ -39,17 +39,19 @@ Dependabot security updates are enabled in the repository settings, and are revi
 
 ## Rust version
 
-The declared version and the real one differ. This records the gap, and changes neither.
-
 | Source | Version |
 |---|---|
-| `rust-version` in the workspace `Cargo.toml` | 1.75 |
-| Oldest toolchain that builds the workspace, all targets, at `Cargo.lock` of 2026-11-06 | 1.85.0 |
-| Toolchain CI pins | 1.94.0 |
+| `rust-version` in the workspace `Cargo.toml` | 1.85 |
+| Checked by CI, job `Rust 1.85 (minimum supported version)` | 1.85.0, Linux x86_64, `cargo check` of all targets, with default and with all features |
+| Tested by CI | 1.94.0 |
 
-Measured with `cargo check --workspace --all-targets --locked`: 1.75.0 and 1.84.0 fail, 1.85.0 passes. The cause is the lock file, not the code: 43 packages declare more than 1.75, up to 1.85, and `openssl` 0.10.80 declares 1.80. No CI job tests the declared version, so it can move without anyone noticing.
+Until 2026-11-07 the workspace declared 1.75 while nothing built on it: 1.75.0 and 1.84.0 failed,
+1.85.0 passed, because of the versions in `Cargo.lock`. Raising the declaration also turned on
+Clippy lints that were held back for 1.75, and their fixes are behaviour-neutral.
 
-**Only 1.94.0 is proven by CI.** Changing the supported version, in either direction, is a maintainer decision.
+**What 1.85 means here:** the workspace compiles on it, on Linux. Tests, Windows and other
+platforms are proven on 1.94.0 only. A dependency update that needs more than 1.85 now fails CI,
+and moving the minimum is a maintainer decision.
 
 ## Coverage
 
