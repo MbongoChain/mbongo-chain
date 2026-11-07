@@ -91,6 +91,59 @@ All from a clean setup, on a multi-node private devnet, with synthetic fixtures.
 | AC10 | A clean devnet comes up from published artifacts, following the guide alone |
 | AC11 | All existing conformance, containment, transport and replay checks pass |
 
+### 6.1 Monetary conventions
+
+MVP v0.2 adopts no monetary policy. RFC 0003 and RFC 0004 stay non-normative research.
+
+- **Exact integer test units.** Every amount is the integer the runtime stores as a
+  `u128` balance. The wallet, the SDK, the faucet, RPC and the documentation show and
+  accept that integer as it is, with no decimal point and no conversion, implicit or
+  explicit. The unit is called a *test unit*.
+- **Temporary.** This is a test-network convention. It is not a mainnet denomination, and
+  it fixes no number of decimal places: that decision stays open (RFC 0004 §13.6).
+- **Test genesis allocations are fixtures,** not a distribution. They do not reuse the
+  historical figures (31,536,000, or the 40/20/15/10/10/5 split), so that they cannot be
+  read as them.
+- **No supply mechanics:** no issuance, burn, treasury, staking, rewards or fees. Under
+  RFC 0006, if accepted, only genesis creates balances.
+
+### 6.2 AC6: total-supply conservation
+
+AC6 is proven over the complete chain state, never over a list of known addresses.
+
+**Expected value.** `S_genesis`, the exact integer sum of the allocations in the genesis
+file whose `chain_id` the network reports.
+
+**Procedure,** after the last block of the S4 run:
+
+1. Stop each node, or take a consistent copy of its directory. Every node must report the
+   same tip height `H` and tip hash.
+2. On each copy, a read-only tool iterates the **whole** `accounts` column family, and
+   reports the number of accounts `N` and their balance sum `S`. It writes nothing. The
+   `Storage` trait has no iteration, so the tool reads the column family directly, and no
+   locked surface changes.
+3. Separately, re-derive the account map from the chain itself: start from the genesis
+   allocations, read blocks 1 to `H` in order, and apply RFC 0006 §6 to every transaction,
+   with an implementation other than the node's `apply_block`. State the number of blocks
+   and transactions read before comparing.
+
+**Pass, only if all of these hold:**
+
+- `S = S_genesis` exactly, on every node.
+- Each node's account map equals the re-derived map, key for key: the same addresses,
+  balances and nonces.
+- `N` equals the size of the re-derived map: the allocation addresses plus every receiver of
+  an applied transfer. No other account exists.
+- The stated counts hold: `H` blocks after genesis, and every included transaction read.
+- Every node agrees on the tip hash and, under RFC 0006, on `state_root`.
+
+A count of zero, a count different from the one stated, or a node not fully iterated is a
+failure, not a pass.
+
+**Evidence:** the genesis file digest and `chain_id`, `H` and the tip hash, `N`,
+`S_genesis` and each node's `S`, the tool's commit SHA, and the transcript. The tool is
+built in S4 (#208). It needs no protocol change and no new RPC method.
+
 ## 7. Release evidence
 
 Per [`ENGINEERING_EVIDENCE.md`](../ENGINEERING_EVIDENCE.md): CI bound to the exact SHA, PR
@@ -103,6 +156,8 @@ clean machine, artifact hashes, the protocol lock for v0.5, and stated limits.
 Public deployment, token launch, economically valuable MBO, provider settlement, staking,
 slashing, validator elections, GPU work, customer workload optimization, a general-purpose
 VM, transaction gossip unless S3 proves it necessary, and paid P3-D deployment.
+Also excluded, by decision of 2026-11-07: monetary issuance, burn, treasury, rewards and
+fees.
 
 ## 9. Approval gates
 
@@ -140,3 +195,6 @@ Append only. Never rewrite an entry: a change of mind is a new entry.
 | 2026-11-05 | S3 D4: a follower with no valid producer route fails explicitly, with no fallback | Maintainer |
 | 2026-11-05 | S3 D5: configurable mempool limits accepted provisionally, pending resource and invariant tests | Maintainer |
 | 2026-11-05 | The protocol v0.5 lock and `rpc_v0.4` belong at G4, after implementation and verification, not at G3 | Maintainer |
+| 2026-11-07 | S2 amounts are exact integer test units, with no decimal conversion: a temporary test-network convention, not a mainnet denomination (§6.1) | Maintainer |
+| 2026-11-07 | AC6 is proven by the total-supply conservation test of §6.2, over the complete chain state | Maintainer |
+| 2026-11-07 | No monetary issuance, burn, treasury, staking, rewards or fees in MVP v0.2. RFC 0003 and RFC 0004 stay research | Maintainer |
