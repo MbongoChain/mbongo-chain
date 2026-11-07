@@ -663,8 +663,11 @@ async fn a_hung_request_stops_at_the_wait(seed: u8, method: &'static str, path: 
     let s = start(seed).await;
     let (_front, client) = s.secure().await;
     s.gateway.add_forever(method, path, Fault::Hang);
+    // The wait covers the whole job. Registration and status come after chain
+    // inclusion, so it has to outlast that on a loaded runner, or the wait ends
+    // before the hung request is ever sent, and the count below reads 0.
     let wait = WaitPolicy {
-        timeout: Duration::from_secs(2),
+        timeout: Duration::from_secs(6),
         poll: Duration::from_millis(50),
     };
     let started = Instant::now();
@@ -674,14 +677,14 @@ async fn a_hung_request_stops_at_the_wait(seed: u8, method: &'static str, path: 
         "{outcome:?}"
     );
     assert!(
-        started.elapsed() < Duration::from_secs(4),
+        started.elapsed() < Duration::from_secs(8),
         "{:?}",
         started.elapsed()
     );
     assert_eq!(
         s.gateway.count(method, path),
         1,
-        "the request was sent again"
+        "the request was sent again, or never reached"
     );
     assert!(s.tasks_on_chain().await <= 1, "the job was submitted again");
 }
