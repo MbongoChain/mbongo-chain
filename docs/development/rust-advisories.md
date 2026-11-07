@@ -31,11 +31,25 @@ Dependabot proposes Cargo updates weekly, limited to patch and minor versions, a
 anything: there is no auto-merge in this repository, and none is to be added.
 
 - `rocksdb` is excluded: it is held by the CI runner pin.
-- Dependabot does not honour `rust-version`. A reviewer checks that an update keeps the
-  workspace MSRV.
+- Dependabot does not honour `rust-version`. A reviewer checks what an update requires, against
+  [Rust version](#rust-version).
 - `Cargo.lock` changes are code changes, and go through the normal review.
 
 Dependabot security updates are enabled in the repository settings, and are reviewed the same way.
+
+## Rust version
+
+The declared version and the real one differ. This records the gap, and changes neither.
+
+| Source | Version |
+|---|---|
+| `rust-version` in the workspace `Cargo.toml` | 1.75 |
+| Oldest toolchain that builds the workspace, all targets, at `Cargo.lock` of 2026-11-06 | 1.85.0 |
+| Toolchain CI pins | 1.94.0 |
+
+Measured with `cargo check --workspace --all-targets --locked`: 1.75.0 and 1.84.0 fail, 1.85.0 passes. The cause is the lock file, not the code: 43 packages declare more than 1.75, up to 1.85, and `openssl` 0.10.80 declares 1.80. No CI job tests the declared version, so it can move without anyone noticing.
+
+**Only 1.94.0 is proven by CI.** Changing the supported version, in either direction, is a maintainer decision.
 
 ## Coverage
 
