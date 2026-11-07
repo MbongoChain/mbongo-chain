@@ -122,10 +122,16 @@ file whose `chain_id` the network reports.
    reports the number of accounts `N` and their balance sum `S`. It writes nothing. The
    `Storage` trait has no iteration, so the tool reads the column family directly, and no
    locked surface changes.
-3. Separately, re-derive the account map from the chain itself: start from the genesis
-   allocations, read blocks 1 to `H` in order, and apply RFC 0006 §6 to every transaction,
-   with an implementation other than the node's `apply_block`. State the number of blocks
-   and transactions read before comparing.
+3. Separately, rebuild the complete account state from genesis: start from the genesis
+   allocations, read every block from 1 to `H` in order, and apply every transaction in it,
+   with an implementation other than the node's `apply_block`. Transfers follow RFC 0006
+   §6, and every applied transaction advances its sender's nonce (invariant I2). Blocks are
+   read through the existing `get_block_by_height`, or from the copy's own block column
+   family: no new RPC method. State the number of blocks and transactions read before
+   comparing.
+
+The account state is the whole of the state that holds balances. Tasks and receipts hold
+none: their agreement across nodes is checked by `state_root`, not by this test.
 
 **Pass, only if all of these hold:**
 
