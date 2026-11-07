@@ -618,10 +618,18 @@ def years_with_fee_funding(rows: List[YearRow], status: str) -> List[int]:
     return [row.year for row in rows if row.fee_funding == status]
 
 
-def is_fee_funding_feasible(rows: List[YearRow]) -> bool:
-    """True when no year of the run is infeasible. Velocity-dependent years
-    do not make a run infeasible: they are reported, not rejected."""
-    return not years_with_fee_funding(rows, FEE_FUNDING_INFEASIBLE)
+def fee_funding_run_status(rows: List[YearRow]) -> str:
+    """The run's fee funding, from its worst year: ``infeasible`` if any year
+    is, else ``velocity_dependent`` if any year is, else ``feasible``.
+
+    A velocity-dependent run is conditional, not shown feasible: its results
+    hold only if MBO recirculates faster than the model can represent. It is
+    not rejected, but it is never counted as feasible either."""
+    if years_with_fee_funding(rows, FEE_FUNDING_INFEASIBLE):
+        return FEE_FUNDING_INFEASIBLE
+    if years_with_fee_funding(rows, FEE_FUNDING_VELOCITY_DEPENDENT):
+        return FEE_FUNDING_VELOCITY_DEPENDENT
+    return FEE_FUNDING_FEASIBLE
 
 
 # ── Configuration loading ───────────────────────────────────────────────
@@ -692,7 +700,14 @@ def _year_span(years: List[int]) -> str:
 def format_fee_funding(rows: List[YearRow]) -> List[str]:
     infeasible = years_with_fee_funding(rows, FEE_FUNDING_INFEASIBLE)
     velocity = years_with_fee_funding(rows, FEE_FUNDING_VELOCITY_DEPENDENT)
+    status = fee_funding_run_status(rows)
+    label = {
+        FEE_FUNDING_FEASIBLE: "feasible",
+        FEE_FUNDING_VELOCITY_DEPENDENT: "CONDITIONAL on velocity, not shown feasible",
+        FEE_FUNDING_INFEASIBLE: "INFEASIBLE, not a valid result",
+    }[status]
     out = [
+        f"fee funding, run status    : {label}",
         f"fee funding, infeasible    : {_year_span(infeasible)}",
         f"fee funding, needs velocity: {_year_span(velocity)}",
     ]
@@ -700,6 +715,11 @@ def format_fee_funding(rows: List[YearRow]) -> List[str]:
         out.append(
             "  NOT VALID: in those years the assumed fees exceed the MBO that exists. "
             "Fee revenue, treasury revenue and security budget are reported, but could not have been paid."
+        )
+    if velocity:
+        out.append(
+            "  CONDITIONAL: in those years the fee pool exceeds the MBO that exists. "
+            "The figures hold only if MBO is paid as fees more than once in the year."
         )
     return out
 
@@ -763,8 +783,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     if identity_violations(rows):
         return 1
     # Infeasible fee funding is rejected with its own exit code: the output is
-    # printed for inspection, but it is not a valid result.
-    return 3 if not is_fee_funding_feasible(rows) else 0
+    # printed for inspection, but it is not a valid result. A velocity-dependent
+    # run exits 0, and its summary says it is conditional.
+    return 3 if fee_funding_run_status(rows) == FEE_FUNDING_INFEASIBLE else 0
 
 
 if __name__ == "__main__":

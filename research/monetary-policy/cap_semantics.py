@@ -248,6 +248,7 @@ class Observation:
     # and the infeasible years up to this checkpoint.
     fee_funding_first_infeasible_year: str
     fee_funding_infeasible_years_to_date: int
+    fee_funding_run_status: str
 
 
 CSV_COLUMNS = [f.name for f in fields(Observation)]
@@ -330,6 +331,7 @@ def observations_for(
     initial, step_interval, decay_factor = schedule
     first_clamp, clamped_periods = clamp_profile(scenario, rows)
     infeasible_years = model.years_with_fee_funding(rows, model.FEE_FUNDING_INFEASIBLE)
+    run_status = model.fee_funding_run_status(rows)
     cumulative_issuance = 0.0
     cumulative_burn = 0.0
     out: List[Observation] = []
@@ -368,6 +370,7 @@ def observations_for(
                 fee_funding_infeasible_years_to_date=sum(
                     1 for y in infeasible_years if y <= row.year
                 ),
+                fee_funding_run_status=run_status,
             )
         )
     return out
@@ -427,15 +430,15 @@ def pair_divergence(
     different = 0
     deltas: Dict[str, float] = {f: 0.0 for f in DIVERGENCE_FIELDS}
     clamp_year_deltas = 0
-    different_with_infeasible = 0
+    different_not_fully_feasible = 0
     for schedule in ps.schedule_grid():
         a = index[(burn_environment, left, schedule)]
         b = index[(burn_environment, right, schedule)]
         gaps = {f: abs(getattr(a, f) - getattr(b, f)) for f in DIVERGENCE_FIELDS}
         if max(gaps.values()) > EPSILON:
             different += 1
-            if a.fee_funding_first_infeasible_year or b.fee_funding_first_infeasible_year:
-                different_with_infeasible += 1
+            if model.FEE_FUNDING_FEASIBLE != a.fee_funding_run_status or model.FEE_FUNDING_FEASIBLE != b.fee_funding_run_status:
+                different_not_fully_feasible += 1
         else:
             identical += 1
         for f, g in gaps.items():
@@ -450,7 +453,7 @@ def pair_divergence(
         "different": different,
         "max_deltas": deltas,
         "differing_clamp_years": clamp_year_deltas,
-        "different_with_infeasible": different_with_infeasible,
+        "different_not_fully_feasible": different_not_fully_feasible,
     }
 
 
@@ -553,6 +556,11 @@ def format_summary(observations: List[Observation], config: Dict[str, Any]) -> s
             lines.append(
                 f"    schedules with outstanding supply > cap  : {len(supply_over)}"
             )
+            conditional = [o for o in final
+                           if o.fee_funding_run_status == model.FEE_FUNDING_VELOCITY_DEPENDENT]
+            lines.append(
+                f"    schedules conditional on velocity        : {len(conditional)}"
+            )
             infeasible = [o for o in final if o.fee_funding_first_infeasible_year]
             lines.append(
                 f"    schedules with infeasible fee funding    : {len(infeasible)}"
@@ -575,8 +583,8 @@ def format_summary(observations: List[Observation], config: Dict[str, Any]) -> s
             f"differing first-clamp years {d['differing_clamp_years']}/80"
         )
         lines.append(
-            f"      different and involving an infeasible run : "
-            f"{d['different_with_infeasible']}/{d['different']}"
+            f"      different and involving a run not fully feasible : "
+            f"{d['different_not_fully_feasible']}/{d['different']}"
         )
         for field_name, gap in d["max_deltas"].items():
             lines.append(f"      max delta {field_name:<28}: {gap:>18,.2f}")

@@ -188,9 +188,15 @@ Nothing is clamped or recomputed to make a year feasible. The CSV gains
 `available_supply`, `fee_pool`, `burn_requested`, `burn_shortfall` and
 `fee_funding` after the existing columns, which are unchanged. `model.py`
 exits with status 3 when any year is infeasible, after printing and writing
-the results for inspection. Both studies carry the run's first infeasible year
-on every observation, and report infeasible runs and, beside the original
-ranges, the ranges over feasible runs only.
+the results for inspection.
+
+A run takes the status of its worst year. **A `velocity_dependent` run is
+conditional, never shown feasible:** `model.py` exits 0 for it, so that it can
+be inspected, and its summary marks it CONDITIONAL. Both studies carry the
+run's status and first infeasible year on every observation, report
+infeasible and conditional runs, and, beside the original ranges, give the
+same ranges over fully feasible runs only. Conditional runs are excluded from
+those, as infeasible ones are.
 
 At this commit: `high_adoption` is infeasible from year 52 to 100 (49 years),
 and velocity-dependent from 48 to 51. The other 10 scenarios are feasible in

@@ -17,6 +17,7 @@ Run from the repository root:
 from __future__ import annotations
 
 import contextlib
+import copy
 import io
 import sys
 import unittest
@@ -67,15 +68,16 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(infeasible, list(range(52, 101)))
         # The defect being flagged: validator fee revenue is still reported.
         self.assertTrue(all(rows[y].validator_fee_revenue > 0 for y in infeasible))
-        self.assertFalse(model.is_fee_funding_feasible(rows))
+        self.assertEqual(model.fee_funding_run_status(rows), INFEASIBLE)
 
     def test_high_adoption_needs_velocity_before_it_fails(self):
         rows = RUNS["high_adoption"]
         self.assertEqual(model.years_with_fee_funding(rows, VELOCITY), [48, 49, 50, 51])
 
     def test_only_high_adoption_is_infeasible(self):
-        flagged = [n for n, rows in RUNS.items() if not model.is_fee_funding_feasible(rows)]
-        self.assertEqual(flagged, ["high_adoption"])
+        status = {n: model.fee_funding_run_status(rows) for n, rows in RUNS.items()}
+        self.assertEqual([n for n, s in status.items() if s == INFEASIBLE], ["high_adoption"])
+        self.assertEqual([n for n, s in status.items() if s == VELOCITY], [])
 
     def test_identities_still_hold_where_funding_fails(self):
         # The two checks are independent: an infeasible run balances its books.
@@ -106,6 +108,35 @@ class ScenarioTests(unittest.TestCase):
                     self.assertAlmostEqual(
                         r.available_supply, r.starting_supply + r.gross_issuance, places=6
                     )
+
+
+def velocity_only_scenario():
+    """Fees far above the supply, none of them burned: the fee pool needs
+    recirculation, but nothing is destroyed beyond what exists."""
+    s = copy.deepcopy(CONFIG["scenarios"]["base"])
+    s["fees"] = {"validator_share": 0.8, "treasury_share": 0.2, "burn_share": 0.0}
+    s["activity"]["transaction_fee_revenue_mbo"] = {"initial": 1.0e12, "phases": []}
+    return s
+
+
+class VelocityTests(unittest.TestCase):
+    def test_velocity_only_run_is_conditional_not_feasible(self):
+        rows = model.simulate(velocity_only_scenario(), 20)
+        self.assertEqual(model.years_with_fee_funding(rows, INFEASIBLE), [])
+        self.assertEqual(model.years_with_fee_funding(rows, VELOCITY), list(range(1, 21)))
+        self.assertEqual(model.fee_funding_run_status(rows), VELOCITY)
+
+    def test_velocity_only_summary_says_conditional(self):
+        rows = model.simulate(velocity_only_scenario(), 20)
+        text = model.format_summary("velocity_only", velocity_only_scenario(), rows)
+        self.assertIn("CONDITIONAL on velocity, not shown feasible", text)
+        self.assertNotIn("NOT VALID", text)
+
+    def test_transaction_volume_is_not_held_to_supply(self):
+        # Fees about 300,000 times the supply, none burned: never infeasible.
+        rows = model.simulate(velocity_only_scenario(), 20)
+        self.assertGreater(rows[1].fee_pool, 1000 * rows[1].available_supply)
+        self.assertNotEqual(rows[1].fee_funding, INFEASIBLE)
 
 
 class CliTests(unittest.TestCase):
@@ -140,6 +171,9 @@ class StudyTests(unittest.TestCase):
         self.assertEqual(len(runs), 184)
         self.assertEqual(len(bad), 10)
         self.assertEqual({b[1] for b in bad}, {(788400, 2, 0.25), (788400, 2, 0.5)})
+        conditional = {(o.matrix, ps._schedule(o), o.stress) for o in self.ps_obs
+                       if o.fee_funding_run_status == VELOCITY}
+        self.assertEqual(conditional, set())
 
     def test_sensitivity_historical_reference_is_feasible(self):
         hist = [o for o in self.ps_obs if o.is_historical_reference]
@@ -160,7 +194,7 @@ class StudyTests(unittest.TestCase):
         self.assertEqual(len(divergences), 6)
         for d in divergences:
             with self.subTest(env=d["burn_environment"], left=d["left"], right=d["right"]):
-                self.assertEqual(d["different_with_infeasible"], 0)
+                self.assertEqual(d["different_not_fully_feasible"], 0)
 
     def test_infeasible_count_to_date_never_decreases(self):
         for obs, key in (

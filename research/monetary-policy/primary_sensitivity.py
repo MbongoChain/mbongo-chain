@@ -143,6 +143,9 @@ class Observation:
     # infeasible years up to this checkpoint.
     fee_funding_first_infeasible_year: str
     fee_funding_infeasible_years_to_date: int
+    # The run's status from its worst year: feasible, velocity_dependent
+    # (conditional, never counted as feasible) or infeasible.
+    fee_funding_run_status: str
 
 
 CSV_COLUMNS = [f.name for f in fields(Observation)]
@@ -212,6 +215,7 @@ def observations_for(
     cap = scenario["monetary"]["cap"]
     clamp_year = detect_clamp(scenario, rows)
     infeasible_years = model.years_with_fee_funding(rows, model.FEE_FUNDING_INFEASIBLE)
+    run_status = model.fee_funding_run_status(rows)
     cumulative = 0.0
     by_year: Dict[int, Tuple[model.YearRow, float]] = {}
     for row in rows:
@@ -266,6 +270,7 @@ def observations_for(
                 fee_funding_infeasible_years_to_date=sum(
                     1 for y in infeasible_years if y <= year
                 ),
+                fee_funding_run_status=run_status,
             )
         )
     return out
@@ -276,32 +281,41 @@ def _schedule(o: Observation) -> Tuple[int, int, float]:
 
 
 def fee_funding_lines(observations: List[Observation], label: str) -> List[str]:
-    """Infeasible runs among these observations, and the headline ranges again
-    over feasible runs only. The ranges over all runs are left as they were."""
+    """Infeasible and velocity-dependent runs among these observations, and the
+    headline ranges again over fully feasible runs only. A velocity-dependent
+    run is conditional, so it is excluded too. The ranges over all runs are
+    left as they were."""
     runs = {(_schedule(o), o.stress) for o in observations}
-    bad = {(_schedule(o), o.stress) for o in observations if o.fee_funding_first_infeasible_year}
-    out = [f"  {label:<26}: {len(bad)} of {len(runs)} runs"]
-    if not bad:
+    bad = {(_schedule(o), o.stress) for o in observations
+           if o.fee_funding_run_status == model.FEE_FUNDING_INFEASIBLE}
+    conditional = {(_schedule(o), o.stress) for o in observations
+                   if o.fee_funding_run_status == model.FEE_FUNDING_VELOCITY_DEPENDENT}
+    out = [
+        f"  {label:<26}: {len(bad)} of {len(runs)} runs",
+        f"  {'conditional on velocity':<26}: {len(conditional)} of {len(runs)} runs",
+    ]
+    if not bad and not conditional:
         return out
     firsts = sorted(
         int(o.fee_funding_first_infeasible_year)
         for o in observations
         if o.fee_funding_first_infeasible_year and o.year == HORIZON_YEARS
     )
-    out.append(f"    first infeasible year    : {firsts[0]} .. {firsts[-1]}")
+    if firsts:
+        out.append(f"    first infeasible year    : {firsts[0]} .. {firsts[-1]}")
     out.append(
-        "    NOT VALID in those years: assumed fees exceed the MBO that exists. "
-        "The ranges above include them."
+        "    Infeasible runs are NOT VALID, conditional runs hold only with recirculation. "
+        "The ranges above include both."
     )
     final = [
         o for o in observations
-        if o.year == HORIZON_YEARS and not o.fee_funding_first_infeasible_year
+        if o.year == HORIZON_YEARS and o.fee_funding_run_status == model.FEE_FUNDING_FEASIBLE
     ]
     if final:
         lo, hi = _range([o.security_budget_mbo for o in final])
-        out.append(f"    security budget @100y, feasible runs only : {lo:>14,.0f} .. {hi:>14,.0f} MBO")
+        out.append(f"    security budget @100y, fully feasible runs : {lo:>14,.0f} .. {hi:>14,.0f} MBO")
         lo, hi = _range([o.ending_supply for o in final])
-        out.append(f"    ending supply @100y, feasible runs only   : {lo:>14,.0f} .. {hi:>14,.0f} MBO")
+        out.append(f"    ending supply @100y, fully feasible runs   : {lo:>14,.0f} .. {hi:>14,.0f} MBO")
         over = [
             float(o.cumulative_issuance_over_cap_ratio)
             for o in final
@@ -309,7 +323,7 @@ def fee_funding_lines(observations: List[Observation], label: str) -> List[str]:
         ]
         if over:
             out.append(
-                f"    cumulative issuance / cap, feasible runs only: {min(over):.3f}x .. {max(over):.3f}x"
+                f"    cumulative issuance / cap, fully feasible runs: {min(over):.3f}x .. {max(over):.3f}x"
             )
     return out
 
