@@ -735,3 +735,112 @@ MBO_SECURITY_BUDGET_DECISION=NOT_MADE
 RUNTIME_CAP_SEMANTICS=NONE
 HISTORICAL_CAP_SEMANTICS=AMBIGUOUS
 ```
+
+---
+
+## 13. Audit addendum, 2026-11-07
+
+A read-only audit of the monetary research, recorded here rather than in a new
+document. **It selects no policy.** The gates of §10, their dependency order, and
+the decision record of §12 are unchanged.
+
+### 13.1 Runtime facts, re-checked at `dev` `fe6e5e4`
+
+The search of §2.1 still finds no issuance, burn, block reward, supply cap,
+total supply, inflation, treasury, vesting or halving in `crates/`. Three
+details changed or were not recorded:
+
+- `ensure_genesis` is now at `crates/mbongo-node/src/backend.rs:286`, not `:143`.
+- `TransactionType::Stake` follows the transfer path: it moves balance to its
+  receiver, and records no stake.
+- The producer's block time defaults to **5 seconds** (`--block-time`,
+  `crates/mbongo-node/src/main.rs:123`).
+
+### 13.2 Inconsistencies in the historical documents
+
+These are recorded, not resolved. Each document now carries a HISTORICAL,
+NON-NORMATIVE banner, and none of its text was changed.
+
+**Line references.** The banner adds 13 lines under each title (15 in
+`tokenomics.md`). Every `file:line` reference into these documents, in §2.2
+above, in RFC 0003 and in the research code, points to the text as it stood
+before the banner, at `fe6e5e4`. At later revisions, add the banner's length.
+All 12 distinct references were checked to land on the same text at that
+offset.
+
+| # | Inconsistency | Where |
+|---|---|---|
+| A1 | **Allocation versus emission.** The emission schedule alone, 0.1 MBO per block halving every 5 years at 31,536,000 blocks a year, issues the whole 31,536,000 (§2.4: `I × S / (1 − F)`), and the supply documents say all MBO comes from block rewards, with a genesis supply of 0. The allocation tables put 40% outside emission (ecosystem 15%, foundation 10%, community 10%, early contributors 5%) and only 60% in per-block emission. Both cannot hold: together they reach 140% of the figure | `supply_schedule.md`, `monetary_policy.md` against `token_distribution.md`, `tokenomics.md`, `economic_summary.md` |
+| A2 | **PoS and PoUW splits.** Emission is split 50/50 between PoS and PoUW; the allocation gives them 40% and 20%, a 2:1 ratio | `tokenomics.md`, `economic_summary.md` against `token_distribution.md` |
+| A3 | **Block-time dependency.** The schedule is per block, and assumes 1-second blocks. At the runtime's default of 5 seconds, the same per-block reward issues one fifth as much per year, and one fifth of the total. Annual issuance therefore depends on a parameter that nothing fixes | `tokenomics.md`, `supply_schedule.md`, `monetary_policy.md`; `main.rs:123` |
+| A4 | `tokenomics.md` is marked **Status: ACTIVE**, and says fee transfer and rewards are settled on-chain from v0.4. Protocol v0.4 has neither | `tokenomics.md` |
+| A5 | A 10% "Contributor Treasury" does not match any row of the allocation tables (foundation 10%, community 10%, early contributors 5%) | `contributor_compensation.md`, marked **Status: Active** |
+| A6 | Nineteen documents carry `<!-- Verified against tokenomics.md -->`, written when each was created on 2025-11-26, while `tokenomics.md` first appears in Git on 2026-02-17. The comment is not evidence of a check, and A1 shows that none held | 13 of the 14 bannered documents, and 6 others |
+| A7 | The figure is presented as a fact in documents outside the economic set: `vision.md`, `faq.md`, `glossary.md` and `onboarding_dev.md` (each marked Canonical), `mbongo_whitepaper.md`, `oracle_model.md`, `competitive_analysis.md`, `governance_model.md` (already bannered as aspirational). They are not bannered here. `INDEX.md` now states that no such figure anywhere in `docs/` is implemented or adopted | as listed |
+
+A1 bears on RFC 0003 §16 gate 4, the genesis distribution. A3 adds a question
+§10 does not ask: whether issuance is defined per block or per unit of time.
+
+### 13.3 Compatibility with VISION_v2
+
+VISION_v2 (adopted 2026-11-03) postdates this RFC.
+
+| Historical element | Under VISION_v2 |
+|---|---|
+| PoUW block rewards, 50% of emission; the 20% PoUW allocation; the PoUW half held "reserved, not emitted" until v2 | **Obsolete.** P1 withdraws execution by validators, even optional. The reserved half has no recipient. This addendum does not replace it with another figure |
+| PoUW score in leader selection and chain weight (`architecture_master_overview.md`) | **Obsolete.** It would make consensus judge compute work (P1, P3) |
+| Compute providers as PoUW earners | **Invalid role.** Providers are off-chain workers paid by their clients |
+| Validators paid a verification fee for deterministic receipt checks | Compatible (P3) |
+| Executors paid outside the protocol | Compatible, and the current state |
+| A protocol fee on compute payments (RFC 0003 §7) | Feasible later, only after the settlement RFC (VISION_v2 §7, step 11). In the model it remains an assumption |
+| Issuance for security, transaction fees, burn, treasury, staking | Feasible, each through its own protocol RFC. There is no validator set today: RFC 0006 proposes one authority |
+| Separating compute revenue from issuance (RFC 0003 §7) | Compatible |
+
+### 13.4 Research model: fee funding
+
+The model paid fees out of a supply of zero. Fee revenue is an exogenous MBO path,
+so in `high_adoption` supply reached zero in year 52, and validator and treasury
+fee revenue were still reported for the 49 years that followed, while every
+accounting identity passed. PR #239 classifies each year as `feasible`,
+`velocity_dependent` or `infeasible` against all the MBO that exists in it,
+changes no existing figure, and rejects infeasible runs with their own exit
+status.
+
+Every result of §2.4 holds on feasible runs: the coupling of cap and schedule,
+the 52 of 80 clamped schedules, the historical schedule's convergence without
+clamping, the 1.117× maximum, and the 52 of 80 divergence with burns, none of
+which involves an infeasible run. Two published range ends need qualification,
+because they come from infeasible runs: the lowest ending supply at 100 years,
+0 (457,578 MBO over feasible runs), and the lowest cumulative issuance over cap,
+0.067× (0.133×). Any figure from `high_adoption` after year 51 is not valid.
+
+### 13.5 MVP v0.2
+
+No monetary decision is on the MVP v0.2 critical path. RFC 0006, if accepted,
+lets only genesis create balances and keeps every block supply-neutral; it adds
+no issuance, burn, fee or reward, and leaves this RFC and RFC 0003 non-normative.
+The test-network unit convention of S2 is not a denomination. Test genesis
+allocations are not a distribution.
+
+### 13.6 Questions this audit adds, outside the gates
+
+Not gates, and not ordered against them. They are recorded so that they are not
+answered by default:
+
+- **Denomination:** the unit's name and its number of decimal places. The runtime
+  holds integer balances, and nothing converts them.
+- **Issuance unit:** per block or per unit of time (A3).
+- **Genesis distribution:** which of A1's two readings, if either, survives. This
+  is RFC 0003 §16 gate 4.
+- **The PoUW share:** what happens to the emission and allocation it held (§13.3).
+
+```
+MBO_CAP_POLICY_DECISION=NOT_MADE
+MBO_ISSUANCE_POLICY_DECISION=NOT_MADE
+MBO_BURN_REISSUANCE_DECISION=NOT_MADE
+MBO_SECURITY_BUDGET_DECISION=NOT_MADE
+MBO_DENOMINATION_DECISION=NOT_MADE
+MBO_GENESIS_DISTRIBUTION_DECISION=NOT_MADE
+RUNTIME_CAP_SEMANTICS=NONE
+HISTORICAL_CAP_SEMANTICS=AMBIGUOUS
+```
