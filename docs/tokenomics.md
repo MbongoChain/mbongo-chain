@@ -1,5 +1,20 @@
 # Mbongo Chain Tokenomics
 
+> **HISTORICAL, NON-NORMATIVE.** Banner added 2026-11-07; the text below it is unchanged.
+>
+> Its **Status: ACTIVE** line is historical. It predates VISION_v2, and no monetary policy is active.
+>
+> - **Nothing here is implemented.** The runtime has no issuance, supply cap, burn, fees,
+>   treasury, staking, rewards or vesting.
+> - **No parameter here is adopted:** not the 31,536,000 MBO figure, the emission schedule,
+>   the block time, the allocation percentages or the reward splits.
+> - **PoUW is obsolete.** Validators executing workloads, and PoUW rewards or allocations,
+>   are withdrawn by [`VISION_v2.md`](VISION_v2.md) P1. Provider assignment and settlement
+>   need their own RFCs (VISION_v2 §7).
+> - **Where every monetary question stands:** RFC 0004 §12, where no decision is made. The
+>   inconsistencies between these documents are listed in RFC 0004 §13:
+>   [`rfcs/0004-mbo-monetary-decision-framework.md`](rfcs/0004-mbo-monetary-decision-framework.md).
+
 **Status:** ACTIVE
 **Last updated:** 2026-02-17
 **Related:** [VISION_v1.md](VISION_v1.md), [COMPUTE_INTERFACE_v0.1.md](specs/COMPUTE_INTERFACE_v0.1.md), [economic_summary.md](economic_summary.md)

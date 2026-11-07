@@ -16,6 +16,8 @@ document disagrees with one of these, this table wins.
 |---|---|---|
 | Project vision and scope | [`VISION_v2.md`](VISION_v2.md) | NORMATIVE (adopted 2026-11-03) |
 | Project vision before 2026-11-03 | [`VISION_v1.md`](VISION_v1.md) | SUPERSEDED (historical record, kept intact) |
+| Whether any MBO monetary policy is decided (cap, emission, burn, fees, security budget), and the gates a decision must pass | [`rfcs/0004-mbo-monetary-decision-framework.md`](rfcs/0004-mbo-monetary-decision-framework.md) §12 and §13 | NON-NORMATIVE RESEARCH (draft). Records that no decision is made |
+| MBO monetary research: the baseline, policy families, the 100-year model and its studies | [`rfcs/0003-mbo-monetary-policy-security-budget.md`](rfcs/0003-mbo-monetary-policy-security-budget.md) | NON-NORMATIVE RESEARCH (draft) |
 | What Mbongo launches first — the MVP: first user, workload, runtime, model, worker, privacy level, provider model, payment, client surface, exit criteria, and the frozen defer list that separates MVP BLOCKING from POST-MVP and PARALLEL RESEARCH | [`product/MVP_v0.1.md`](product/MVP_v0.1.md) | NORMATIVE (FROZEN PRODUCT SCOPE; product decision, non-consensus — every protocol and architecture row above wins on its own subject) |
 | Where the project is going after the MVP: general-purpose compute direction, claims vocabulary (E, T0–T5, B, C, S), architectural boundaries, reference workloads, milestones and implementation gates | [`architecture/GENERAL_PURPOSE_COMPUTE_PROPOSAL.md`](architecture/GENERAL_PURPOSE_COMPUTE_PROPOSAL.md) | APPROVED DIRECTION (plan, non-consensus — not a description of what runs today; every other row wins on its own subject; authorises no implementation) |
 | What a `ComputeTask` means when it asks for the MVP inference: the `mbongo-infer:v1` `execution_spec` layout, the off-chain job spec and its canonical form and digest, runtime and model artifact identity, the `kaayu-cv-extract:v1` profile (input contract, prompt template, output schema, generation parameters), result canonicalization, the worker validation order and error taxonomy, what the receipt proves | [`product/MVP_INFERENCE_CONTRACT_v1.md`](product/MVP_INFERENCE_CONTRACT_v1.md) | NORMATIVE (APPLICATION CONTRACT, non-consensus — RFC 0005 wins on protocol; implementation in `crates/mbongo-compute/src/inference/`, vectors in `test-vectors/inference/`) |
@@ -108,6 +110,12 @@ saying so: [`ts_sdk_overview.md`](ts_sdk_overview.md),
 [`openapi_reference.md`](openapi_reference.md) and
 [`governance_model.md`](governance_model.md). Others may be wrong without
 having been checked yet.
+
+The economic and token documents (section 4 of the catalogue, and
+[`tokenomics.md`](tokenomics.md)) carry a HISTORICAL, NON-NORMATIVE banner since
+2026-11-07. **No MBO supply, emission, block-time, allocation, fee, staking or reward
+figure anywhere in `docs/` is implemented or adopted**, banner or not. Where each
+monetary question stands is RFC 0004 §12.
 
 ---
 
@@ -258,6 +266,9 @@ authoritative; the authority map above is the only source of that.
 
 ## 4. Economics & Tokenomics
 
+> Every document in this section is historical and non-normative, and carries a banner
+> saying so. No figure in them is implemented or adopted: see RFC 0004 §12 and §13.
+
 ### 4.1 Token Fundamentals
 ```
 ├── token_intro.md [L1]
@@ -265,7 +276,7 @@ authoritative; the authority map above is the only source of that.
 ├── token_distribution.md [L2]
 │   └── Distribution schedule and allocations
 ├── supply_schedule.md [L2]
-│   └── Emission schedule: 31,536,000 MBO max supply
+│   └── Emission schedule around a 31,536,000 MBO figure (historical, not adopted)
 └── monetary_policy.md [L2]
     └── Inflation, deflation, monetary policy rules
 ```
