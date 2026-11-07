@@ -489,6 +489,9 @@ jobs:
       - name: Run cap semantics tests
         run: python research/monetary-policy/test_cap_semantics.py
 
+      - name: Run fee funding feasibility tests
+        run: python research/monetary-policy/test_fee_funding.py
+
       # The CLI exits non-zero when any accounting identity is violated, so
       # its exit status is the assertion.
       - name: Run deterministic 100-year simulation

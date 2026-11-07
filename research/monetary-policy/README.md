@@ -97,6 +97,7 @@ Exit code `0` means the run completed and every accounting identity held;
 
 ```bash
 python3 research/monetary-policy/test_model.py
+python3 research/monetary-policy/test_fee_funding.py
 ```
 
 The tests exercise the arithmetic — accounting identities, policy-family
@@ -137,6 +138,45 @@ Checked by `identity_violations()` and by the tests, on every scenario:
 
 Burn is subtracted in exactly one place, and the compute split has exactly two
 destinations, so nothing is double-counted.
+
+**Correction, 2026-11-07.** The third identity is not checked by
+`identity_violations()`, and it does not hold in every year. When the burn a
+fee pool requires exceeds the MBO that exists, the model caps `burned` at
+that amount and keeps the validator and treasury shares of the full pool. The
+identity then holds with `burn_requested` in place of `burned`, and fails with
+`burned` in every year where the burn is capped. Each such year is flagged
+infeasible below.
+
+### Fee funding feasibility
+
+The identities say the books balance. They do not say that the fees a
+scenario assumes could have been paid. Fee revenue is an exogenous path in
+MBO, unrelated to how much MBO exists, so a scenario can balance its books
+while paying fees out of a supply of zero. `high_adoption` did, with no
+signal, until 2026-11-07.
+
+Each year is now classified, against the most generous bound: all the MBO that
+exists during the year, `available_supply = starting_supply + gross_issuance`.
+
+| `fee_funding` | Condition | Treatment |
+|---|---|---|
+| `feasible` | Fee pool within `available_supply` | Valid |
+| `velocity_dependent` | Fee pool above `available_supply`, its burn within it | Flagged. Possible only if MBO changes hands more than once in the year, and the model has no velocity |
+| `infeasible` | Required burn above `available_supply`, or fees with no MBO at all | **Not valid.** The burn is capped, and the fee, treasury and security-budget figures of the year could not have been paid |
+
+Nothing is clamped or recomputed to make a year feasible. The CSV gains
+`available_supply`, `fee_pool`, `burn_requested`, `burn_shortfall` and
+`fee_funding` after the existing columns, which are unchanged. `model.py`
+exits with status 3 when any year is infeasible, after printing and writing
+the results for inspection. Both studies carry the run's first infeasible year
+on every observation, and report infeasible runs and, beside the original
+ranges, the ranges over feasible runs only.
+
+At this commit: `high_adoption` is infeasible from year 52 to 100 (49 years),
+and velocity-dependent from 48 to 51. The other 10 scenarios are feasible in
+every year. In the sensitivity study, 10 of 184 runs are infeasible, all on
+the two smallest, fastest-decaying schedules (788,400 / 2 / 0.25 and 0.50). In
+the cap semantics study, 6 of 480, all with burn.
 
 ### Security metrics
 
@@ -297,6 +337,9 @@ full 80 × stress product is deliberately not run.
 - The cap is a supply cap, as described above.
 - Extreme low-issuance corners can burn supply to zero under the controlled
   fee split; that is model-consistent behaviour, not a prediction.
+  *Qualified 2026-11-07:* those runs are also infeasible, because they keep
+  paying fees once the supply is gone. The summary's lowest ending supply of 0
+  comes from them; over feasible runs it is 457,578 MBO.
 
 ## Cap semantics comparative study
 

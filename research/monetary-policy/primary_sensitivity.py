@@ -138,6 +138,11 @@ class Observation:
     security_value_at_risk: float
     cumulative_issuance_over_cap_ratio: str
     supply_over_cap_ratio: str
+    # Fee funding (see model.FEE_FUNDING_*). The first is for the whole run, so
+    # every checkpoint of an infeasible run carries it; the second counts the
+    # infeasible years up to this checkpoint.
+    fee_funding_first_infeasible_year: str
+    fee_funding_infeasible_years_to_date: int
 
 
 CSV_COLUMNS = [f.name for f in fields(Observation)]
@@ -206,6 +211,7 @@ def observations_for(
 ) -> List[Observation]:
     cap = scenario["monetary"]["cap"]
     clamp_year = detect_clamp(scenario, rows)
+    infeasible_years = model.years_with_fee_funding(rows, model.FEE_FUNDING_INFEASIBLE)
     cumulative = 0.0
     by_year: Dict[int, Tuple[model.YearRow, float]] = {}
     for row in rows:
@@ -254,8 +260,57 @@ def observations_for(
                 supply_over_cap_ratio=(
                     "" if cap is None else f"{row.ending_supply / cap:.6f}"
                 ),
+                fee_funding_first_infeasible_year=(
+                    str(infeasible_years[0]) if infeasible_years else ""
+                ),
+                fee_funding_infeasible_years_to_date=sum(
+                    1 for y in infeasible_years if y <= year
+                ),
             )
         )
+    return out
+
+
+def _schedule(o: Observation) -> Tuple[int, int, float]:
+    return (o.initial_annual_issuance, o.step_years, o.step_factor)
+
+
+def fee_funding_lines(observations: List[Observation], label: str) -> List[str]:
+    """Infeasible runs among these observations, and the headline ranges again
+    over feasible runs only. The ranges over all runs are left as they were."""
+    runs = {(_schedule(o), o.stress) for o in observations}
+    bad = {(_schedule(o), o.stress) for o in observations if o.fee_funding_first_infeasible_year}
+    out = [f"  {label:<26}: {len(bad)} of {len(runs)} runs"]
+    if not bad:
+        return out
+    firsts = sorted(
+        int(o.fee_funding_first_infeasible_year)
+        for o in observations
+        if o.fee_funding_first_infeasible_year and o.year == HORIZON_YEARS
+    )
+    out.append(f"    first infeasible year    : {firsts[0]} .. {firsts[-1]}")
+    out.append(
+        "    NOT VALID in those years: assumed fees exceed the MBO that exists. "
+        "The ranges above include them."
+    )
+    final = [
+        o for o in observations
+        if o.year == HORIZON_YEARS and not o.fee_funding_first_infeasible_year
+    ]
+    if final:
+        lo, hi = _range([o.security_budget_mbo for o in final])
+        out.append(f"    security budget @100y, feasible runs only : {lo:>14,.0f} .. {hi:>14,.0f} MBO")
+        lo, hi = _range([o.ending_supply for o in final])
+        out.append(f"    ending supply @100y, feasible runs only   : {lo:>14,.0f} .. {hi:>14,.0f} MBO")
+        over = [
+            float(o.cumulative_issuance_over_cap_ratio)
+            for o in final
+            if o.cumulative_issuance_over_cap_ratio
+        ]
+        if over:
+            out.append(
+                f"    cumulative issuance / cap, feasible runs only: {min(over):.3f}x .. {max(over):.3f}x"
+            )
     return out
 
 
@@ -360,6 +415,7 @@ def format_summary(observations: List[Observation]) -> str:
                 f"  cumulative issuance / cap : {min(over):.3f}x .. {max(over):.3f}x "
                 "(above 1.0 means burns reopened headroom)"
             )
+        out.extend(fee_funding_lines(rows, "fee funding infeasible"))
         out.append("")
 
     stressed = [o for o in observations if o.stress != "none"]
@@ -368,6 +424,12 @@ def format_summary(observations: List[Observation]) -> str:
         out.append(f"  shapes: {', '.join(sorted(REPRESENTATIVE_SHAPES))}")
         out.append(f"  stresses: {', '.join(STRESS_SOURCES)}")
         out.append(f"  observations: {len(stressed)}")
+        for matrix in MATRICES:
+            out.extend(
+                fee_funding_lines(
+                    [o for o in stressed if o.matrix == matrix], f"fee funding infeasible, {matrix}"
+                )
+            )
         out.append("")
 
     out.append("Observation only. Interpretation, ranking and policy selection are out of scope.")
