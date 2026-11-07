@@ -9,7 +9,7 @@
 //! processes and queries them via JSON-RPC over HTTP.
 
 use std::net::TcpListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -33,6 +33,12 @@ const MIN_HEIGHT: u64 = 5;
 // and tip hash, bounded by an overall deadline.
 const CONVERGENCE_POLL_INTERVAL_MS: u64 = 500;
 const CONVERGENCE_TIMEOUT_SECS: u64 = 30;
+
+/// Longer than the time followers take to reach the 60-second backoff cap.
+const LONG_OUTAGE_SECS: u64 = 70;
+
+/// One capped delay, and a margin for the sync after it.
+const LONG_OUTAGE_REJOIN_SECS: u64 = 90;
 
 // Explicit port constants — same values used for spawning AND probing.
 // CLI flags verified against main.rs Args struct:
@@ -72,6 +78,9 @@ struct NodeConfig {
     producer: bool,
     bootnodes: Vec<String>,
     data_dir: PathBuf,
+    /// A stable P2P identity, so that a pinned bootnode address survives a
+    /// restart.
+    node_key_file: Option<PathBuf>,
 }
 
 /// A running child process together with its captured stdout/stderr ring
@@ -211,7 +220,14 @@ fn spawn_node(config: &NodeConfig) -> Result<ManagedChild, String> {
         .arg("--p2p-port")
         .arg(config.p2p_port.to_string())
         .arg("--data-dir")
-        .arg(config.data_dir.to_str().unwrap());
+        .arg(config.data_dir.to_str().unwrap())
+        // Peers find each other through bootnodes only, as on separate hosts:
+        // with mDNS a restart would be healed by discovery, not by redial.
+        .arg("--no-mdns");
+
+    if let Some(key) = &config.node_key_file {
+        cmd.arg("--node-key-file").arg(key);
+    }
 
     if config.producer {
         cmd.arg("--producer").arg("--block-time").arg(BLOCK_TIME_SECS.to_string());
@@ -275,7 +291,12 @@ fn format_cmdline(binary: &std::path::Path, config: &NodeConfig) -> String {
         config.p2p_port.to_string(),
         "--data-dir".to_string(),
         config.data_dir.display().to_string(),
+        "--no-mdns".to_string(),
     ];
+    if let Some(key) = &config.node_key_file {
+        parts.push("--node-key-file".to_string());
+        parts.push(key.display().to_string());
+    }
     if config.producer {
         parts.push("--producer".to_string());
         parts.push("--block-time".to_string());
@@ -551,6 +572,21 @@ async fn main() {
     }
 }
 
+/// Writes the producer's node key, readable by its owner only.
+fn write_node_key(data_dir: &Path) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(data_dir).map_err(|e| format!("create data directory: {e}"))?;
+    // Inside the data directory, so that the harness cleanup removes it.
+    let path = data_dir.join("node.key");
+    std::fs::write(&path, "42".repeat(32)).map_err(|e| format!("write node key: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("protect node key: {e}"))?;
+    }
+    Ok(path)
+}
+
 #[allow(clippy::too_many_lines)]
 async fn run_harness(client: &Client, data_dirs: &[PathBuf]) -> Result<(), String> {
     // ── Phase 1: Spawn all 3 nodes ──────────────────────────────────────
@@ -565,6 +601,7 @@ async fn run_harness(client: &Client, data_dirs: &[PathBuf]) -> Result<(), Strin
         producer: true,
         bootnodes: vec![],
         data_dir: data_dirs[0].clone(),
+        node_key_file: Some(write_node_key(&data_dirs[0])?),
     };
 
     let follower_a_cfg = NodeConfig {
@@ -575,6 +612,7 @@ async fn run_harness(client: &Client, data_dirs: &[PathBuf]) -> Result<(), Strin
         producer: false,
         bootnodes: vec![], // set after producer starts
         data_dir: data_dirs[1].clone(),
+        node_key_file: None,
     };
 
     let follower_b_cfg = NodeConfig {
@@ -585,6 +623,7 @@ async fn run_harness(client: &Client, data_dirs: &[PathBuf]) -> Result<(), Strin
         producer: false,
         bootnodes: vec![], // set after producer starts
         data_dir: data_dirs[2].clone(),
+        node_key_file: None,
     };
 
     // Pre-flight: verify every port is free before spawning anything.
@@ -608,8 +647,10 @@ async fn run_harness(client: &Client, data_dirs: &[PathBuf]) -> Result<(), Strin
         bootnodes: vec![producer_multiaddr.clone()],
         ..follower_a_cfg
     };
+    // Follower A pins the producer's identity, and follower B uses a bare
+    // address: a restart has to work for both.
     let follower_b_cfg = NodeConfig {
-        bootnodes: vec![producer_multiaddr.clone()],
+        bootnodes: vec![format!("/ip4/127.0.0.1/tcp/{PRODUCER_P2P}")],
         ..follower_b_cfg
     };
 
@@ -671,7 +712,12 @@ async fn run_harness(client: &Client, data_dirs: &[PathBuf]) -> Result<(), Strin
     sleep(Duration::from_secs(2)).await;
 
     let mut producer = spawn_node(&producer_cfg)?;
-    let _new_multiaddr = extract_peer_id(&mut producer, producer_cfg.p2p_port).await?;
+    let new_multiaddr = extract_peer_id(&mut producer, producer_cfg.p2p_port).await?;
+    if new_multiaddr != producer_multiaddr {
+        return Err(format!(
+            "the producer's identity changed: {producer_multiaddr} -> {new_multiaddr}"
+        ));
+    }
     wait_for_rpc(client, &mut producer).await?;
     println!("  Producer restarted, RPC ready on port {PRODUCER_RPC}");
 
@@ -767,6 +813,20 @@ async fn run_harness(client: &Client, data_dirs: &[PathBuf]) -> Result<(), Strin
     await_anchor_on_all(client, &nodes, task_a).await?;
     await_anchor_on_all(client, &nodes, task_b).await?;
     println!("  Phase 4: PASS\n");
+
+    // ── Phase 5: Producer down for longer than the backoff cap ──────────
+
+    println!("Phase 5: Producer down for {LONG_OUTAGE_SECS}s...");
+    producer.child.kill().await.map_err(|e| format!("kill producer: {e}"))?;
+    sleep(Duration::from_secs(LONG_OUTAGE_SECS)).await;
+    let mut producer = spawn_node(&producer_cfg)?;
+    extract_peer_id(&mut producer, producer_cfg.p2p_port).await?;
+    wait_for_rpc(client, &mut producer).await?;
+    let long_baseline = get_height(client, &nodes[0]).await?;
+    // A follower may be a whole capped delay away from its next dial.
+    let long_timeout = Duration::from_secs(LONG_OUTAGE_REJOIN_SECS);
+    await_convergence(client, &nodes, long_baseline + 1, poll, long_timeout).await?;
+    println!("  Phase 5: PASS\n");
 
     // ── Cleanup: kill all remaining ─────────────────────────────────────
 

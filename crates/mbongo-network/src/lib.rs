@@ -12,6 +12,10 @@
 #![warn(clippy::all)]
 #![warn(clippy::pedantic)]
 
+/// Keeping configured bootnodes connected.
+pub mod bootnodes;
+/// A stable P2P identity read from a file.
+pub mod node_key;
 /// Minimal libp2p networking node (ping, identify, mDNS, block-sync).
 pub mod p2p;
 /// Block sync protocol messages and SCALE codec.
@@ -21,8 +25,10 @@ pub mod rpc;
 /// HTTP server wiring (Axum router + serve).
 pub mod server;
 
+pub use crate::node_key::load_node_key;
 pub use crate::p2p::{
     BlockBroadcaster, ChannelBroadcaster, InboundSyncRequest, P2PNode, SyncCommand, SyncEvent,
+    SyncRequestKind,
 };
 pub use crate::p2p_protocol::{
     BlockNotifyAck, BlockNotifyCodec, SyncCodec, SyncNotification, SyncRequest, SyncResponse,

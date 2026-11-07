@@ -17,6 +17,7 @@ const HARNESSES = [
   { file: "crates/mbongo-node/src/bin/compute_vertical.rs", pattern: FIELD, count: 9 },
   { file: "crates/mbongo-node/src/bin/devnet_harness.rs", pattern: CONST, count: 9 },
   { file: "crates/mbongo-node/tests/devnet_convergence.rs", pattern: CONST, count: 9 },
+  { file: "crates/mbongo-network/tests/reconnect.rs", pattern: CONST, count: 4 },
 ];
 
 const ports = [];

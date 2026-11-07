@@ -1,8 +1,7 @@
 # S3: Transaction Service and Recovery Design
 
-**Status: PROPOSED, with decisions D1 to D5 recorded in section 10.** PR 1 is merged. PR 2a is
-authorized for implementation. PR 2b is at preparation only, and has its own gate after 2a,
-in section 12. Stage S3 of [`MVP_v0.2_NETWORK_READINESS.md`](../product/MVP_v0.2_NETWORK_READINESS.md),
+**Status: PROPOSED, with decisions D1 to D5 recorded in section 10.** PRs 1 and 2a are merged.
+PR 2b is implemented and awaits merge authorization, in section 12. Stage S3 of [`MVP_v0.2_NETWORK_READINESS.md`](../product/MVP_v0.2_NETWORK_READINESS.md),
 tracked in #207. The roadmap stays in #209, and this document holds no schedule.
 
 **Covers:** forwarding to the producer, explicit failure, mempool bounds and eviction,
@@ -377,8 +376,7 @@ Maintainer decisions of 2026-11-05.
 
 ## 12. PR 2 design: sync recovery
 
-**Status: PR 2a authorized for implementation, with no merge without review. PR 2b is
-prepared, and needs a separate gate after 2a.**
+**Status: PR 2a merged. PR 2b implemented, awaiting merge authorization.**
 
 ### 12.1 What was measured
 
@@ -513,8 +511,9 @@ Scope: bounded backoff, bootnode redial, peer failure recovery, stable node iden
 A follower is judged by height and head hash, read through RPC, after the restart, with the
 expected count of nodes stated first.
 
-**Gate for 2b:** PR 2a merged, its review closed, the values in 12.2 approved, and a decision on
-whether the restart stage runs on pull requests, which costs CI time, or on push only.
+**Where these run.** `crates/mbongo-network/tests/reconnect.rs`, with real nodes on loopback, is the
+required gate: it is part of `cargo test` on every pull request. The longer restart phases are in
+`devnet_harness`, on push, with mDNS off, follower A pinned and follower B on a bare address.
 
 **RFC 0006:** 2b implements reconnection and `--node-key-file` as section 3 states them. If
 that text changes before acceptance, 12.2 and 12.3 follow it. The release needs 2b at G4.
