@@ -1,0 +1,56 @@
+# Unpublished development binaries, protocol v0.4 (S3 C1).
+#
+# Manual dispatch only. It builds Linux x86_64 binaries in a container pinned
+# by digest, writes build metadata and SHA256SUMS, and keeps them as a
+# workflow artifact for 7 days. It creates no release, tag, package, npm
+# publication or attestation, and it is not a required check.
+#
+# The build itself is scripts/dev-binaries/build.sh, so a manual build in the
+# same image runs exactly what this workflow runs.
+#
+# A single build establishes nothing about reproducibility.
+#
+# Note: artifacts of a public repository can be downloaded by signed-in users.
+# They are development builds, not releases.
+
+name: Development Binaries
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dev-binaries-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux-x86_64:
+    name: Development binaries (Linux x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    # rust:1.94.0-bookworm, linux/amd64 manifest. The toolchain is the image's;
+    # keep it equal to RUST_VERSION in the Dockerfile and .env.base.
+    container:
+      image: rust:1.94.0-bookworm@sha256:4673f78db88b71f09d5451bbc404734807918161241215ba0a50bbbe9b448117
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # No rust-cache step: a build that is handed out never reads a shared cache.
+      - name: Build binaries, metadata and checksums
+        run: >-
+          bash scripts/dev-binaries/build.sh dev-binaries
+          rust:1.94.0-bookworm@sha256:4673f78db88b71f09d5451bbc404734807918161241215ba0a50bbbe9b448117
+
+      - name: Keep the artifact for 7 days
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dev-binaries-linux-x86_64-${{ github.sha }}
+          path: dev-binaries
+          retention-days: 7
+          if-no-files-found: error

@@ -2,3 +2,6 @@ crates/mbongo-compute/profiles/** -text
 test-vectors/inference/** -text
 crates/mbongo-compute/fixtures/** -text
 test-vectors/mvp/** -text
+
+# Run inside Linux containers: keep LF even on a Windows checkout with core.autocrlf.
+scripts/dev-binaries/*.sh text eol=lf
