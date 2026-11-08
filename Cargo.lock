@@ -2777,6 +2777,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mbongo-stress"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "clap",
+ "futures",
+ "libp2p",
+ "mbongo-core",
+ "mbongo-network",
+ "parity-scale-codec",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "mbongo-verification"
 version = "0.1.0"
 dependencies = [
