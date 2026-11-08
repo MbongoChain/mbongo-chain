@@ -90,14 +90,17 @@ python3 research/monetary-policy/model.py --scenario base --years 100 \
     --output /tmp/base.csv
 ```
 
-Exit code `0` means the run completed and every accounting identity held;
-`1` means an identity was violated; `2` means the configuration was rejected.
+Exit codes, the first that applies: `1` an accounting identity was violated;
+`2` the configuration was rejected; `3` fees are infeasible in a covered year;
+`4` the horizon goes beyond what the scenario's inputs define; `0` otherwise.
+See [Horizon validity](#horizon-validity) for the order.
 
 ## Tests
 
 ```bash
 python3 research/monetary-policy/test_model.py
 python3 research/monetary-policy/test_fee_funding.py
+python3 research/monetary-policy/test_horizon.py
 ```
 
 The tests exercise the arithmetic — accounting identities, policy-family
@@ -203,6 +206,91 @@ and velocity-dependent from 48 to 51. The other 10 scenarios are feasible in
 every year. In the sensitivity study, 10 of 184 runs are infeasible, all on
 the two smallest, fastest-decaying schedules (788,400 / 2 / 0.25 and 0.50). In
 the cap semantics study, 6 of 480, all with burn.
+
+### Horizon validity
+
+The simulator accepts any horizon. Until 2026-11-07 it also ran any horizon
+without a signal, although every input path of every shipped scenario ends in
+year 100. Beyond its last phase a path kept the last phase's growth rate, and a
+shock window ending in year 100 implied full recovery in year 101. So
+`historical_documented_partial` was reported infeasible from year 104, purely
+because the engine kept growing its fees by 2% a year after the scenario
+stopped saying anything.
+
+Each year now carries a `horizon_status`:
+
+| `horizon_status` | Condition |
+|---|---|
+| `covered` | Every input trajectory is defined in that year by the scenario |
+| `extrapolated` | Some input is continued implicitly there. `extrapolated_inputs` names which |
+
+An input is defined through:
+
+- **a path** (`transaction_fee_revenue_mbo`, `compute_user_spend_mbo`,
+  `price`): the last `until_year` of its phases, or year 0 alone if it has
+  none, unless it declares a continuation:
+  - `"continuation": {"policy": "constant"}` holds the last value;
+  - `"continuation": {"policy": "growth", "annual_growth": g}` grows at the
+    stated rate, which the engine never supplies;
+  - either may carry `"until_year": N`, and then covers through `N` only.
+- **`staking_ratio`**, a single number: every year, since it is time-invariant
+  by definition. Only its shocks limit it.
+- **a shock** limits its metric:
+  - `"end_year": null` is a persistent shock: it applies to the end of the
+    run, with no limit;
+  - `"after_end": "revert"` declares full recovery the year after `end_year`,
+    with no limit;
+  - `"after_end": "unspecified"` states nothing after `end_year`, so coverage
+    stops there;
+  - with no declaration, a window that ends before the last phase of its
+    metric returns to that explicitly defined path, which is the scenario's
+    own statement. A window ending at or after it is defined through
+    `end_year` only. For `staking_ratio`, the last phase is the last year
+    every path of the scenario defines explicitly.
+
+Coverage ends once per input, so covered years are always a prefix of the run.
+Extrapolated years are computed exactly as before and written, for
+inspection, but they are not a forecast and not a valid result. No
+continuation and no shock declaration was added to `scenarios.json`: every
+shipped scenario is covered through year 100 and no further.
+
+A run's validity combines three separate checks, each still inspectable on its
+own (`model.run_validity`). The first that applies decides:
+
+| Status | Condition | Exit |
+|---|---|---|
+| `accounting_invalid` | An identity fails, in any year. Extrapolation never excuses arithmetic | 1 |
+| `infeasible` | Fees are infeasible in a **covered** year. Shown on the scenario's own inputs, so extrapolation cannot hide it | 3 |
+| `extrapolated` | Some year is not covered, including when infeasibility appears only in extrapolated years | 4 |
+| `conditional` | Covered years need velocity | 0 |
+| `valid` | None of the above | 0 |
+
+Fee funding is reported both over covered years and over all years, so an
+infeasibility created by extrapolation is visible without being reported as
+shown.
+
+Both studies take `--horizon 100|150|200`, defaulting to 100, the historical
+study. Checkpoints are the historical ones, plus 150 and 200 where reached.
+Every observation carries `horizon_status`, the run's `first_extrapolated_year`
+and `extrapolated_inputs`, and its `run_validity`. **A run with any
+extrapolated year is excluded from every range and every divergence count, at
+every checkpoint, and reported as excluded.** When nothing is left, the range
+is withheld, not printed. A study exits 4 if any run was extrapolated, and
+otherwise 0, as before: a sweep is expected to contain infeasible runs, and
+flags them.
+
+With the shipped scenarios, a 150- or 200-year study therefore has no
+comparable run: 184 of 184 and 480 of 480 are extrapolated from year 101. That
+is the intended result. A longer horizon becomes comparable only once a
+scenario states what happens after year 100, which is a research decision this
+code does not make.
+
+Output changes: the model CSV gains `horizon_status` and `extrapolated_inputs`,
+each study CSV `horizon_status`, `first_extrapolated_year`,
+`extrapolated_inputs` and `run_validity`, all after the existing columns, which
+are byte-identical for every existing run. Each summary gains a coverage line.
+A run over more than 100 years that used to exit 0 now exits 4, and
+`historical_documented_partial` over 150 or 200 years exits 4 instead of 3.
 
 ### Security metrics
 
@@ -462,6 +550,7 @@ the family, not as a defect and not as a preference.
 
     python3 research/monetary-policy/cap_semantics.py --summary
     python3 research/monetary-policy/cap_semantics.py --output /tmp/cap.csv
+    python3 research/monetary-policy/cap_semantics.py --summary --horizon 150
     python3 research/monetary-policy/test_cap_semantics.py
 
 The CSV is 3,840 rows and is not committed; the driver is deterministic and
@@ -492,12 +581,15 @@ Add an entry to `scenarios.json`; do not edit `model.py`. A scenario needs:
 - `activity`: fee and compute-spend paths, worker share, protocol fee rate
 - `price`: the exogenous reference-price path
 - `shocks`: optional, each with a metric, an inclusive year window and a
-  multiplier
+  multiplier, and optionally what happens after the window (see
+  [Horizon validity](#horizon-validity))
 
 Growth paths are piecewise: an initial value plus phases carrying an
 `annual_growth` that may be negative. That is how a scenario expresses growth,
 maturity, stagnation or contraction without the engine assuming any of them.
-Nothing forces or implies perpetual exponential growth.
+Nothing forces or implies perpetual exponential growth. A path is defined
+through its last phase only, unless it declares a `continuation`; a run longer
+than that is reported as extrapolated.
 
 Shockable metrics: `transaction_fee_revenue_mbo`, `compute_user_spend_mbo`,
 `mbo_reference_price`, `staking_ratio`.
