@@ -101,6 +101,7 @@ See [Horizon validity](#horizon-validity) for the order.
 python3 research/monetary-policy/test_model.py
 python3 research/monetary-policy/test_fee_funding.py
 python3 research/monetary-policy/test_horizon.py
+python3 research/monetary-policy/test_scenario_validation.py
 ```
 
 The tests exercise the arithmetic — accounting identities, policy-family
@@ -291,6 +292,31 @@ each study CSV `horizon_status`, `first_extrapolated_year`,
 are byte-identical for every existing run. Each summary gains a coverage line.
 A run over more than 100 years that used to exit 0 now exits 4, and
 `historical_documented_partial` over 150 or 200 years exits 4 instead of 3.
+
+### Scenario validation
+
+The loader reads keys with defaults, so until 2026-11-08 a misspelled key was
+ignored and the run still reported valid (#243): a misspelled shock metric
+disabled the shock, a misspelled `annual_growth` became growth 0, and a shock
+with no `end_year` key became persistent, a regression from the horizon work.
+
+Now, before anything is simulated:
+
+- unknown keys are rejected at the scenario level, in `activity`, in each
+  path, each phase and each shock;
+- a shock metric must be one of the four shockable metrics;
+- every shock must carry `end_year`: an integer, or `null` to declare it
+  persistent;
+- every shock is validated, whatever its metric.
+
+A rejected configuration exits 2 from `model.py` and from both studies. It
+prints no result and writes no CSV, so it is never classified valid,
+conditional, infeasible or extrapolated. An **absent** path is not an error:
+it states nothing beyond year 0, and is reported as extrapolated.
+
+Only the sections that hold trajectories are checked for unknown keys.
+`monetary`, `fees`, `supply_distribution` and `issuance_allocation` are not
+yet.
 
 ### Security metrics
 

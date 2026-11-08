@@ -693,7 +693,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="Compare three candidate MBO cap semantics. Decides nothing."
     )
-    parser.add_argument("--config", default=model.DEFAULT_CONFIG)
+    # type=Path: without it a --config given on the command line reached
+    # load_config as a str and crashed (AttributeError, exit 1).
+    parser.add_argument("--config", type=Path, default=model.DEFAULT_CONFIG)
     parser.add_argument("--output", help="write the full observation CSV here")
     parser.add_argument("--summary", action="store_true", help="print the summary")
     parser.add_argument(
@@ -702,8 +704,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    config = model.load_config(args.config)
-    observations = run_all(config, args.horizon)
+    # A rejected configuration exits 2, as in model.py and primary_sensitivity.
+    # Uncaught, it would exit 1, the code for a violated accounting identity.
+    try:
+        config = model.load_config(args.config)
+        observations = run_all(config, args.horizon)
+    except model.ConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
     if args.output:
         write_csv(observations, args.output)

@@ -498,6 +498,11 @@ jobs:
       - name: Run horizon validity tests
         run: python research/monetary-policy/test_horizon.py
 
+      # Misspelled or unknown scenario keys must be configuration errors,
+      # never silently ignored and never reported as a result.
+      - name: Run scenario validation tests
+        run: python research/monetary-policy/test_scenario_validation.py
+
       # The CLI exits non-zero when any accounting identity is violated, so
       # its exit status is the assertion.
       - name: Run deterministic 100-year simulation
