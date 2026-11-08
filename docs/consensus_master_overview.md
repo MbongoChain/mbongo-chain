@@ -1,6 +1,24 @@
 <!-- Verified against tokenomics.md -->
 # Mbongo Chain — Consensus Master Overview
 
+> **HISTORICAL, NON-NORMATIVE.** Banner added 2026-11-08; the text below it is unchanged.
+>
+> - **Nothing here is implemented.** The runtime has no consensus protocol. One node,
+>   started with `--producer`, builds every block, and blocks carry no producer
+>   signature. `crates/mbongo-consensus` is an empty stub. There is no PoX, PoS, PoUW,
+>   PoC or AIDA, and no VRF leader election, validator set, staking, slashing, finality
+>   mechanism or guardian node.
+> - **Status lines and checkmarks below are historical.** "Canonical", "Final
+>   Specification" or a feature marked as done does not describe the running system.
+> - **No parameter here is adopted:** not the block or slot time, epoch length, quorum,
+>   finality depth, validator count, stake minimum, slashing rate or unbonding period.
+> - **PoUW is obsolete.** Validators executing workloads, and PoUW weights or rewards, are
+>   withdrawn by [`VISION_v2.md`](VISION_v2.md) P1, and consensus outcomes must be
+>   deterministic (P3).
+> - **What is current:** the authority map, [`INDEX.md`](INDEX.md), and the protocol
+>   lock, [`specs/PROTOCOL_LOCK_v0.4.md`](specs/PROTOCOL_LOCK_v0.4.md). Any change to
+>   block production or validation needs an accepted RFC under [`RFC_PROCESS.md`](RFC_PROCESS.md).
+
 > **Document Type:** Technical Specification  
 > **Last Updated:** November 2025  
 > **Status:** Canonical Reference
