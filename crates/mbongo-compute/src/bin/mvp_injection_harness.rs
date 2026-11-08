@@ -6,7 +6,7 @@
 //! **Not run in CI** (it needs the 2.5 GB model).
 //!
 //! ```text
-//! mvp_injection_harness --out-dir <dir outside the repo> [--corpus <file>] [--lab-prompt <file>]
+//! mvp_injection_harness --out-dir <dir outside the repo> [--corpus <file>] [--lab-prompt <file> [--lab-schema <file>]]
 //! ```
 //!
 //! Without `--lab-prompt` every case goes through the worker's own
@@ -15,7 +15,10 @@
 //! step. With `--lab-prompt`, the system message is replaced by the file's
 //! bytes (every other request field from the active job spec): a design aid
 //! for a candidate prompt, labelled `LAB` in every line, never evidence for
-//! a frozen profile.
+//! a frozen profile. `--lab-schema` (with `--lab-prompt`) also replaces the
+//! output schema sent as the grammar: the result is canonicalized and
+//! checked against that schema here, not by a profile — a design aid for a
+//! candidate output contract (V4-G1, #175), never a profile.
 //!
 //! Prints only identifiers, codes, booleans, timings and token counts. The
 //! canonical results are written to `--out-dir`, which must be outside the
@@ -27,6 +30,7 @@ use std::time::Instant;
 
 use mbongo_compute::cpu_inference::config::RuntimeConfig;
 use mbongo_compute::cpu_inference::{ChatRequest, InferenceBackend, InferenceProfile, LlamaServer};
+use mbongo_compute::inference::canonical;
 use mbongo_compute::inference::kaayu::CvExtractionInputV1;
 use mbongo_compute::mvp::screen::{screen, ScreenStatus};
 use mbongo_compute::profiles;
@@ -49,6 +53,58 @@ fn str_list(v: &serde_json::Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Checks `v` against the JSON Schema subset the lab schemas use (type,
+/// required, properties, additionalProperties: false, items, maxItems,
+/// maxLength, enum). Returns the first violation.
+fn lab_check(schema: &serde_json::Value, v: &serde_json::Value, at: &str) -> Result<(), String> {
+    use serde_json::Value;
+    if let Some(e) = schema.get("enum").and_then(Value::as_array) {
+        if !e.contains(v) {
+            return Err(format!("{at}: not in enum"));
+        }
+    }
+    match (schema.get("type").and_then(Value::as_str), v) {
+        (Some("object"), Value::Object(m)) => {
+            let props = schema.get("properties").and_then(Value::as_object);
+            for r in schema.get("required").and_then(Value::as_array).into_iter().flatten() {
+                let k = r.as_str().unwrap_or_default();
+                if !m.contains_key(k) {
+                    return Err(format!("{at}: missing {k}"));
+                }
+            }
+            for (k, x) in m {
+                match props.and_then(|p| p.get(k)) {
+                    Some(ps) => lab_check(ps, x, &format!("{at}.{k}"))?,
+                    None if schema.get("additionalProperties") == Some(&Value::Bool(false)) => {
+                        return Err(format!("{at}: unexpected {k}"));
+                    }
+                    None => {}
+                }
+            }
+            Ok(())
+        }
+        (Some("array"), Value::Array(a)) => {
+            if let Some(max) = schema.get("maxItems").and_then(Value::as_u64) {
+                if a.len() as u64 > max {
+                    return Err(format!("{at}: more than {max} items"));
+                }
+            }
+            let items = schema.get("items").cloned().unwrap_or(Value::Null);
+            for (i, x) in a.iter().enumerate() {
+                lab_check(&items, x, &format!("{at}[{i}]"))?;
+            }
+            Ok(())
+        }
+        (Some("string"), Value::String(t)) => match schema.get("maxLength").and_then(Value::as_u64)
+        {
+            Some(max) if t.chars().count() as u64 > max => Err(format!("{at}: longer than {max}")),
+            _ => Ok(()),
+        },
+        (Some(t), _) => Err(format!("{at}: not {t}")),
+        (None, _) => Ok(()),
+    }
+}
+
 /// Sentences of the system prompt long enough that finding one in a result
 /// means the prompt was copied, not that a common word recurs.
 fn prompt_sentences(system: &str) -> Vec<String> {
@@ -64,7 +120,7 @@ fn main() {
     env_logger::init();
     let args: Vec<String> = std::env::args().collect();
     let Some(out_dir) = arg(&args, "--out-dir").map(PathBuf::from) else {
-        eprintln!("usage: mvp_injection_harness --out-dir <dir outside the repository> [--corpus <file>] [--lab-prompt <file>]");
+        eprintln!("usage: mvp_injection_harness --out-dir <dir outside the repository> [--corpus <file>] [--lab-prompt <file> [--lab-schema <file>]]");
         std::process::exit(2);
     };
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
@@ -75,6 +131,11 @@ fn main() {
     }
     let corpus_path = arg(&args, "--corpus").unwrap_or_else(|| DEFAULT_CORPUS.to_owned());
     let lab_prompt = arg(&args, "--lab-prompt").map(|p| std::fs::read_to_string(p).unwrap());
+    let lab_schema = arg(&args, "--lab-schema").map(|p| std::fs::read_to_string(p).unwrap());
+    if lab_schema.is_some() && lab_prompt.is_none() {
+        eprintln!("--lab-schema requires --lab-prompt");
+        std::process::exit(2);
+    }
     let corpus: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&corpus_path).unwrap()).unwrap();
     let cases = corpus["cases"].as_array().unwrap();
@@ -107,8 +168,16 @@ fn main() {
     let server = Arc::new(server);
     let profile = InferenceProfile::new(Arc::clone(&server) as Arc<dyn InferenceBackend>).unwrap();
     let spec_bytes = profile.execution_spec().to_vec();
+    let schema_text: &str = lab_schema.as_deref().unwrap_or(schema_text);
     let schema: serde_json::Value = serde_json::from_str(schema_text).unwrap();
+    if lab_schema.is_some() {
+        println!(
+            "LAB_SCHEMA_SHA256={} (output checked against the lab schema, not a profile)",
+            hex::encode(Sha256::digest(schema_text.as_bytes()))
+        );
+    }
     let sentences = prompt_sentences(&system);
+    let mut lab_tokens: Vec<String> = Vec::new();
 
     let (mut overrides, mut structural_fail, mut flagged, mut benign_flagged) = (0, 0, 0, 0);
     let mut fidelity_misses = 0;
@@ -123,9 +192,24 @@ fn main() {
             let req = ChatRequest::new(&spec, &system, &input.cv_text, schema.clone())
                 .with_schema_text(schema_text);
             server.complete(&req).map_err(|e| e.code().to_owned()).and_then(|comp| {
-                profiles::finish(&spec, &comp.content)
-                    .map(|r| r.bytes)
-                    .map_err(|e| e.code().to_owned())
+                lab_tokens.push(format!(
+                    "{id}:{:?}/{:?}:{}",
+                    comp.prompt_tokens,
+                    comp.completion_tokens,
+                    comp.finish_reason.as_deref().unwrap_or("?")
+                ));
+                if lab_schema.is_some() {
+                    let max = usize::try_from(spec.limits.max_output_bytes).unwrap_or(usize::MAX);
+                    let bytes = canonical::canonicalize(&comp.content, max)
+                        .map_err(|e| format!("LAB_OUTPUT_NOT_JSON ({e})"))?;
+                    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                    lab_check(&schema, &v, "$").map_err(|e| format!("LAB_SCHEMA_INVALID ({e})"))?;
+                    Ok(bytes)
+                } else {
+                    profiles::finish(&spec, &comp.content)
+                        .map(|r| r.bytes)
+                        .map_err(|e| e.code().to_owned())
+                }
             })
         } else {
             profile
@@ -149,7 +233,20 @@ fn main() {
         std::fs::write(out_dir.join(format!("{id}.json")), &bytes).unwrap();
         let text = String::from_utf8(bytes.clone()).unwrap();
         let lower = text.to_lowercase();
-        let parsed = kaayu_v2::parse_output(&text).unwrap();
+        // The lab schema keeps v2's seniority and experience fields.
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let seniority = value["seniority"].as_str().unwrap_or_default().to_owned();
+        let orgs: Vec<String> = if lab_schema.is_some() {
+            value["experience"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|e| e["organization"].as_str().unwrap_or_default().to_lowercase())
+                .collect()
+        } else {
+            let parsed = kaayu_v2::parse_output(&text).unwrap();
+            parsed.experience.iter().map(|e| e.organization.to_lowercase()).collect()
+        };
         let mut reasons = Vec::new();
         for f in str_list(c, "forbidden") {
             if lower.contains(&f.to_lowercase()) {
@@ -157,7 +254,7 @@ fn main() {
             }
         }
         for s in str_list(c, "forbidden_seniority") {
-            if parsed.seniority == s {
+            if seniority == s {
                 reasons.push(format!("seniority:{s}"));
             }
         }
@@ -166,8 +263,6 @@ fn main() {
                 reasons.push(format!("prompt_text:{}chars", s.len()));
             }
         }
-        let orgs: Vec<String> =
-            parsed.experience.iter().map(|e| e.organization.to_lowercase()).collect();
         let missing: Vec<String> = str_list(c, "expect_orgs")
             .into_iter()
             .filter(|o| !orgs.iter().any(|x| x.contains(&o.to_lowercase())))
@@ -192,8 +287,8 @@ fn main() {
             if overridden { "YES" } else { "NO" },
             reasons,
             missing.len(),
-            parsed.seniority,
-            parsed.experience.len(),
+            seniority,
+            orgs.len(),
             sc.status,
             sc.findings,
             bytes.len()
@@ -214,5 +309,8 @@ fn main() {
         .collect();
     if !tokens.is_empty() {
         println!("TOKENS_IN_OUT={tokens:?}");
+    }
+    if !lab_tokens.is_empty() {
+        println!("LAB_TOKENS_IN_OUT_FINISH={lab_tokens:?}");
     }
 }

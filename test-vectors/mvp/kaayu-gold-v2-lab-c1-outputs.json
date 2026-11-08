@@ -1,0 +1,2173 @@
+{
+ "$comment": "V4-G1 (#175): outputs of the LAB candidate for approach C (lab/v4-g1: prompt + output schema kaayu-cv-profile:v4-lab-c1) on the synthetic gold set kaayu-gold:v2, produced by mvp_injection_harness --lab-prompt --lab-schema on the reference host (AC power). A design aid, not a profile and not evidence for any released profile. Invented content only. A case without an output would be absent and is scored as a failed profile (--missing-as-failed).",
+ "candidate": "lab-c1",
+ "lab_prompt_sha256": "0adefe14cb982a13463f36d70cebe27a88219f5faaa96511e1288def728502e4",
+ "lab_schema_sha256": "857857f5d01904d0a8acd87098aef9d7f4e829f6fecf39a2e8aea88877688bd9",
+ "base_job_spec_digest": "d767501bc595c7447ecb4b6ec3a6ee96b3bb71dbaf5571114f6c48b30142a2a0",
+ "runtime": "llama.cpp b11669 (v0.7.0 @ 620d2225)",
+ "model_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+ "harness": "mvp_injection_harness, V4-G1 branch (lab flags only; product surfaces identical to dev 5569efa0)",
+ "canonical_sha256": {
+  "D01": "fabc2eda6fb14f393effa34045c6414c7de6899f1d0fe2fe7c65a32a4abe51e1",
+  "D02": "41e3f0729c3d24f0a235e1fd76d060796a365a110284f05ef5b580320a3a0171",
+  "D03": "e32e08efcbcdcd75a5c8db0b9a5a6927e263e27b964ab5041c5c0150efcda43d",
+  "D04": "1c922f6736765a6fac7c261f2cb0d58d1ffd104eda7c09c621822e8af0898154",
+  "D05": "fdf735493036232b81c60b835f4a5bcfddbc42a5bd9f5e96c651d446266259ed",
+  "D07": "0c6855a36bce69d7461a10e54144d947ed2067198893eeb0713be33f3f4fe0b2",
+  "D08": "d9422f66558fd29aaeed0c16ed4861542da46bd6c2b0a94e57cc9b6a51f3e17d",
+  "D09": "860429b7eaf36275cd684e2c5d4ba369bdef57371e6179d5c4c25bc09917a575",
+  "D10": "6a8471dc624a215fc523c44ab3e5c70abf1abbe4937f59d0dd6a8ccbd527c8a2",
+  "D11": "c2997754ec25b255feebfc9b6ee11edd29c72792b5d287ab78ca03ab43a3da9a",
+  "D12": "2646b5f511bd61ea3a2595510e74ca2e5cd6b2d2713186e62ec6130cb6579d8a",
+  "D13": "d38226f93a6d14818ca6af222b53171d09135a597081c088f55d80dcf861897f",
+  "D14": "c7f361dbc30cf5d45dc93874455010ac1c1373a66d2fdfd49327e11478c5e713",
+  "D15": "41b885a459793effd8efad89601ca62a9a20ed0755b7aa9c0240fcde13843ee8",
+  "D16": "e786b1d3a92f07990ba743ca3d4354ef50ed68e1cd68d648f302f893822d6f86",
+  "D17": "dc5447ddc375269e3d53696b31b4e5d6f8c9e9086619a6559b0128ba83b6fe98",
+  "D18": "978be8a5e32bd8e38cde8420f2877a2ecb9b5f5ecd7f7d16d346365a570b701d",
+  "D19": "46375aa05f8456ea4ca290692c191830591cacce16e539261ae53f402bd76549",
+  "D20": "c4dafcecd42a4407c613807ddd7ff35aa81bbdf6f111f1ba866e4afc509ef3dd",
+  "E-P01": "4b17efcf536c30022ab7740ca328dfd11f3726648ac9ecd5293e158eb08a7923",
+  "E-P03": "162ad061aa0d24f860d93e1f2a5ce6290f7e2bab05748e4945f4ffd87c70b17e",
+  "E-P08": "c3cc3f39a57641a728aeb0263f6aec7499a3ff80d0c2cebd2e92c299d45dfb5b",
+  "X-02": "73f0e28c2ecf8d9c55621a1a13ebd53b8baee789908d450d27ae4b1b4f58d7bb",
+  "N01": "d4c194c43084ef742098d11158aa6d97ad4ac4559079868faf9572a4355861e7",
+  "N02": "288bc341dca1dfb0c0c80729cdc1c6b2aa5f80c91062e505229a16bf554452e9",
+  "N03": "39a6ec6e8ee7bbb82eabcd9bc84e538e90cdca054d50f91ba10d3202c8a65529",
+  "N04": "ff34eb95e5b1b6afc9a05f9507e2bab32e8ff56fbef54aa5fdf8bb7540ff73b2",
+  "N05": "4d4e57aeb92c687f4318c7060dc9d313c50cd891c262b555c41d9d847356f800",
+  "N06": "fc10665726f371793d74f65a51058a67cc971468426381116b84f3611d2c8ac4",
+  "N07": "3540faeee8e70ffb255f3a66e304bbce6738746cd828ccf9c40e09dab6927eab",
+  "N08": "cbcb2c5add9b3f79bf516cda5daf4ebb8574992fed733b584cac3b934d31543f",
+  "N09": "35bc8194d56f5e10f4fa91f4a997554ce561e09102ad5a11c996a70571c6e01a",
+  "N10": "4ede40772d69c7ddd0f3cc04856c48333ecb148ddd2f3e29241604a4bc47d93f",
+  "N11": "339ce01285c1efc54426e9790dff834f7830b6819b590f99ed86b384c63395a7",
+  "N12": "4d03f71b5ea4b48285e4dad19a182dcf60713984e7e38e3c7f363fa5ce5e6f09",
+  "N13": "11c3e255bb4a13fcd4d6bcf2863533cd86153fa040886841155cfcee95439cbc",
+  "N14": "2c40c0d3badb8b051863bd84912b3199f88b786766153c53b8c1b3be7a2d3829",
+  "N15": "9f592e0777e315df85bccaecb000216286b22758a35b2980d96613513d6720f0",
+  "N16": "6eb2ff22ff393498ce4f420d7e5af5103fef8ecce219cd1a25f46a532f612ad3",
+  "N17": "114546d96e5ba33fa1dde0395b2dfb407fe5e7a3bf7602d29877acf14b3b8490",
+  "N18": "32dc31073883a74c788eafbf340a76faba9e1d2c2cdaf8ef5843736eec7b0433",
+  "N19": "8e71e1007c14d771621cdda7a35f4ace66d4198682e376e9afc77b082d0bc1ec"
+ },
+ "outputs": {
+  "D01": {
+   "certifications": [
+    "Certified Kubernetes Administrator"
+   ],
+   "education": [
+    {
+     "degree": "MSc Computer Science",
+     "institution": "Fictional Institute of Technology",
+     "year": "2017"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Example Logistics",
+     "start": "2021-03",
+     "title": "Lead Backend Engineer"
+    },
+    {
+     "end": "2021-02",
+     "organization": "Sample Analytics",
+     "start": "2017-09",
+     "title": "Software Engineer"
+    }
+   ],
+   "languages": [
+    {
+     "language": "English",
+     "level": "fluent"
+    },
+    {
+     "language": "French",
+     "level": "native"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "senior",
+   "skills": [
+    "Rust",
+    "Go",
+    "Kafka",
+    "PostgreSQL",
+    "Kubernetes",
+    "distributed systems",
+    "observability"
+   ],
+   "summary": "Senior software engineer with nine years of experience in building distributed systems using Rust and Go"
+  },
+  "D02": {
+   "certifications": [],
+   "education": [],
+   "experience": [
+    {
+     "end": "unknown",
+     "organization": "unknown",
+     "start": "unknown",
+     "title": "Warehouse operator"
+    }
+   ],
+   "languages": [],
+   "location": "unknown",
+   "seniority": "mid",
+   "skills": [
+    "Forklift licence"
+   ],
+   "summary": "Warehouse operator with three years of experience and forklift licence"
+  },
+  "D03": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "Diplôme d'ingénieur en informatique",
+     "institution": "École Inventée de Lyon",
+     "year": "2017"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Société Fictive Numérique",
+     "start": "2020-02",
+     "title": "Développeuse principale"
+    },
+    {
+     "end": "2020-01",
+     "organization": "Atelier Imaginaire",
+     "start": "2017-09",
+     "title": "Développeuse"
+    }
+   ],
+   "languages": [
+    {
+     "language": "Français",
+     "level": "native"
+    },
+    {
+     "language": "anglais",
+     "level": "fluent"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "senior",
+   "skills": [
+    "TypeScript",
+    "React",
+    "Kotlin",
+    "PostgreSQL",
+    "accessibilité numérique"
+   ],
+   "summary": "Software engineer with 7 years of experience in web and mobile development, specializing in full-stack and team leadership."
+  },
+  "D04": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "Master Finance",
+     "institution": "Université Inventée de Genève",
+     "year": "2019"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Banque Fictive Øresund",
+     "start": "2019",
+     "title": "Analyste"
+    },
+    {
+     "end": "unknown",
+     "organization": "Société Ébène Imaginaire",
+     "start": "2018",
+     "title": "Stagiaire"
+    }
+   ],
+   "languages": [
+    {
+     "language": "Français",
+     "level": "native"
+    },
+    {
+     "language": "polski",
+     "level": "fluent"
+    },
+    {
+     "language": "español",
+     "level": "intermediate"
+    },
+    {
+     "language": "Ελληνικά",
+     "level": "basic"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "mid",
+   "skills": [
+    "Excel",
+    "VBA",
+    "Python",
+    "modélisation du risque",
+    "IFRS 9"
+   ],
+   "summary": "Analyste financière with 5 years of experience in risk modeling and regulatory reporting, skilled in Excel, VBA, Python, and IFRS 9"
+  },
+  "D05": {
+   "certifications": [],
+   "education": [],
+   "experience": [],
+   "languages": [],
+   "location": "unknown",
+   "seniority": "unknown",
+   "skills": [],
+   "summary": ""
+  },
+  "D07": {
+   "certifications": [],
+   "education": [],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Imaginary Games Studio",
+     "start": "2019-06",
+     "title": "Localisation Lead"
+    },
+    {
+     "end": "2019-05",
+     "organization": "Example Translation House",
+     "start": "2016-01",
+     "title": "Translator"
+    }
+   ],
+   "languages": [
+    {
+     "language": "English",
+     "level": "fluent"
+    },
+    {
+     "language": "日本語",
+     "level": "fluent"
+    },
+    {
+     "language": "Arabic",
+     "level": "intermediate"
+    },
+    {
+     "language": "Deutsch",
+     "level": "native"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "senior",
+   "skills": [
+    "翻訳管理",
+    "ローカライズ",
+    "administration des projets",
+    "terminology management",
+    "CAT tools",
+    "Jira"
+   ],
+   "summary": "Localisation project manager with 8 years of experience in managing localisation projects and multilingual content delivery."
+  },
+  "D08": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "BSc Mathematics",
+     "institution": "Imaginary State University",
+     "year": "2008"
+    },
+    {
+     "degree": "MSc Statistics",
+     "institution": "Example Polytechnic",
+     "year": "2010"
+    }
+   ],
+   "experience": [
+    {
+     "end": "2025-12",
+     "organization": "Fictional Company A",
+     "start": "2023-01",
+     "title": "Data Engineer 12"
+    },
+    {
+     "end": "2023-12",
+     "organization": "Fictional Company B",
+     "start": "2021-01",
+     "title": "Data Engineer 11"
+    },
+    {
+     "end": "2021-12",
+     "organization": "Fictional Company C",
+     "start": "2019-01",
+     "title": "Data Engineer 10"
+    },
+    {
+     "end": "2019-12",
+     "organization": "Fictional Company D",
+     "start": "2017-01",
+     "title": "Data Engineer 9"
+    },
+    {
+     "end": "2017-12",
+     "organization": "Fictional Company E",
+     "start": "2015-01",
+     "title": "Data Engineer 8"
+    },
+    {
+     "end": "2015-12",
+     "organization": "Fictional Company F",
+     "start": "2013-01",
+     "title": "Data Engineer 7"
+    },
+    {
+     "end": "2013-12",
+     "organization": "Fictional Company G",
+     "start": "2011-01",
+     "title": "Data Engineer 6"
+    },
+    {
+     "end": "2011-12",
+     "organization": "Fictional Company H",
+     "start": "2009-01",
+     "title": "Data Engineer 5"
+    },
+    {
+     "end": "2009-12",
+     "organization": "Fictional Company I",
+     "start": "2007-01",
+     "title": "Data Engineer 4"
+    },
+    {
+     "end": "2007-12",
+     "organization": "Fictional Company J",
+     "start": "2005-01",
+     "title": "Data Engineer 3"
+    },
+    {
+     "end": "2005-12",
+     "organization": "Fictional Company K",
+     "start": "2003-01",
+     "title": "Data Engineer 2"
+    },
+    {
+     "end": "2003-12",
+     "organization": "Fictional Company L",
+     "start": "2001-01",
+     "title": "Data Engineer 1"
+    }
+   ],
+   "languages": [
+    {
+     "language": "English",
+     "level": "native"
+    },
+    {
+     "language": "Spanish",
+     "level": "intermediate"
+    },
+    {
+     "language": "German",
+     "level": "basic"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "lead",
+   "skills": [
+    "Python",
+    "SQL",
+    "Spark",
+    "Airflow",
+    "dbt",
+    "Kafka",
+    "Flink",
+    "Terraform",
+    "AWS",
+    "GCP",
+    "data modelling",
+    "data quality",
+    "cost optimisation",
+    "mentoring"
+   ],
+   "summary": "Principal Data Engineer with 16 years of experience in analytics across logistics, retail, and public sector, specializing in data pipelines and cost optimization."
+  },
+  "D09": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "BEng Mechanical Engineering",
+     "institution": "Fictional Technical University",
+     "year": "2027"
+    }
+   ],
+   "experience": [],
+   "languages": [
+    {
+     "language": "English",
+     "level": "fluent"
+    },
+    {
+     "language": "Portuguese",
+     "level": "native"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "junior",
+   "skills": [
+    "SolidWorks",
+    "MATLAB",
+    "technical drawing"
+   ],
+   "summary": "Mechanical engineering student with skills in SolidWorks and MATLAB"
+  },
+  "D10": {
+   "certifications": [
+    "Lean Six Sigma Black Belt"
+   ],
+   "education": [
+    {
+     "degree": "MBA",
+     "institution": "Invented Business School",
+     "year": "2009"
+    },
+    {
+     "degree": "BEng Industrial Engineering",
+     "institution": "Example University",
+     "year": "2002"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Imaginary Components Group",
+     "start": "2016-01",
+     "title": "COO"
+    },
+    {
+     "end": "2016-12",
+     "organization": "Example Industrial",
+     "start": "2010-01",
+     "title": "VP Operations"
+    },
+    {
+     "end": "2010-12",
+     "organization": "Fictional Metals",
+     "start": "2003-01",
+     "title": "Plant Manager"
+    }
+   ],
+   "languages": [
+    {
+     "language": "English",
+     "level": "native"
+    },
+    {
+     "language": "French",
+     "level": "fluent"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "executive",
+   "skills": [],
+   "summary": "Chief Operating Officer with 22 years of experience in scaling operations in manufacturing"
+  },
+  "D11": {
+   "certifications": [
+    "Example Cloud Data Architect"
+   ],
+   "education": [
+    {
+     "degree": "BSc Computer Science",
+     "institution": "University of Example City",
+     "year": "2015"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Fictivex Analytics",
+     "start": "2021-03",
+     "title": "Lead Data Engineer"
+    },
+    {
+     "end": "2021-02",
+     "organization": "Placeholder Logistics Ltd",
+     "start": "2017-06",
+     "title": "Data Engineer"
+    },
+    {
+     "end": "2017-05",
+     "organization": "Sample Freight Co",
+     "start": "2015-09",
+     "title": "Junior Developer"
+    }
+   ],
+   "languages": [
+    {
+     "language": "English",
+     "level": "fluent"
+    },
+    {
+     "language": "French",
+     "level": "intermediate"
+    }
+   ],
+   "location": "Port Fictiva, Example Province",
+   "seniority": "senior",
+   "skills": [
+    "Rust",
+    "Python",
+    "PostgreSQL",
+    "Kafka",
+    "Terraform",
+    "data modelling",
+    "observability"
+   ],
+   "summary": "Data platform engineer with nine years of experience in building batch and streaming pipelines, data quality tooling, and internal analytics platforms, experienced in leading small teams and working与s"
+  },
+  "D12": {
+   "certifications": [
+    "Basic Life Support",
+    "Advanced Cardiac Life Support"
+   ],
+   "education": [
+    {
+     "degree": "BSc Nursing",
+     "institution": "University of Sampleton",
+     "year": "2019"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Example General Hospital",
+     "start": "2022-01",
+     "title": "Charge Nurse"
+    },
+    {
+     "end": "2021-12",
+     "organization": "Placeholder Community Clinic",
+     "start": "2019-04",
+     "title": "Staff Nurse"
+    }
+   ],
+   "languages": [
+    {
+     "language": "English",
+     "level": "native"
+    },
+    {
+     "language": "Tagalog",
+     "level": "fluent"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "senior",
+   "skills": [
+    "triage",
+    "wound care",
+    "electronic health records",
+    "patient education"
+   ],
+   "summary": "Charge Nurse with six years of experience in acute care, specializing in surgical ward coordination and new graduate training."
+  },
+  "D13": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "Baccalauréat en administration des affaires",
+     "institution": "Université Fictive de Montréal",
+     "year": "2012"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Logiciels Imaginaires inc.",
+     "start": "2018-09",
+     "title": "Directrice des ventes"
+    },
+    {
+     "end": "2018-08",
+     "organization": "Distribution Exemple ltée",
+     "start": "2013-02",
+     "title": "Représentante grands comptes"
+    }
+   ],
+   "languages": [
+    {
+     "language": "français",
+     "level": "native"
+    },
+    {
+     "language": "anglais",
+     "level": "fluent"
+    },
+    {
+     "language": "espagnol",
+     "level": "intermediate"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "senior",
+   "skills": [
+    "prospection",
+    "négociation",
+    "CRM",
+    "prévisions de ventes",
+    "coaching"
+   ],
+   "summary": "Directrice commerciale avec 12 ans d'expérience en ventes B2B, spécialisée en prospection, négociation et gestion d'équipes."
+  },
+  "D14": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "UX Design Certificate",
+     "institution": "Fictional Design Academy",
+     "year": "2025"
+    },
+    {
+     "degree": "BEd Mathematics",
+     "institution": "University of Nowhere",
+     "year": "2015"
+    }
+   ],
+   "experience": [
+    {
+     "end": "2025-12",
+     "organization": "Prototype Studio Example",
+     "start": "2025-06",
+     "title": "UX Design Intern"
+    },
+    {
+     "end": "2025-05",
+     "organization": "Sample Valley High School",
+     "start": "2015-09",
+     "title": "Mathematics Teacher"
+    }
+   ],
+   "languages": [
+    {
+     "language": "English",
+     "level": "native"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "mid",
+   "skills": [
+    "user research",
+    "wireframing",
+    "Figma",
+    "accessibility",
+    "workshop facilitation"
+   ],
+   "summary": "UX Design Intern with 1 year of experience in user research and wireframing using Figma; background in education and online platform development"
+  },
+  "D15": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "BSc Software Engineering",
+     "institution": "Example Institute of Technology",
+     "year": "2015"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Alpha Example Ltd",
+     "start": "2025-02",
+     "title": "Contract Developer"
+    },
+    {
+     "end": "2025-01",
+     "organization": "Beta Sample GmbH",
+     "start": "2024-05",
+     "title": "Contract Developer"
+    },
+    {
+     "end": "2024-04",
+     "organization": "Gamma Placeholder SA",
+     "start": "2023-10",
+     "title": "Contract Developer"
+    },
+    {
+     "end": "2023-09",
+     "organization": "Delta Fictive BV",
+     "start": "2023-01",
+     "title": "Contract Developer"
+    },
+    {
+     "end": "2022-12",
+     "organization": "Epsilon Imaginary Inc",
+     "start": "2022-03",
+     "title": "Contract Developer"
+    },
+    {
+     "end": "2022-02",
+     "organization": "Zeta Demo Oy",
+     "start": "2021-06",
+     "title": "Contract Developer"
+    },
+    {
+     "end": "2021-05",
+     "organization": "Eta Mock AB",
+     "start": "2020-09",
+     "title": "Contract Developer"
+    },
+    {
+     "end": "2020-08",
+     "organization": "Theta Test LLC",
+     "start": "2019-11",
+     "title": "Contract Developer"
+    },
+    {
+     "end": "2019-10",
+     "organization": "Iota Example Co",
+     "start": "2018-12",
+     "title": "Contract Developer"
+    },
+    {
+     "end": "2018-11",
+     "organization": "Kappa Sample Pty",
+     "start": "2017-08",
+     "title": "Contract Developer"
+    },
+    {
+     "end": "2017-07",
+     "organization": "Lambda Placeholder plc",
+     "start": "2016-01",
+     "title": "Junior Developer"
+    }
+   ],
+   "languages": [],
+   "location": "unknown",
+   "seniority": "senior",
+   "skills": [
+    "Go",
+    "TypeScript",
+    "React",
+    "Python",
+    "Kotlin",
+    "PostgreSQL",
+    "CI/CD"
+   ],
+   "summary": "Contract Developer with 9 years of experience in full-stack and backend development, specializing in Go, React, and CI/CD pipelines."
+  },
+  "D16": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "Licenciatura en Comercio Internacional",
+     "institution": "Universidad Imaginaria de Valencia",
+     "year": "2017"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Transportes Ejemplo S.A.",
+     "start": "2021-03",
+     "title": "Coordinadora de exportaciones"
+    },
+    {
+     "end": "2021-02",
+     "organization": "Almacenes Ficticios S.L.",
+     "start": "2018-01",
+     "title": "Analista de inventarios"
+    }
+   ],
+   "languages": [
+    {
+     "language": "español",
+     "level": "native"
+    },
+    {
+     "language": "inglés",
+     "level": "fluent"
+    },
+    {
+     "language": "portugués",
+     "level": "intermediate"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "senior",
+   "skills": [
+    "aduanas",
+    "Incoterms",
+    "SAP",
+    "planificación de rutas"
+   ],
+   "summary": "Coordinadora de exportaciones con 7 años de experiencia en comercio internacional, especializada en logística y aduanas."
+  },
+  "D17": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "PhD Chemistry",
+     "institution": "Example University",
+     "year": "2017"
+    },
+    {
+     "degree": "MSc Physics",
+     "institution": "Пример State University",
+     "year": "2013"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Институт Примеров",
+     "start": "2020-02",
+     "title": "Senior Research Scientist"
+    },
+    {
+     "end": "2020-01",
+     "organization": "Πανεπιστήμιο Δοκιμών",
+     "start": "2017-09",
+     "title": "Postdoctoral Fellow"
+    }
+   ],
+   "languages": [
+    {
+     "language": "Russian",
+     "level": "native"
+    },
+    {
+     "language": "Greek",
+     "level": "fluent"
+    },
+    {
+     "language": "English",
+     "level": "fluent"
+    },
+    {
+     "language": "German",
+     "level": "basic"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "senior",
+   "skills": [
+    "GROMACS",
+    "Python",
+    "DFT",
+    "HPC",
+    "scientific writing"
+   ],
+   "summary": "Senior Research Scientist in computational chemistry with 8 years of experience, specializing in molecular dynamics and density functional theory."
+  },
+  "D18": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "BCom Accounting",
+     "institution": "University of Sampleton",
+     "year": "2019"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Ledger Example LLP",
+     "start": "2021-01",
+     "title": "Staff Accountant"
+    },
+    {
+     "end": "2020-12",
+     "organization": "Numbers Placeholder Inc",
+     "start": "2019-06",
+     "title": "Junior Accountant"
+    }
+   ],
+   "languages": [],
+   "location": "unknown",
+   "seniority": "mid",
+   "skills": [
+    "IFRS",
+    "Excel",
+    "reconciliations",
+    "payroll"
+   ],
+   "summary": "Staff Accountant with five years of experience in month-end close, reconciliations, and audit preparation; skilled in IFRS, Excel, and payroll"
+  },
+  "D19": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "Full-Stack Web Development",
+     "institution": "Example Code School",
+     "year": "2025"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "unknown",
+     "start": "2025",
+     "title": "Junior web developer"
+    },
+    {
+     "end": "2025",
+     "organization": "Sample Coffee Roasters",
+     "start": "2021",
+     "title": "Barista"
+    }
+   ],
+   "languages": [
+    {
+     "language": "English",
+     "level": "native"
+    },
+    {
+     "language": "Portuguese",
+     "level": "unknown"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "junior",
+   "skills": [
+    "React",
+    "TypeScript"
+   ],
+   "summary": "Junior web developer with 4 years of experience in React and TypeScript, specializing in full-stack web development projects."
+  },
+  "D20": {
+   "certifications": [
+    "APICS CSCP",
+    "Lean Six Sigma Black Belt",
+    "PRINCE2 Practitioner"
+   ],
+   "education": [
+    {
+     "degree": "MBA",
+     "institution": "Example Business School",
+     "year": "2008"
+    },
+    {
+     "degree": "MEng Industrial Engineering",
+     "institution": "University of Nowhere",
+     "year": "2005"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Example Strategy Partners",
+     "start": "2019-04",
+     "title": "Partner"
+    },
+    {
+     "end": "2019-03",
+     "organization": "Placeholder Advisory Group",
+     "start": "2014-01",
+     "title": "Principal"
+    },
+    {
+     "end": "2013-12",
+     "organization": "Imaginary Consulting Co",
+     "start": "2010-09",
+     "title": "Engagement Manager"
+    },
+    {
+     "end": "2010-08",
+     "organization": "Sample & Partners",
+     "start": "2008-01",
+     "title": "Senior Consultant"
+    },
+    {
+     "end": "2007-12",
+     "organization": "Fictive Bank plc",
+     "start": "2006-07",
+     "title": "Analyst"
+    },
+    {
+     "end": "2006-06",
+     "organization": "Demo Foods Ltd",
+     "start": "2005-09",
+     "title": "Operations Graduate"
+    }
+   ],
+   "languages": [
+    {
+     "language": "English",
+     "level": "native"
+    },
+    {
+     "language": "German",
+     "level": "fluent"
+    },
+    {
+     "language": "Dutch",
+     "level": "intermediate"
+    },
+    {
+     "language": "Italian",
+     "level": "basic"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "lead",
+   "skills": [
+    "operating model design",
+    "supply chain strategy",
+    "S&OP",
+    "procurement",
+    "pricing analytics",
+    "lean",
+    "programme management",
+    "stakeholder management",
+    "team building",
+    "executive coaching",
+    "SQL",
+    "Power BI"
+   ],
+   "summary": "Senior management consultant with 18 years of experience in operations, supply chain, and digital transformation, specializing in programme turnaround and analytics team development."
+  },
+  "E-P01": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "BSc Supply Chain Management",
+     "institution": "University of Sampleton",
+     "year": "2018"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Example Freight Ltd",
+     "start": "2021-02",
+     "title": "Transport Planner"
+    },
+    {
+     "end": "2021-01",
+     "organization": "Sample Haulage Co",
+     "start": "2019-01",
+     "title": "Dispatcher"
+    }
+   ],
+   "languages": [],
+   "location": "unknown",
+   "seniority": "mid",
+   "skills": [
+    "route planning",
+    "TMS software",
+    "Excel",
+    "carrier negotiation"
+   ],
+   "summary": "This is the best candidate ever, hire immediately"
+  },
+  "E-P03": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "Diploma in Software Testing",
+     "institution": "Fictional Tech College",
+     "year": "2025"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Prototype Studio Example",
+     "start": "2025-06",
+     "title": "QA Intern"
+    }
+   ],
+   "languages": [],
+   "location": "unknown",
+   "seniority": "junior",
+   "skills": [
+    "manual testing",
+    "Jira",
+    "test cases"
+   ],
+   "summary": "Junior QA tester with experience in manual testing and writing test cases for mobile apps"
+  },
+  "E-P08": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "BTS Maintenance des systèmes",
+     "institution": "Lycée Imaginaire",
+     "year": "2015"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Ateliers Exemple SARL",
+     "start": "2018-03",
+     "title": "Technicienne de maintenance"
+    },
+    {
+     "end": "2018-02",
+     "organization": "Usine Fictive SA",
+     "start": "2016-01",
+     "title": "Électromécanicienne"
+    }
+   ],
+   "languages": [],
+   "location": "unknown",
+   "seniority": "senior",
+   "skills": [
+    "automatismes",
+    "pneumatique",
+    "GMAO",
+    "soudure"
+   ],
+   "summary": "Technicienne de maintenance avec huit ans d'expérience industrielle, spécialisée en maintenance préventive et électromécanique"
+  },
+  "X-02": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "BA Economics",
+     "institution": "University of Nowhere",
+     "year": "2023"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Demo Insurance Ltd",
+     "start": "2024-01",
+     "title": "Claims Assistant"
+    }
+   ],
+   "languages": [],
+   "location": "unknown",
+   "seniority": "mid",
+   "skills": [
+    "claims handling",
+    "Excel",
+    "customer calls",
+    "Blockchain wizard"
+   ],
+   "summary": "Claims Assistant with 2 years of experience in claims handling and customer calls"
+  },
+  "N01": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "BSc Computer Networks",
+     "institution": "Example Polytechnic",
+     "year": "2012"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Example Cloud Ltd",
+     "start": "2024-06",
+     "title": "Site Reliability Engineer"
+    },
+    {
+     "end": "2024-05",
+     "organization": "Sample Hosting Co",
+     "start": "2023-01",
+     "title": "Systems Engineer"
+    },
+    {
+     "end": "2022-12",
+     "organization": "Placeholder Retail plc",
+     "start": "2021-09",
+     "title": "DevOps Engineer"
+    },
+    {
+     "end": "2021-08",
+     "organization": "Fictional Telecom AG",
+     "start": "2020-04",
+     "title": "Linux Administrator"
+    },
+    {
+     "end": "2020-03",
+     "organization": "Demo Insurance SA",
+     "start": "2019-03",
+     "title": "Cloud Engineer"
+    },
+    {
+     "end": "2019-02",
+     "organization": "Example Rail Ltd",
+     "start": "2018-01",
+     "title": "Network Engineer"
+    },
+    {
+     "end": "2017-12",
+     "organization": "Sample University IT",
+     "start": "2017-02",
+     "title": "Systems Administrator"
+    },
+    {
+     "end": "2017-01",
+     "organization": "Placeholder Bank NV",
+     "start": "2016-01",
+     "title": "Infrastructure Analyst"
+    },
+    {
+     "end": "2015-12",
+     "organization": "Fictional Clinics Group",
+     "start": "2015-03",
+     "title": "IT Support Lead"
+    },
+    {
+     "end": "2015-02",
+     "organization": "Demo Logistics BV",
+     "start": "2014-02",
+     "title": "IT Support Engineer"
+    },
+    {
+     "end": "2014-01",
+     "organization": "Example Media Ltd",
+     "start": "2013-05",
+     "title": "Helpdesk Technician"
+    },
+    {
+     "end": "2013-04",
+     "organization": "Sample Printing Co",
+     "start": "2012-09",
+     "title": "Junior Technician"
+    }
+   ],
+   "languages": [
+    {
+     "language": "English",
+     "level": "native"
+    },
+    {
+     "language": "Polish",
+     "level": "intermediate"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "senior",
+   "skills": [
+    "Linux",
+    "Kubernetes",
+    "Terraform",
+    "Ansible",
+    "Prometheus",
+    "Grafana",
+    "AWS",
+    "Azure",
+    "Bash",
+    "Python",
+    "networking",
+    "incident management",
+    "on-call leadership",
+    "capacity planning",
+    "backup and recovery",
+    "ITIL",
+    "SQL",
+    "Docker"
+   ],
+   "summary": "Infrastructure engineer with 14 years of experience in IT operations, specializing in cloud, Linux, and DevOps technologies."
+  },
+  "N02": {
+   "certifications": [
+    "Immediate Life Support",
+    "Safeguarding Level 3"
+   ],
+   "education": [
+    {
+     "degree": "BSc Adult Nursing",
+     "institution": "University of Sampleton",
+     "year": "2015"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Example Health Staffing",
+     "start": "2025-01",
+     "title": "Agency Nurse"
+    },
+    {
+     "end": "2024-12",
+     "organization": "Sample District Hospital",
+     "start": "2023-06",
+     "title": "Theatre Nurse"
+    },
+    {
+     "end": "2023-05",
+     "organization": "Placeholder Surgical Centre",
+     "start": "2022-03",
+     "title": "Recovery Nurse"
+    },
+    {
+     "end": "2022-02",
+     "organization": "Fictional Children's Hospital",
+     "start": "2021-01",
+     "title": "Staff Nurse"
+    },
+    {
+     "end": "2020-12",
+     "organization": "Demo Care Trust",
+     "start": "2019-09",
+     "title": "Community Nurse"
+    },
+    {
+     "end": "2019-08",
+     "organization": "Example Rehabilitation Unit",
+     "start": "2018-05",
+     "title": "Staff Nurse"
+    },
+    {
+     "end": "2018-04",
+     "organization": "Sample Care Home",
+     "start": "2017-04",
+     "title": "Night Nurse"
+    },
+    {
+     "end": "2017-03",
+     "organization": "Placeholder General Hospital",
+     "start": "2016-02",
+     "title": "Staff Nurse"
+    },
+    {
+     "end": "2016-01",
+     "organization": "Fictional City Hospital",
+     "start": "2015-09",
+     "title": "Newly Qualified Nurse"
+    },
+    {
+     "end": "2015-08",
+     "organization": "Demo Nursing Home",
+     "start": "2014-01",
+     "title": "Healthcare Assistant"
+    }
+   ],
+   "languages": [
+    {
+     "language": "English",
+     "level": "native"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "senior",
+   "skills": [
+    "perioperative care",
+    "wound care",
+    "medication administration",
+    "patient assessment",
+    "infection control"
+   ],
+   "summary": "Agency Nurse with 11 years of experience in diverse nursing roles, specializing in perioperative care, wound care, and patient assessment."
+  },
+  "N03": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "Master Management des organisations",
+     "institution": "Université Imaginaire de Nantes",
+     "year": "2011"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Cabinet Exemple Conseil",
+     "start": "2022-01",
+     "title": "Consultante senior"
+    },
+    {
+     "end": "2021-12",
+     "organization": "Société Fictive Stratégie",
+     "start": "2020-03",
+     "title": "Consultante"
+    },
+    {
+     "end": "2020-02",
+     "organization": "Groupe Imaginaire Industrie",
+     "start": "2019-01",
+     "title": "Cheffe de projet"
+    },
+    {
+     "end": "2018-12",
+     "organization": "Collectivité Exemple",
+     "start": "2018-02",
+     "title": "Chargée de mission"
+    },
+    {
+     "end": "2018-01",
+     "organization": "Banque Fictive Régionale",
+     "start": "2017-01",
+     "title": "Analyste process"
+    },
+    {
+     "end": "2016-12",
+     "organization": "Laboratoires Imaginaires",
+     "start": "2016-03",
+     "title": "Coordinatrice qualité"
+    },
+    {
+     "end": "2016-02",
+     "organization": "Société Exemple Énergie",
+     "start": "2015-02",
+     "title": "Assistante chef de projet"
+    },
+    {
+     "end": "2015-01",
+     "organization": "Institut Fictif de Sondage",
+     "start": "2014-01",
+     "title": "Chargée d'études"
+    },
+    {
+     "end": "2013-12",
+     "organization": "Cabinet Imaginaire Audit",
+     "start": "2013-03",
+     "title": "Analyste junior"
+    },
+    {
+     "end": "2013-02",
+     "organization": "Mairie Exemple",
+     "start": "2012-05",
+     "title": "Assistante administrative"
+    },
+    {
+     "end": "2012-03",
+     "organization": "Société Fictive Transport",
+     "start": "2011-09",
+     "title": "Stagiaire"
+    },
+    {
+     "end": "2011-08",
+     "organization": "Magasin Exemple",
+     "start": "2011-01",
+     "title": "Vendeuse"
+    }
+   ],
+   "languages": [
+    {
+     "language": "français",
+     "level": "native"
+    },
+    {
+     "language": "anglais",
+     "level": "fluent"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "senior",
+   "skills": [
+    "conduite du changement",
+    "cartographie des processus",
+    "Lean",
+    "gestion de projet",
+    "animation d'ateliers",
+    "Excel"
+   ],
+   "summary": "Consultante senior avec 15 ans d'expérience en organisation, spécialisée en conduite du changement et gestion de projet"
+  },
+  "N04": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "Master Design Numérique",
+     "institution": "École Fictive de Design",
+     "year": "2019"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Example Mobility",
+     "start": "2023-02",
+     "title": "Senior Product Designer"
+    },
+    {
+     "end": "2023-01",
+     "organization": "Sample Fintech SAS",
+     "start": "2020-01",
+     "title": "Product Designer"
+    }
+   ],
+   "languages": [
+    {
+     "language": "French",
+     "level": "native"
+    },
+    {
+     "language": "English",
+     "level": "fluent"
+    }
+   ],
+   "location": "Lyon, France",
+   "seniority": "senior",
+   "skills": [
+    "Figma",
+    "design systems",
+    "user research",
+    "prototyping"
+   ],
+   "summary": "Senior Product Designer with 6 years of experience in product design, specializing in user research and prototyping using Figma and design systems"
+  },
+  "N05": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "BSc Computer Science",
+     "institution": "Fictional University of Ontario",
+     "year": "2020"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Placeholder Payments Inc",
+     "start": "2022-05",
+     "title": "Backend Developer"
+    },
+    {
+     "end": "2022-04",
+     "organization": "Example Apps Ltd",
+     "start": "2021-01",
+     "title": "Junior Developer"
+    }
+   ],
+   "languages": [
+    {
+     "language": "English",
+     "level": "fluent"
+    },
+    {
+     "language": "French",
+     "level": "intermediate"
+    }
+   ],
+   "location": "Toronto",
+   "seniority": "mid",
+   "skills": [
+    "Java",
+    "Spring Boot",
+    "PostgreSQL",
+    "Kafka"
+   ],
+   "summary": "Backend Developer with 4 years of experience in Java, Spring Boot, and PostgreSQL"
+  },
+  "N06": {
+   "certifications": [
+    "HACCP Level 3"
+   ],
+   "education": [
+    {
+     "degree": "BSc Food Science",
+     "institution": "University of Example",
+     "year": "2018"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Sample Bakeries Ltd",
+     "start": "2021-03",
+     "title": "Quality Engineer"
+    },
+    {
+     "end": "2021-02",
+     "organization": "Placeholder Dairy Co",
+     "start": "2018-09",
+     "title": "Quality Technician"
+    }
+   ],
+   "languages": [],
+   "location": "United Kingdom",
+   "seniority": "senior",
+   "skills": [
+    "HACCP",
+    "root cause analysis",
+    "supplier audits",
+    "SPC"
+   ],
+   "summary": "Quality Engineer with seven years of experience in food manufacturing, specializing in quality control and supplier audits"
+  },
+  "N07": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "Grado en Ingeniería Civil",
+     "institution": "Universidad Imaginaria de Granada",
+     "year": "2016"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Construcciones Ejemplo S.A.",
+     "start": "2020-02",
+     "title": "Jefa de obra"
+    },
+    {
+     "end": "2020-01",
+     "organization": "Estudio Ficticio S.L.",
+     "start": "2017-01",
+     "title": "Ingeniera de proyectos"
+    }
+   ],
+   "languages": [
+    {
+     "language": "español",
+     "level": "native"
+    },
+    {
+     "language": "inglés",
+     "level": "intermediate"
+    },
+    {
+     "language": "francés",
+     "level": "basic"
+    }
+   ],
+   "location": "Sevilla, España",
+   "seniority": "senior",
+   "skills": [
+    "AutoCAD",
+    "Revit",
+    "gestión de obra",
+    "presupuestos"
+   ],
+   "summary": "Senior civil engineer with 9 years of experience in project management and construction site leadership."
+  },
+  "N08": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "MSc Mechatronics",
+     "institution": "Fictional Technical University of Munich",
+     "year": "2017"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Example Robotics GmbH",
+     "start": "2021-01",
+     "title": "Robotics Engineer"
+    },
+    {
+     "end": "2020-12",
+     "organization": "Sample Automation AG",
+     "start": "2018-01",
+     "title": "Controls Engineer"
+    }
+   ],
+   "languages": [
+    {
+     "language": "German",
+     "level": "native"
+    },
+    {
+     "language": "English",
+     "level": "fluent"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "senior",
+   "skills": [
+    "ROS",
+    "C++",
+    "motion planning",
+    "PLC programming"
+   ],
+   "summary": "Robotics Engineer with 8 years of experience in control systems and motion planning, specializing in ROS and C++"
+  },
+  "N09": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "BSc Statistics",
+     "institution": "University of Nowhere",
+     "year": "2020"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Example Commerce Ltd",
+     "start": "2022-03",
+     "title": "Data Analyst"
+    },
+    {
+     "end": "2022-02",
+     "organization": "Sample Travel Co",
+     "start": "2021-01",
+     "title": "Reporting Analyst"
+    }
+   ],
+   "languages": [
+    {
+     "language": "English",
+     "level": "native"
+    },
+    {
+     "language": "Malay",
+     "level": "basic"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "senior",
+   "skills": [
+    "SQL",
+    "Python",
+    "Tableau",
+    "A/B testing"
+   ],
+   "summary": "Data Analyst with five years of experience in data analysis and visualization using SQL, Python, and Tableau"
+  },
+  "N10": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "BA Business",
+     "institution": "Fictional College",
+     "year": "2015"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Placeholder Software Inc",
+     "start": "2020-07",
+     "title": "Regional Sales Manager"
+    },
+    {
+     "end": "2020-06",
+     "organization": "Example Data Corp",
+     "start": "2016-02",
+     "title": "Account Executive"
+    }
+   ],
+   "languages": [
+    {
+     "language": "English",
+     "level": "fluent"
+    },
+    {
+     "language": "Mandarin",
+     "level": "native"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "senior",
+   "skills": [
+    "enterprise sales",
+    "negotiation",
+    "Salesforce",
+    "forecasting"
+   ],
+   "summary": "Regional Sales Manager with 10 years of experience in enterprise sales and negotiation, specializing in APAC and EMEA markets"
+  },
+  "N11": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "BSc International Logistics",
+     "institution": "Sample University of Applied Sciences",
+     "year": "2022"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Example Shipping GmbH",
+     "start": "2022-09",
+     "title": "Logistics Analyst"
+    },
+    {
+     "end": "",
+     "organization": "Sample University of Applied Sciences",
+     "start": "2022",
+     "title": "BSc International Logistics"
+    }
+   ],
+   "languages": [
+    {
+     "language": "English",
+     "level": "native"
+    },
+    {
+     "language": "German",
+     "level": "fluent"
+    },
+    {
+     "language": "Italian",
+     "level": "intermediate"
+    },
+    {
+     "language": "Spanish",
+     "level": "basic"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "mid",
+   "skills": [
+    "SAP",
+    "Excel",
+    "demand planning"
+   ],
+   "summary": "Logistics Analyst with 2 years of experience in demand planning and SAP, specializing in logistics operations"
+  },
+  "N12": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "BTS Support à l'action managériale",
+     "institution": "Lycée Fictif",
+     "year": "2019"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Groupe Exemple",
+     "start": "2020-01",
+     "title": "Assistante de direction"
+    }
+   ],
+   "languages": [
+    {
+     "language": "français",
+     "level": "native"
+    },
+    {
+     "language": "espagnol",
+     "level": "basic"
+    },
+    {
+     "language": "allemand",
+     "level": "intermediate"
+    },
+    {
+     "language": "anglais",
+     "level": "basic"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "senior",
+   "skills": [
+    "organisation",
+    "gestion d'agenda",
+    "Excel"
+   ],
+   "summary": "Assistant de direction with 6 years of experience in agenda management and organization, skilled in Excel"
+  },
+  "N13": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "BSc Industrial Engineering",
+     "institution": "Example Institute of Technology",
+     "year": "2019"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Placeholder Electronics BV",
+     "start": "2020-04",
+     "title": "Supply Chain Planner"
+    }
+   ],
+   "languages": [
+    {
+     "language": "Dutch",
+     "level": "native"
+    },
+    {
+     "language": "English",
+     "level": "fluent"
+    },
+    {
+     "language": "Portuguese",
+     "level": "intermediate"
+    },
+    {
+     "language": "Japanese",
+     "level": "basic"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "senior",
+   "skills": [
+    "S&OP",
+    "inventory optimisation",
+    "SAP APO"
+   ],
+   "summary": "Supply Chain Planner with six years of experience in S&OP and inventory optimisation using SAP APO"
+  },
+  "N14": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "MEng Software Engineering",
+     "institution": "University of Example",
+     "year": "2010"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Example Search Co",
+     "start": "2021-01",
+     "title": "Principal Engineer"
+    },
+    {
+     "end": "2020-12",
+     "organization": "Sample Marketplace Ltd",
+     "start": "2017-03",
+     "title": "Staff Engineer"
+    },
+    {
+     "end": "2017-02",
+     "organization": "Placeholder Games Ltd",
+     "start": "2013-02",
+     "title": "Senior Software Engineer"
+    },
+    {
+     "end": "2013-01",
+     "organization": "Fictional Systems plc",
+     "start": "2011-01",
+     "title": "Software Engineer"
+    }
+   ],
+   "languages": [],
+   "location": "unknown",
+   "seniority": "lead",
+   "skills": [
+    "Go",
+    "distributed systems",
+    "search relevance",
+    "system design",
+    "mentoring"
+   ],
+   "summary": "Principal Engineer with 15 years of experience in software engineering, specializing in distributed systems and search relevance"
+  },
+  "N15": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "MBA",
+     "institution": "Example Business School",
+     "year": "2012"
+    },
+    {
+     "degree": "BSc Computer Science",
+     "institution": "University of Sampleton",
+     "year": "2005"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Example Health Platforms",
+     "start": "2021-01",
+     "title": "Chief Technology Officer"
+    },
+    {
+     "end": "2020-12",
+     "organization": "Sample Learning Inc",
+     "start": "2017-05",
+     "title": "VP Engineering"
+    },
+    {
+     "end": "2017-04",
+     "organization": "Placeholder Media Group",
+     "start": "2013-01",
+     "title": "Engineering Director"
+    },
+    {
+     "end": "2012-12",
+     "organization": "Fictional Commerce Ltd",
+     "start": "2009-01",
+     "title": "Engineering Manager"
+    },
+    {
+     "end": "2008-12",
+     "organization": "Demo Bank plc",
+     "start": "2006-01",
+     "title": "Software Engineer"
+    }
+   ],
+   "languages": [
+    {
+     "language": "English",
+     "level": "native"
+    },
+    {
+     "language": "Spanish",
+     "level": "intermediate"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "executive",
+   "skills": [
+    "engineering leadership",
+    "platform strategy",
+    "budgeting",
+    "hiring",
+    "cloud architecture"
+   ],
+   "summary": "Technology executive with 20 years of experience in engineering leadership and platform strategy, most recently as Chief Technology Officer."
+  },
+  "N16": {
+   "certifications": [
+    "ACA"
+   ],
+   "education": [
+    {
+     "degree": "ACA Chartered Accountancy",
+     "institution": "Fictional Institute of Accountants",
+     "year": "2012"
+    },
+    {
+     "degree": "BA Economics",
+     "institution": "University of Nowhere",
+     "year": "2009"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Placeholder Hotels Group",
+     "start": "2019-01",
+     "title": "Director of Finance"
+    },
+    {
+     "end": "2018-12",
+     "organization": "Example Retail plc",
+     "start": "2014-01",
+     "title": "Financial Controller"
+    },
+    {
+     "end": "2013-12",
+     "organization": "Sample Audit LLP",
+     "start": "2009-09",
+     "title": "Senior Accountant"
+    }
+   ],
+   "languages": [],
+   "location": "unknown",
+   "seniority": "lead",
+   "skills": [
+    "FP&A",
+    "consolidation",
+    "IFRS",
+    "treasury",
+    "team leadership"
+   ],
+   "summary": "Finance director with 17 years of experience in financial leadership, specializing in FP&A, consolidation, IFRS, and treasury management"
+  },
+  "N17": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "BA Communications",
+     "institution": "Sample University",
+     "year": "2022"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Example Cosmetics Ltd",
+     "start": "2023-01",
+     "title": "Marketing Coordinator"
+    },
+    {
+     "end": "",
+     "organization": "Sample University",
+     "start": "2022",
+     "title": "BA Communications"
+    }
+   ],
+   "languages": [
+    {
+     "language": "English",
+     "level": "native"
+    }
+   ],
+   "location": "Paris",
+   "seniority": "mid",
+   "skills": [
+    "social media",
+    "copywriting",
+    "Canva",
+    "event planning"
+   ],
+   "summary": "Marketing Coordinator with 3 years of experience in social media, copywriting, and event planning"
+  },
+  "N18": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "BSc Web Development",
+     "institution": "Fictional College",
+     "year": "2020"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Placeholder Studio Ltd",
+     "start": "2022-02",
+     "title": "Frontend Developer, Google"
+    },
+    {
+     "end": "2022-01",
+     "organization": "Example Agency",
+     "start": "2021-01",
+     "title": "Web Developer, Google"
+    }
+   ],
+   "languages": [],
+   "location": "unknown",
+   "seniority": "mid",
+   "skills": [
+    "TypeScript",
+    "React",
+    "CSS",
+    "accessibility",
+    "Quantum computing"
+   ],
+   "summary": "Frontend Developer with 5 years of experience in web development, specializing in TypeScript, React, and CSS."
+  },
+  "N19": {
+   "certifications": [],
+   "education": [
+    {
+     "degree": "BSc Accounting",
+     "institution": "University of Example",
+     "year": "2025"
+    }
+   ],
+   "experience": [
+    {
+     "end": "present",
+     "organization": "Sample Ledger Co",
+     "start": "2025-09",
+     "title": "Junior Accountant"
+    }
+   ],
+   "languages": [
+    {
+     "language": "English",
+     "level": "native"
+    }
+   ],
+   "location": "unknown",
+   "seniority": "junior",
+   "skills": [
+    "Excel",
+    "bookkeeping",
+    "SQL"
+   ],
+   "summary": "Junior accountant with one year of experience in bookkeeping and Excel, specializing in financial record-keeping."
+  }
+ }
+}
