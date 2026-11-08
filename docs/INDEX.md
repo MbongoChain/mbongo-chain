@@ -117,6 +117,14 @@ The economic and token documents (section 4 of the catalogue, and
 figure anywhere in `docs/` is implemented or adopted**, banner or not. Where each
 monetary question stands is RFC 0004 §12.
 
+Fifteen consensus documents carry the same banner since 2026-11-08: the PoX, PoS, PoUW,
+PoC and AIDA specifications, the archived consensus and block-validation documents, the
+validator, guardian and verification guides, the whitepaper, `vision.md` and
+`roadmap.md`. **No consensus mechanism, validator set, staking, slashing, finality rule,
+block-time or epoch figure anywhere in `docs/` is implemented or adopted**, banner or
+not. The runtime has one producer and no consensus protocol; the protocol is defined by
+[`specs/PROTOCOL_LOCK_v0.4.md`](specs/PROTOCOL_LOCK_v0.4.md).
+
 ---
 
 ## Catalogue
