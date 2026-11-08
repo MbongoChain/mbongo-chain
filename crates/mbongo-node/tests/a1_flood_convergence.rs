@@ -136,15 +136,18 @@ async fn peer_address(child: &mut Child, p2p: u16) -> String {
 /// A process's resident memory in KiB, as the operating system reports it.
 async fn resident_kib(pid: u32) -> Option<u64> {
     if cfg!(windows) {
-        let out = Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+        // The working set, in bytes.
+        let out = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                &format!("(Get-Process -Id {pid}).WorkingSet64"),
+            ])
             .output()
             .await
             .ok()?;
-        // "name","pid","session","number","12,345 K": the last field, in KiB.
-        let text = String::from_utf8_lossy(&out.stdout);
-        let field = text.trim().rsplit("\",\"").next()?;
-        field.chars().filter(char::is_ascii_digit).collect::<String>().parse().ok()
+        let bytes: u64 = String::from_utf8_lossy(&out.stdout).trim().parse().ok()?;
+        Some(bytes / 1024)
     } else {
         let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
         status
