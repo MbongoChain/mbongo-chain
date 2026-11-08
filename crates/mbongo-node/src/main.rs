@@ -33,7 +33,9 @@ use std::sync::Arc;
 use clap::Parser;
 
 use backend::NodeBackend;
-use mbongo_network::{P2PNode, RpcBackend, SyncCommand, SyncEvent, SyncResponse, MAX_RANGE};
+use mbongo_network::{
+    InboundBlock, P2PNode, RpcBackend, SyncCommand, SyncEvent, SyncResponse, MAX_RANGE,
+};
 use mbongo_storage::RocksDbStorage;
 use sync_tracker::{BatchOutcome, SyncTracker};
 
@@ -326,6 +328,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //   - On Height(h) response → record it for that peer only
 //   - On Blocks([..]) response → apply each block sequentially
 //   - On NewBlock at height > local+1 → ask that peer its height
+//   - Every HEIGHT_POLL_INTERVAL → ask every connected peer its height again,
+//     so a lost announcement (the last one in particular) cannot stall sync
 //   - On a failed request, an error or a refused block → back that peer off,
 //     and move to another
 //   - After every event, and when a backoff ends → send what is now due
@@ -361,7 +365,7 @@ fn request_next_batch(
 #[allow(clippy::too_many_lines)]
 async fn run_sync_orchestrator<S: mbongo_storage::Storage + Send + Sync + 'static>(
     backend: NodeBackend<S>,
-    mut block_rx: tokio::sync::mpsc::UnboundedReceiver<(libp2p::PeerId, mbongo_core::Block)>,
+    mut block_rx: tokio::sync::mpsc::Receiver<InboundBlock>,
     mut sync_event_rx: tokio::sync::mpsc::UnboundedReceiver<SyncEvent>,
     cmd_tx: tokio::sync::mpsc::UnboundedSender<SyncCommand>,
 ) {
@@ -372,11 +376,15 @@ async fn run_sync_orchestrator<S: mbongo_storage::Storage + Send + Sync + 'stati
         // and cannot fall between the two.
         let now = tokio::time::Instant::now();
         tracker.release_expired(now);
+        tracker.poll_heights(now);
         send_due_requests(&backend, &mut tracker, &cmd_tx, now);
         let wake = tracker.next_wake(now);
         tokio::select! {
             // ── Inbound block announcements (push) ──────────
-            Some((peer_id, block)) = block_rx.recv() => {
+            // The announcement keeps its queue slot until this branch ends.
+            Some(inbound) = block_rx.recv() => {
+                let peer_id = inbound.peer;
+                let block = inbound.block;
                 let incoming_height = block.header.height;
                 let local_height = match backend.latest_height() {
                     Ok(h) => h,
@@ -688,7 +696,7 @@ mod tests {
 
     async fn pushed_block_clears(pending_amount: u128) {
         let (node, hash, block) = node_with_a_pending_transaction_and_a_block(pending_amount).await;
-        let (block_tx, block_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (block_tx, block_rx) = tokio::sync::mpsc::channel(1);
         let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
         let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
         let task = tokio::spawn(run_sync_orchestrator(
@@ -697,7 +705,12 @@ mod tests {
             event_rx,
             cmd_tx,
         ));
-        block_tx.send((libp2p::PeerId::random(), block)).unwrap();
+        block_tx
+            .try_send(InboundBlock::without_permit(
+                libp2p::PeerId::random(),
+                block,
+            ))
+            .unwrap();
         wait_until_not_pending(&node, &hash).await;
         assert_eq!(node.latest_height().unwrap(), 1);
         task.abort();
@@ -705,7 +718,7 @@ mod tests {
 
     async fn synced_block_clears(pending_amount: u128) {
         let (node, hash, block) = node_with_a_pending_transaction_and_a_block(pending_amount).await;
-        let (_block_tx, block_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (_block_tx, block_rx) = tokio::sync::mpsc::channel(1);
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
         let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel();
         let task = tokio::spawn(run_sync_orchestrator(
@@ -773,6 +786,15 @@ mod tests {
             .expect("channel open")
     }
 
+    /// The next command, allowing for one height-poll interval.
+    async fn next_poll(commands: &mut Commands) -> SyncCommand {
+        let wait = sync_tracker::HEIGHT_POLL_INTERVAL + std::time::Duration::from_secs(1);
+        tokio::time::timeout(wait, commands.recv())
+            .await
+            .expect("no poll in time")
+            .expect("channel open")
+    }
+
     /// Lets the orchestrator run, then proves it sent nothing.
     async fn assert_silent(commands: &mut Commands, wait: std::time::Duration) {
         assert!(
@@ -783,7 +805,7 @@ mod tests {
 
     struct Harness {
         events: tokio::sync::mpsc::UnboundedSender<SyncEvent>,
-        blocks: tokio::sync::mpsc::UnboundedSender<(libp2p::PeerId, mbongo_core::Block)>,
+        blocks: tokio::sync::mpsc::Sender<InboundBlock>,
         commands: Commands,
         task: tokio::task::JoinHandle<()>,
         node: NodeBackend<InMemoryStorage>,
@@ -792,7 +814,7 @@ mod tests {
     fn harness() -> Harness {
         let node = NodeBackend::new(InMemoryStorage::new(), false);
         node.ensure_genesis().unwrap();
-        let (blocks, block_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (blocks, block_rx) = tokio::sync::mpsc::channel(8);
         let (events, event_rx) = tokio::sync::mpsc::unbounded_channel();
         let (cmd_tx, commands) = tokio::sync::mpsc::unbounded_channel();
         let task = tokio::spawn(run_sync_orchestrator(
@@ -876,19 +898,30 @@ mod tests {
         h.task.abort();
     }
 
-    /// Repeated failures slow down, up to the cap, and never spin.
+    /// Repeated failures slow down, up to the cap, and never spin. The height
+    /// poll adds height requests, and never more than one per backoff end.
     #[tokio::test(start_paused = true)]
     async fn repeated_failures_do_not_hot_loop() {
         let mut h = harness();
         let peer = libp2p::PeerId::random();
         h.report(peer, 1).await;
-        let mut requests = 0u32;
+        let (mut requests, mut polls) = (0u32, 0u32);
         let start = tokio::time::Instant::now();
         while start.elapsed() < std::time::Duration::from_secs(300) {
-            let Ok(Some(command)) =
-                tokio::time::timeout(std::time::Duration::from_secs(70), h.commands.recv()).await
-            else {
-                panic!("the retries stopped");
+            // A poll goes out at the same instant as the block request it
+            // precedes, so it is answered within the same iteration.
+            let command = loop {
+                let Ok(Some(command)) =
+                    tokio::time::timeout(std::time::Duration::from_secs(70), h.commands.recv())
+                        .await
+                else {
+                    panic!("the retries stopped");
+                };
+                if !is_height_to(&command, peer) {
+                    break command;
+                }
+                polls += 1;
+                h.answer(peer, SyncResponse::Height(1));
             };
             assert!(is_blocks_to(&command, peer));
             requests += 1;
@@ -897,6 +930,9 @@ mod tests {
         }
         // At 0, 1, 3, 7, 15, 31, 63, then every 60 seconds: the last at 303.
         assert_eq!(requests, 11);
+        // A poll falls due every 15 s but waits for the backoff to end, so
+        // it goes out with a block request: at most one per block request.
+        assert!(polls >= 1 && polls <= requests, "{polls} polls");
         h.task.abort();
     }
 
@@ -940,7 +976,7 @@ mod tests {
         let mut h = harness();
         let peer = libp2p::PeerId::random();
         h.report(peer, 0).await;
-        h.blocks.send((peer, sample_block(50))).unwrap();
+        h.blocks.try_send(InboundBlock::without_permit(peer, sample_block(50))).unwrap();
         assert!(is_height_to(&next_command(&mut h.commands).await, peer));
         assert_silent(&mut h.commands, std::time::Duration::from_secs(5)).await;
         assert_eq!(h.node.latest_height().unwrap(), 0);
@@ -1017,6 +1053,59 @@ mod tests {
         h.task.abort();
     }
 
+    /// The peer's last announcement never arrives, and nothing else happens:
+    /// the height poll alone finds the block and applies it (S3 A1).
+    #[tokio::test(start_paused = true)]
+    async fn a_lost_final_announcement_is_recovered_by_the_height_poll() {
+        let mut h = harness();
+        let peer = libp2p::PeerId::random();
+        let blocks = chain(1).await;
+        h.report(peer, 0).await;
+        // The peer produces block 1; its announcement is lost.
+        assert_silent(
+            &mut h.commands,
+            sync_tracker::HEIGHT_POLL_INTERVAL - std::time::Duration::from_millis(100),
+        )
+        .await;
+        assert_eq!(h.node.latest_height().unwrap(), 0, "nothing told it yet");
+
+        assert!(is_height_to(&next_command(&mut h.commands).await, peer));
+        h.answer(peer, SyncResponse::Height(1));
+        let SyncCommand::GetBlocks { start_height, .. } = next_command(&mut h.commands).await
+        else {
+            panic!("expected a block request");
+        };
+        assert_eq!(start_height, 1);
+        h.answer(peer, SyncResponse::Blocks(blocks));
+        h.applied(1).await;
+        h.task.abort();
+    }
+
+    /// Announcements refused by a full queue cost nothing but time: the height
+    /// poll brings the node to the peer's height all the same.
+    #[tokio::test(start_paused = true)]
+    async fn a_node_whose_announcements_were_all_refused_still_converges() {
+        let mut h = harness();
+        let peer = libp2p::PeerId::random();
+        let mut blocks = chain(3).await;
+        h.report(peer, 0).await;
+        for _ in 0..2 {
+            // Each poll finds the peer one block higher; no announcement arrives.
+            let height = h.node.latest_height().unwrap() + 1;
+            assert!(is_height_to(&next_poll(&mut h.commands).await, peer));
+            h.answer(peer, SyncResponse::Height(height));
+            assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));
+            h.answer(peer, SyncResponse::Blocks(vec![blocks.remove(0)]));
+            h.applied(height).await;
+        }
+        assert!(is_height_to(&next_poll(&mut h.commands).await, peer));
+        h.answer(peer, SyncResponse::Height(3));
+        assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));
+        h.answer(peer, SyncResponse::Blocks(blocks));
+        h.applied(3).await;
+        h.task.abort();
+    }
+
     /// A pushed block overtakes the answer: no fault of the peer.
     #[tokio::test(start_paused = true)]
     async fn a_batch_overlapping_a_pushed_block_is_no_failure() {
@@ -1026,7 +1115,9 @@ mod tests {
         h.report(peer, 2).await;
         assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));
 
-        h.blocks.send((peer, blocks[0].1.clone())).unwrap();
+        h.blocks
+            .try_send(InboundBlock::without_permit(peer, blocks[0].1.clone()))
+            .unwrap();
         h.applied(1).await;
         h.answer(peer, SyncResponse::Blocks(blocks));
         let start = tokio::time::Instant::now();
@@ -1042,7 +1133,9 @@ mod tests {
         let peer = libp2p::PeerId::random();
         let blocks = chain(1).await;
         h.report(peer, 0).await;
-        h.blocks.send((peer, blocks[0].1.clone())).unwrap();
+        h.blocks
+            .try_send(InboundBlock::without_permit(peer, blocks[0].1.clone()))
+            .unwrap();
         h.applied(1).await;
         h.answer(peer, SyncResponse::Height(9));
         assert!(is_blocks_to(&next_command(&mut h.commands).await, peer));

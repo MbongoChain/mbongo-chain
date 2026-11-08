@@ -105,13 +105,7 @@ impl request_response::Codec for SyncCodec {
     where
         T: AsyncRead + Unpin + Send,
     {
-        let buf = read_length_delimited(io).await?;
-        SyncRequest::decode(&mut &buf[..]).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("SCALE decode error: {e}"),
-            )
-        })
+        read_length_delimited(io).await?.decode::<SyncRequest>()
     }
 
     async fn read_response<T>(
@@ -122,13 +116,7 @@ impl request_response::Codec for SyncCodec {
     where
         T: AsyncRead + Unpin + Send,
     {
-        let buf = read_length_delimited(io).await?;
-        SyncResponse::decode(&mut &buf[..]).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("SCALE decode error: {e}"),
-            )
-        })
+        read_length_delimited(io).await?.decode::<SyncResponse>()
     }
 
     async fn write_request<T>(
@@ -178,13 +166,7 @@ impl request_response::Codec for BlockNotifyCodec {
     where
         T: AsyncRead + Unpin + Send,
     {
-        let buf = read_length_delimited(io).await?;
-        SyncNotification::decode(&mut &buf[..]).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("SCALE decode error: {e}"),
-            )
-        })
+        read_length_delimited(io).await?.decode::<SyncNotification>()
     }
 
     async fn read_response<T>(
@@ -195,13 +177,7 @@ impl request_response::Codec for BlockNotifyCodec {
     where
         T: AsyncRead + Unpin + Send,
     {
-        let buf = read_length_delimited(io).await?;
-        BlockNotifyAck::decode(&mut &buf[..]).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("SCALE decode error: {e}"),
-            )
-        })
+        read_length_delimited(io).await?.decode::<BlockNotifyAck>()
     }
 
     async fn write_request<T>(
@@ -231,8 +207,78 @@ impl request_response::Codec for BlockNotifyCodec {
     }
 }
 
+/// The size of each piece a frame body is read into.
+const READ_CHUNK: usize = 64 * 1024;
+
+/// A frame body as it arrived: pieces of [`READ_CHUNK`] bytes, the last one
+/// possibly shorter. It is decoded where it lies, never copied into one buffer.
+struct Frame {
+    chunks: Vec<Vec<u8>>,
+    len: usize,
+}
+
+impl Frame {
+    /// Decodes the body as SCALE, exactly as decoding it from one slice would:
+    /// the same value, the same error, and trailing bytes ignored.
+    fn decode<D: Decode>(&self) -> std::io::Result<D> {
+        let mut input = FrameInput {
+            chunks: &self.chunks,
+            index: 0,
+            offset: 0,
+            remaining: self.len,
+        };
+        D::decode(&mut input).map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("SCALE decode error: {e}"),
+            )
+        })
+    }
+}
+
+/// A SCALE input over a [`Frame`]'s pieces, in order.
+struct FrameInput<'a> {
+    chunks: &'a [Vec<u8>],
+    index: usize,
+    offset: usize,
+    remaining: usize,
+}
+
+impl parity_scale_codec::Input for FrameInput<'_> {
+    fn remaining_len(&mut self) -> Result<Option<usize>, parity_scale_codec::Error> {
+        Ok(Some(self.remaining))
+    }
+
+    fn read(&mut self, into: &mut [u8]) -> Result<(), parity_scale_codec::Error> {
+        // The same refusal, in the same words, as the input for `&[u8]`.
+        if into.len() > self.remaining {
+            return Err("Not enough data to fill buffer".into());
+        }
+        let mut written = 0;
+        while written < into.len() {
+            let chunk = &self.chunks[self.index];
+            let n = (chunk.len() - self.offset).min(into.len() - written);
+            into[written..written + n].copy_from_slice(&chunk[self.offset..self.offset + n]);
+            written += n;
+            self.offset += n;
+            if self.offset == chunk.len() {
+                self.index += 1;
+                self.offset = 0;
+            }
+        }
+        self.remaining -= into.len();
+        Ok(())
+    }
+}
+
 /// Read a length-delimited frame from an async reader.
-async fn read_length_delimited<T: AsyncRead + Unpin>(io: &mut T) -> std::io::Result<Vec<u8>> {
+///
+/// The frame format is unchanged: a `u32` LE length, at most
+/// [`MAX_FRAME_SIZE`], then that many bytes. What changed (S3 A1) is memory:
+/// the body is read piece by piece, so a frame holds what has arrived plus one
+/// piece of [`READ_CHUNK`] bytes, never the length a peer merely claims, and
+/// nothing is reallocated as it grows.
+async fn read_length_delimited<T: AsyncRead + Unpin>(io: &mut T) -> std::io::Result<Frame> {
     let mut len_buf = [0u8; 4];
     io.read_exact(&mut len_buf).await?;
     let len = u32::from_le_bytes(len_buf) as usize;
@@ -242,9 +288,22 @@ async fn read_length_delimited<T: AsyncRead + Unpin>(io: &mut T) -> std::io::Res
             format!("frame too large: {len} > {MAX_FRAME_SIZE}"),
         ));
     }
-    let mut buf = vec![0u8; len];
-    io.read_exact(&mut buf).await?;
-    Ok(buf)
+    let mut chunks = Vec::with_capacity(len.div_ceil(READ_CHUNK));
+    let mut filled = 0;
+    while filled < len {
+        let mut chunk = vec![0u8; (len - filled).min(READ_CHUNK)];
+        let mut at = 0;
+        while at < chunk.len() {
+            let n = io.read(&mut chunk[at..]).await?;
+            if n == 0 {
+                return Err(std::io::ErrorKind::UnexpectedEof.into());
+            }
+            at += n;
+        }
+        filled += chunk.len();
+        chunks.push(chunk);
+    }
+    Ok(Frame { chunks, len })
 }
 
 /// Write a length-delimited frame to an async writer.
@@ -407,5 +466,200 @@ mod tests {
         let ack = BlockNotifyAck;
         let encoded = ack.encode();
         let _decoded = BlockNotifyAck::decode(&mut &encoded[..]).unwrap();
+    }
+
+    // ── Framing: S3 A1 changed how a frame is read, not what a frame is ──
+
+    /// The reader on `dev` before S3 A1, kept verbatim as the reference the
+    /// new reader must agree with.
+    async fn reference_read<T: AsyncRead + Unpin>(io: &mut T) -> std::io::Result<Vec<u8>> {
+        let mut len_buf = [0u8; 4];
+        io.read_exact(&mut len_buf).await?;
+        let len = u32::from_le_bytes(len_buf) as usize;
+        if len > MAX_FRAME_SIZE {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("frame too large: {len} > {MAX_FRAME_SIZE}"),
+            ));
+        }
+        let mut buf = vec![0u8; len];
+        io.read_exact(&mut buf).await?;
+        Ok(buf)
+    }
+
+    /// A reader that hands out at most `step` bytes per read.
+    struct Trickle<'a> {
+        data: &'a [u8],
+        step: usize,
+    }
+
+    impl AsyncRead for Trickle<'_> {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            out: &mut [u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            let n = self.step.min(out.len()).min(self.data.len());
+            out[..n].copy_from_slice(&self.data[..n]);
+            self.data = &self.data[n..];
+            std::task::Poll::Ready(Ok(n))
+        }
+    }
+
+    fn frame(len: u32, body_len: usize) -> Vec<u8> {
+        let mut bytes = len.to_le_bytes().to_vec();
+        bytes.extend((0..body_len).map(|i| u8::try_from(i % 251).unwrap()));
+        bytes
+    }
+
+    fn outcome(r: std::io::Result<Vec<u8>>) -> Result<Vec<u8>, std::io::ErrorKind> {
+        r.map_err(|e| e.kind())
+    }
+
+    /// Every input, whole or cut short, valid or oversized, read in steps from
+    /// one byte to a whole frame, gives the same bytes or the same error kind
+    /// as the reference reader.
+    #[test]
+    fn the_reader_agrees_with_the_reference_on_every_case() {
+        let max = u32::try_from(MAX_FRAME_SIZE).unwrap();
+        let cases: Vec<Vec<u8>> = vec![
+            vec![],
+            vec![1, 0],
+            frame(0, 0),
+            frame(1, 1),
+            frame(17, 17),
+            frame(17, 16),
+            frame(17, 40),
+            frame(70_000, 70_000),
+            frame(70_000, 69_999),
+            frame(200_000, 200_000),
+            frame(max, 3),
+            frame(max + 1, 3),
+            frame(u32::MAX, 0),
+        ];
+        let mut compared = 0;
+        for case in &cases {
+            for step in [1, 3, 4096, READ_CHUNK + 1, usize::MAX] {
+                let new = futures::executor::block_on(read_length_delimited(&mut Trickle {
+                    data: case,
+                    step,
+                }));
+                let old =
+                    futures::executor::block_on(reference_read(&mut Trickle { data: case, step }));
+                assert_eq!(
+                    outcome(new.map(|f| f.chunks.concat())),
+                    outcome(old),
+                    "len {} step {step}",
+                    case.len()
+                );
+                compared += 1;
+            }
+        }
+        assert_eq!(compared, 13 * 5);
+    }
+
+    /// The writer is unchanged: a frame is the `u32` LE length then the SCALE
+    /// bytes, and a written frame reads back to the same message.
+    #[test]
+    fn a_written_frame_is_length_then_scale_and_reads_back() {
+        let request = SyncRequest::GetBlocks {
+            start_height: 7,
+            end_height: 9,
+        };
+        let mut wire = Vec::new();
+        futures::executor::block_on(write_length_delimited(&mut wire, &request.encode())).unwrap();
+        let mut expected = vec![17, 0, 0, 0, 1];
+        expected.extend(7u64.to_le_bytes());
+        expected.extend(9u64.to_le_bytes());
+        assert_eq!(wire, expected);
+
+        let body = futures::executor::block_on(read_length_delimited(&mut Trickle {
+            data: &wire,
+            step: 1,
+        }))
+        .unwrap();
+        assert_eq!(body.chunks.concat(), request.encode());
+        assert!(matches!(
+            body.decode::<SyncRequest>().unwrap(),
+            SyncRequest::GetBlocks {
+                start_height: 7,
+                end_height: 9
+            }
+        ));
+    }
+
+    /// A frame cut short is refused with the error kind the old reader gave.
+    #[test]
+    fn a_frame_cut_short_is_unexpected_eof() {
+        let cut = frame(1_000_000, 999_999);
+        let Err(err) = futures::executor::block_on(read_length_delimited(&mut Trickle {
+            data: &cut,
+            step: usize::MAX,
+        })) else {
+            panic!("a frame cut short was accepted");
+        };
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    fn block_with_transfers(height: u64, count: usize) -> Block {
+        Block {
+            header: BlockHeader {
+                parent_hash: Hash::zero(),
+                state_root: Hash::zero(),
+                transactions_root: Hash::zero(),
+                timestamp: 1_700_000_000,
+                height,
+            },
+            body: BlockBody {
+                transactions: (0..count)
+                    .map(|i| Transaction {
+                        tx_type: TransactionType::Transfer,
+                        sender: Address([1u8; 32]),
+                        receiver: Address([2u8; 32]),
+                        amount: 100,
+                        nonce: i as u64,
+                        payload: TransactionPayload::None,
+                        signature: [0u8; 64],
+                    })
+                    .collect(),
+            },
+        }
+    }
+
+    /// Decoding a body held in pieces gives what decoding one slice gives: the
+    /// same value, or the same error message, for whole and cut-short bodies,
+    /// including messages that span many pieces.
+    #[test]
+    fn decoding_a_frame_in_pieces_equals_decoding_one_slice() {
+        let payloads = [
+            SyncResponse::Height(9).encode(),
+            SyncResponse::Error("x".repeat(3 * READ_CHUNK + 17)).encode(),
+            SyncResponse::Blocks(
+                (0..300).map(|h| (Hash([7u8; 32]), block_with_transfers(h, 6))).collect(),
+            )
+            .encode(),
+        ];
+        assert!(payloads[2].len() > 2 * READ_CHUNK, "spans pieces");
+        let mut compared = 0;
+        for payload in &payloads {
+            for cut in [payload.len(), payload.len() / 2, 1, 0] {
+                let body = &payload[..cut];
+                let mut wire = u32::try_from(cut).unwrap().to_le_bytes().to_vec();
+                wire.extend_from_slice(body);
+                let frame = futures::executor::block_on(read_length_delimited(&mut Trickle {
+                    data: &wire,
+                    step: 1000,
+                }))
+                .unwrap();
+                let pieces =
+                    frame.decode::<SyncResponse>().map(|r| r.encode()).map_err(|e| e.to_string());
+                let slice = SyncResponse::decode(&mut &body[..])
+                    .map(|r| r.encode())
+                    .map_err(|e| format!("SCALE decode error: {e}"));
+                assert_eq!(pieces, slice, "payload {} cut {cut}", payload.len());
+                compared += 1;
+            }
+        }
+        assert_eq!(compared, 3 * 4);
     }
 }

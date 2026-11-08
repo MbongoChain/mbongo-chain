@@ -17,6 +17,13 @@ const BACKOFF_BASE: Duration = Duration::from_secs(1);
 /// Longest delay after repeated failures.
 const BACKOFF_CAP: Duration = Duration::from_secs(60);
 
+/// How often every connected peer is asked its height again, whatever else
+/// happens. Announcements are a shortcut, not the mechanism: one can be refused
+/// by a full queue or lost with its connection, and the last one before the
+/// producer stops would otherwise leave this node behind until something else
+/// happened (S3 A1).
+pub const HEIGHT_POLL_INTERVAL: Duration = Duration::from_secs(15);
+
 /// Delay before a peer is used again, after `failures` failures in a row.
 fn backoff(failures: u32) -> Duration {
     let doublings = failures.saturating_sub(1).min(6);
@@ -62,6 +69,9 @@ pub struct SyncTracker {
     peers: BTreeMap<PeerId, PeerSync>,
     /// The peer asked for blocks, and the first height asked for.
     blocks_in_flight: Option<(PeerId, u64)>,
+    /// When every connected peer is next asked its height; unset until
+    /// [`SyncTracker::poll_heights`] first runs.
+    poll_at: Option<Instant>,
 }
 
 impl SyncTracker {
@@ -95,6 +105,25 @@ impl SyncTracker {
     pub fn ask_height(&mut self, peer: PeerId) {
         if let Some(entry) = self.peers.get_mut(&peer) {
             entry.wants_height = true;
+        }
+    }
+
+    /// Asks every connected peer its height again once each
+    /// [`HEIGHT_POLL_INTERVAL`]. The first call only sets the clock. A peer
+    /// in backoff is asked once its backoff ends; one with a height request
+    /// in flight is not asked twice.
+    pub fn poll_heights(&mut self, now: Instant) {
+        match self.poll_at {
+            Some(at) if at > now => {}
+            Some(_) => {
+                for entry in self.peers.values_mut() {
+                    if entry.connected && !entry.height_in_flight {
+                        entry.wants_height = true;
+                    }
+                }
+                self.poll_at = Some(now + HEIGHT_POLL_INTERVAL);
+            }
+            None => self.poll_at = Some(now + HEIGHT_POLL_INTERVAL),
         }
     }
 
@@ -240,11 +269,16 @@ impl SyncTracker {
         self.peers.retain(|_, p| p.connected || p.retry_at.is_some());
     }
 
-    /// The earliest moment after `now` that a backoff ends, so that a retry
-    /// needs no other event to happen. A backoff already over is left out, so
-    /// a wake can never fire again at once.
+    /// The earliest moment after `now` that a backoff ends or the height poll
+    /// is due, so that neither needs another event to happen. A moment already
+    /// past is left out, so a wake can never fire again at once.
     pub fn next_wake(&self, now: Instant) -> Option<Instant> {
-        self.peers.values().filter_map(|p| p.retry_at).filter(|at| *at > now).min()
+        self.peers
+            .values()
+            .filter_map(|p| p.retry_at)
+            .chain(self.poll_at)
+            .filter(|at| *at > now)
+            .min()
     }
 
     /// Clears the backoffs that have ended, so that `next_wake` moves on.
@@ -552,5 +586,76 @@ mod tests {
         tracker.height_answered(peer, u64::MAX);
         assert_eq!(tracker.block_source(0, now), Some((peer, u64::MAX)));
         assert_eq!(tracker.block_source(u64::MAX, now), None);
+    }
+
+    /// Connected peers whose height request was sent and answered.
+    fn answered(peers: &[PeerId], height: u64) -> SyncTracker {
+        let mut tracker = tracker_with(peers);
+        for peer in peers {
+            tracker.height_requested(*peer);
+            tracker.height_answered(*peer, height);
+        }
+        tracker
+    }
+
+    #[test]
+    fn the_height_poll_asks_every_connected_peer_once_per_interval() {
+        let now = Instant::now();
+        let (a, b) = two_peers();
+        let mut tracker = answered(&[a, b], 3);
+
+        tracker.poll_heights(now);
+        assert!(
+            tracker.heights_due(now).is_empty(),
+            "the first call only sets the clock"
+        );
+        assert_eq!(tracker.next_wake(now), Some(now + HEIGHT_POLL_INTERVAL));
+
+        let almost = now + HEIGHT_POLL_INTERVAL - Duration::from_millis(1);
+        tracker.poll_heights(almost);
+        assert!(tracker.heights_due(almost).is_empty());
+
+        let due = now + HEIGHT_POLL_INTERVAL;
+        tracker.poll_heights(due);
+        assert_eq!(tracker.heights_due(due), vec![a, b]);
+        assert_eq!(tracker.next_wake(due), Some(due + HEIGHT_POLL_INTERVAL));
+    }
+
+    #[test]
+    fn the_height_poll_does_not_duplicate_a_request_in_flight() {
+        let now = Instant::now();
+        let peer = PeerId::random();
+        let mut tracker = tracker_with(&[peer]);
+        tracker.height_requested(peer);
+        tracker.poll_heights(now);
+        tracker.poll_heights(now + HEIGHT_POLL_INTERVAL);
+        assert!(tracker.heights_due(now + HEIGHT_POLL_INTERVAL).is_empty());
+    }
+
+    #[test]
+    fn the_height_poll_waits_for_a_backoff_to_end() {
+        let start = Instant::now();
+        let peer = PeerId::random();
+        let mut tracker = answered(&[peer], 1);
+        tracker.poll_heights(start);
+        let due = start + HEIGHT_POLL_INTERVAL;
+        tracker.peer_failed(peer, due);
+        tracker.poll_heights(due);
+        assert!(tracker.heights_due(due).is_empty());
+        assert_eq!(
+            tracker.heights_due(due + Duration::from_secs(1)),
+            vec![peer]
+        );
+    }
+
+    #[test]
+    fn the_height_poll_skips_disconnected_peers() {
+        let now = Instant::now();
+        let peer = PeerId::random();
+        let mut tracker = answered(&[peer], 1);
+        tracker.peer_disconnected(peer, false, now);
+        tracker.poll_heights(now);
+        tracker.poll_heights(now + HEIGHT_POLL_INTERVAL);
+        assert!(tracker.heights_due(now + HEIGHT_POLL_INTERVAL).is_empty());
     }
 }

@@ -14,6 +14,8 @@
 
 /// Keeping configured bootnodes connected.
 pub mod bootnodes;
+/// Admission limits, quotas and counters for inbound P2P work (S3 A1).
+pub mod limits;
 /// A stable P2P identity read from a file.
 pub mod node_key;
 /// Minimal libp2p networking node (ping, identify, mDNS, block-sync).
@@ -25,10 +27,11 @@ pub mod rpc;
 /// HTTP server wiring (Axum router + serve).
 pub mod server;
 
+pub use crate::limits::{P2PCounters, P2PCountersSnapshot};
 pub use crate::node_key::load_node_key;
 pub use crate::p2p::{
-    BlockBroadcaster, ChannelBroadcaster, InboundSyncRequest, P2PNode, SyncCommand, SyncEvent,
-    SyncRequestKind,
+    BlockBroadcaster, ChannelBroadcaster, InboundBlock, InboundSyncRequest, P2PNode, SyncCommand,
+    SyncEvent, SyncReply, SyncRequestKind,
 };
 pub use crate::p2p_protocol::{
     BlockNotifyAck, BlockNotifyCodec, SyncCodec, SyncNotification, SyncRequest, SyncResponse,

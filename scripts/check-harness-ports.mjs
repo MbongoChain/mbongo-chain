@@ -18,6 +18,8 @@ const HARNESSES = [
   { file: "crates/mbongo-node/src/bin/devnet_harness.rs", pattern: CONST, count: 9 },
   { file: "crates/mbongo-node/tests/devnet_convergence.rs", pattern: CONST, count: 9 },
   { file: "crates/mbongo-network/tests/reconnect.rs", pattern: CONST, count: 4 },
+  { file: "crates/mbongo-network/tests/a1_limits.rs", pattern: CONST, count: 2 },
+  { file: "crates/mbongo-node/tests/a1_flood_convergence.rs", pattern: CONST, count: 6 },
 ];
 
 const ports = [];
