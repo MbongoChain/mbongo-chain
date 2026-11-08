@@ -192,6 +192,73 @@ def _non_negative(value: Any, name: str) -> float:
     return value
 
 
+# Keys a scenario may use. The loader reads with defaults, so a misspelled key
+# used to be ignored silently and the run still reported valid: a misspelled
+# `annual_growth` became growth 0, a misspelled shock metric disabled the
+# shock. Unknown keys are now a configuration error (exit 2), never a result.
+# The scenario-level keys include the documentation fields of scenarios.json.
+SCENARIO_KEYS = frozenset({
+    "description", "normative", "provenance", "fidelity", "controller_notes",
+    "monetary", "supply_distribution", "issuance_allocation", "fees",
+    "activity", "price", "shocks",
+})
+ACTIVITY_KEYS = frozenset({
+    "transaction_fee_revenue_mbo", "compute_user_spend_mbo",
+    "worker_revenue_share", "protocol_compute_fee_rate",
+})
+PATH_KEYS = frozenset({"initial", "phases", "continuation"})
+PHASE_KEYS = frozenset({"until_year", "annual_growth"})
+SHOCK_KEYS = frozenset({"metric", "start_year", "end_year", "multiplier", "after_end"})
+
+
+def _known_keys(obj: Any, allowed: frozenset, name: str) -> None:
+    _require(isinstance(obj, dict), f"{name} must be an object")
+    unknown = sorted(set(obj) - allowed)
+    _require(not unknown, f"{name} has unknown keys {unknown}; allowed: {sorted(allowed)}")
+
+
+def validate_scenario_keys(scenario: Dict[str, Any]) -> None:
+    """Reject unknown keys at the scenario level and in `activity`, where the
+    trajectories live. A misspelled `price` or path name would otherwise read
+    as an absent path, and be reported as extrapolated rather than invalid."""
+    _known_keys(scenario, SCENARIO_KEYS, "scenario")
+    _known_keys(scenario.get("activity", {}), ACTIVITY_KEYS, "activity")
+
+
+def validate_shocks(shocks: Any) -> None:
+    """Validate every shock once, whatever its metric.
+
+    `end_year` must be present: an integer, or null for a shock declared
+    persistent. Absent, it used to read as null, so a misspelled `end_year`
+    silently made a temporary shock persistent."""
+    _require(isinstance(shocks, list), "shocks must be a list")
+    for i, shock in enumerate(shocks):
+        _known_keys(shock, SHOCK_KEYS, f"shocks[{i}]")
+        metric = shock.get("metric")
+        _require(
+            metric in TRAJECTORY_METRICS,
+            f"shocks[{i}].metric must be one of {list(TRAJECTORY_METRICS)}, got {metric!r}",
+        )
+        _require(
+            "end_year" in shock,
+            f"shocks[{i}].end_year is required: an integer, or null for a persistent shock",
+        )
+        start = shock.get("start_year")
+        end = shock["end_year"]
+        _require(_is_int(start) and start >= 0, f"shocks[{i}].start_year must be an integer >= 0")
+        _require(
+            end is None or (_is_int(end) and end >= start),
+            f"shocks[{i}].end_year must be an integer >= start_year, or null",
+        )
+        multiplier = shock.get("multiplier")
+        _require(
+            isinstance(multiplier, (int, float)) and not isinstance(multiplier, bool)
+            and multiplier >= 0,
+            f"shocks[{i}].multiplier must be a number >= 0",
+        )
+        _shock_after_end(shock, i)
+
+
 def growth_path(spec: Dict[str, Any], years: int, name: str) -> List[float]:
     """Expand a piecewise-growth specification into one value per year 0..years.
 
@@ -204,12 +271,14 @@ def growth_path(spec: Dict[str, Any], years: int, name: str) -> List[float]:
     one. Without one, years beyond the last phase keep the last phase's growth
     rate, as they always have, but they are not covered: see `path_coverage`.
     """
+    _known_keys(spec, PATH_KEYS, name)
     initial = _non_negative(spec.get("initial", 0.0), f"{name}.initial")
     phases = spec.get("phases", [])
     _require(isinstance(phases, list), f"{name}.phases must be a list")
 
     last_until = -1
     for i, phase in enumerate(phases):
+        _known_keys(phase, PHASE_KEYS, f"{name}.phases[{i}]")
         until = phase.get("until_year")
         _require(
             isinstance(until, int) and until >= 0,
@@ -361,6 +430,9 @@ def input_coverage(scenario: Dict[str, Any]) -> Dict[str, Optional[int]]:
     `staking_ratio` is a single number, time-invariant by definition, so only
     its shocks limit it. An undeclared staking shock is judged against the last
     year every path of the scenario defines explicitly."""
+    validate_scenario_keys(scenario)
+    shocks = scenario.get("shocks", [])
+    validate_shocks(shocks)
     activity = scenario.get("activity", {})
     paths = {
         "transaction_fee_revenue_mbo": (
@@ -378,12 +450,8 @@ def input_coverage(scenario: Dict[str, Any]) -> Dict[str, Optional[int]]:
         ends[metric] = explicit_end(spec)
     coverage["staking_ratio"] = None
     ends["staking_ratio"] = min(ends.values())
-    shocks = scenario.get("shocks", [])
-    _require(isinstance(shocks, list), "shocks must be a list")
     for i, shock in enumerate(shocks):
-        metric = shock.get("metric")
-        if metric not in coverage:
-            continue
+        metric = shock["metric"]
         coverage[metric] = _earlier_limit(
             coverage[metric], shock_coverage_limit(shock, i, ends[metric])
         )
@@ -400,6 +468,7 @@ def apply_shocks(
     applies from `start_year` to the end of the run. What a shock implies after
     its end is a coverage question, answered by `shock_coverage_limit`.
     """
+    validate_shocks(shocks)
     out = list(path)
     for i, shock in enumerate(shocks):
         if shock.get("metric") != metric:
@@ -612,6 +681,8 @@ def simulate(scenario: Dict[str, Any], years: int) -> List[YearRow]:
     issues nothing, so a run over N years produces N+1 rows.
     """
     _require(isinstance(years, int) and years >= 1, f"years must be an integer >= 1, got {years}")
+    validate_scenario_keys(scenario)
+    validate_shocks(scenario.get("shocks", []))
 
     monetary = scenario.get("monetary", {})
     policy = build_policy(monetary)
