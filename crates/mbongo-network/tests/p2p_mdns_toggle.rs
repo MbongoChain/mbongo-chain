@@ -172,12 +172,7 @@ async fn static_peers_still_connect_and_sync_without_mdns() {
     let inbound = timeout(Duration::from_secs(10), a_requests.recv()).await.unwrap().unwrap();
     assert!(matches!(inbound.request, SyncRequest::GetHeight));
     assert_eq!(inbound.peer, b_id);
-    a_cmd
-        .send(SyncCommand::SendResponse {
-            channel: inbound.channel,
-            response: SyncResponse::Height(7),
-        })
-        .unwrap();
+    a_cmd.send(inbound.respond(SyncResponse::Height(7))).unwrap();
     let got = timeout(Duration::from_secs(10), async {
         loop {
             if let Some(SyncEvent::ResponseReceived { peer_id, response }) = b_events.recv().await {
