@@ -492,6 +492,12 @@ jobs:
       - name: Run fee funding feasibility tests
         run: python research/monetary-policy/test_fee_funding.py
 
+      # Horizon coverage, continuation and shock declarations, the precedence
+      # of invalid states, and the exclusion of extrapolated runs from study
+      # ranges at 150 and 200 years.
+      - name: Run horizon validity tests
+        run: python research/monetary-policy/test_horizon.py
+
       # The CLI exits non-zero when any accounting identity is violated, so
       # its exit status is the assertion.
       - name: Run deterministic 100-year simulation

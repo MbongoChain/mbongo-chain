@@ -47,6 +47,11 @@ reason, and reports cumulative issuance and outstanding supply separately.
 Usage:
     python3 research/monetary-policy/primary_sensitivity.py --summary
     python3 research/monetary-policy/primary_sensitivity.py --output /tmp/ps.csv
+    python3 research/monetary-policy/primary_sensitivity.py --summary --horizon 150
+
+Exit status: 0, or 4 if any run goes beyond what its inputs define (every
+observation is still written, and extrapolated runs are excluded from every
+range), or 2 for a configuration error.
 """
 
 from __future__ import annotations
@@ -64,7 +69,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import model  # noqa: E402
 
 STUDY_VERSION = "0.1.0-research"
+# The historical study horizon, and the default. 150 and 200 years can be
+# requested, but a run is only comparable where its inputs are defined: with
+# the shipped scenarios every input ends in year 100, so a longer horizon
+# yields extrapolated runs, which are reported and excluded, never ranged.
 HORIZON_YEARS = 100
+SUPPORTED_HORIZONS = (100, 150, 200)
 
 # ── The grid ────────────────────────────────────────────────────────────
 # Four octaves of magnitude, four decay intervals from near-continuous to
@@ -88,6 +98,17 @@ FIXED_CAP = "fixed_supply_cap_interaction"
 MATRICES: Dict[str, Optional[int]] = {UNCAPPED: None, FIXED_CAP: HISTORICAL_CAP}
 
 CHECKPOINTS = (1, 5, 10, 20, 25, 30, 50, 75, 100)
+LONG_HORIZON_CHECKPOINTS = (150, 200)
+
+
+def checkpoints_for(horizon: int, base: Tuple[int, ...] = CHECKPOINTS) -> Tuple[int, ...]:
+    """The historical checkpoints, plus 150 and 200 where the horizon reaches
+    them. For 100 years this is exactly the historical tuple."""
+    if horizon not in SUPPORTED_HORIZONS:
+        raise model.ConfigError(f"horizon must be one of {SUPPORTED_HORIZONS}, got {horizon}")
+    return tuple(y for y in base if y <= horizon) + tuple(
+        y for y in LONG_HORIZON_CHECKPOINTS if y <= horizon
+    )
 
 # The scenario whose non-issuance assumptions are held constant. Everything
 # except `monetary.primary_emission` and `monetary.cap` is inherited from it
@@ -146,6 +167,14 @@ class Observation:
     # The run's status from its worst year: feasible, velocity_dependent
     # (conditional, never counted as feasible) or infeasible.
     fee_funding_run_status: str
+    # Horizon coverage (see model.HORIZON_*). The first is for this
+    # checkpoint's year; the next two are for the whole run, empty when every
+    # year is covered. A run with a first extrapolated year is never ranged.
+    horizon_status: str
+    first_extrapolated_year: str
+    extrapolated_inputs: str
+    # model.run_validity: accounting, fee funding and coverage combined.
+    run_validity: str
 
 
 CSV_COLUMNS = [f.name for f in fields(Observation)]
@@ -211,11 +240,14 @@ def observations_for(
     scenario: Dict[str, Any],
     rows: List[model.YearRow],
     stress: str,
+    checkpoints: Tuple[int, ...] = CHECKPOINTS,
 ) -> List[Observation]:
     cap = scenario["monetary"]["cap"]
     clamp_year = detect_clamp(scenario, rows)
     infeasible_years = model.years_with_fee_funding(rows, model.FEE_FUNDING_INFEASIBLE)
     run_status = model.fee_funding_run_status(rows)
+    validity = model.run_validity(rows)
+    first_extrapolated = validity.first_extrapolated_year
     cumulative = 0.0
     by_year: Dict[int, Tuple[model.YearRow, float]] = {}
     for row in rows:
@@ -223,7 +255,7 @@ def observations_for(
         by_year[row.year] = (row, cumulative)
 
     out: List[Observation] = []
-    for year in CHECKPOINTS:
+    for year in checkpoints:
         row, cum = by_year[year]
         out.append(
             Observation(
@@ -271,6 +303,12 @@ def observations_for(
                     1 for y in infeasible_years if y <= year
                 ),
                 fee_funding_run_status=run_status,
+                horizon_status=row.horizon_status,
+                first_extrapolated_year=(
+                    "" if first_extrapolated is None else str(first_extrapolated)
+                ),
+                extrapolated_inputs=";".join(validity.extrapolated_inputs),
+                run_validity=validity.status,
             )
         )
     return out
@@ -280,7 +318,39 @@ def _schedule(o: Observation) -> Tuple[int, int, float]:
     return (o.initial_annual_issuance, o.step_years, o.step_factor)
 
 
-def fee_funding_lines(observations: List[Observation], label: str) -> List[str]:
+def is_extrapolated_run(o: Observation) -> bool:
+    """True for every observation of a run with an extrapolated year, at any
+    checkpoint: the run is excluded as a whole, not year by year."""
+    return bool(o.first_extrapolated_year)
+
+
+def comparable(observations: List[Observation]) -> List[Observation]:
+    """The observations a comparison range may use: every run whose inputs the
+    scenario defines through the horizon. Extrapolated runs are reported, never
+    ranged. Infeasible and conditional runs are kept, and flagged, as before."""
+    return [o for o in observations if not is_extrapolated_run(o)]
+
+
+def horizon_lines(observations: List[Observation], label: str) -> List[str]:
+    """How many runs are excluded as extrapolated, and from which year. Empty
+    when none is."""
+    runs = {(o.matrix, _schedule(o), o.stress) for o in observations}
+    excluded = {(o.matrix, _schedule(o), o.stress) for o in observations if is_extrapolated_run(o)}
+    if not excluded:
+        return []
+    firsts = sorted({int(o.first_extrapolated_year) for o in observations if is_extrapolated_run(o)})
+    seen = {name for o in observations for name in o.extrapolated_inputs.split(";") if name}
+    inputs = [m for m in model.TRAJECTORY_METRICS if m in seen]
+    return [
+        f"  {label:<26}: {len(excluded)} of {len(runs)} runs EXTRAPOLATED, excluded from every range",
+        f"    first extrapolated year  : {firsts[0]} .. {firsts[-1]}",
+        f"    inputs continued implicitly: {', '.join(inputs)}",
+    ]
+
+
+def fee_funding_lines(
+    observations: List[Observation], label: str, horizon: int = HORIZON_YEARS
+) -> List[str]:
     """Infeasible and velocity-dependent runs among these observations, and the
     headline ranges again over fully feasible runs only. A velocity-dependent
     run is conditional, so it is excluded too. The ranges over all runs are
@@ -299,7 +369,7 @@ def fee_funding_lines(observations: List[Observation], label: str) -> List[str]:
     firsts = sorted(
         int(o.fee_funding_first_infeasible_year)
         for o in observations
-        if o.fee_funding_first_infeasible_year and o.year == HORIZON_YEARS
+        if o.fee_funding_first_infeasible_year and o.year == horizon
     )
     if firsts:
         out.append(f"    first infeasible year    : {firsts[0]} .. {firsts[-1]}")
@@ -309,13 +379,13 @@ def fee_funding_lines(observations: List[Observation], label: str) -> List[str]:
     )
     final = [
         o for o in observations
-        if o.year == HORIZON_YEARS and o.fee_funding_run_status == model.FEE_FUNDING_FEASIBLE
+        if o.year == horizon and o.fee_funding_run_status == model.FEE_FUNDING_FEASIBLE
     ]
     if final:
         lo, hi = _range([o.security_budget_mbo for o in final])
-        out.append(f"    security budget @100y, fully feasible runs : {lo:>14,.0f} .. {hi:>14,.0f} MBO")
+        out.append(f"    security budget @{horizon}y, fully feasible runs : {lo:>14,.0f} .. {hi:>14,.0f} MBO")
         lo, hi = _range([o.ending_supply for o in final])
-        out.append(f"    ending supply @100y, fully feasible runs   : {lo:>14,.0f} .. {hi:>14,.0f} MBO")
+        out.append(f"    ending supply @{horizon}y, fully feasible runs   : {lo:>14,.0f} .. {hi:>14,.0f} MBO")
         over = [
             float(o.cumulative_issuance_over_cap_ratio)
             for o in final
@@ -328,23 +398,28 @@ def fee_funding_lines(observations: List[Observation], label: str) -> List[str]:
     return out
 
 
-def run_core_matrices(config: Dict[str, Any]) -> List[Observation]:
+def run_core_matrices(config: Dict[str, Any], horizon: int = HORIZON_YEARS) -> List[Observation]:
     """Both matrices over the same grid, in deterministic order."""
+    checkpoints = checkpoints_for(horizon)
     base = controlled_scenario(config)
     out: List[Observation] = []
     for matrix, cap in MATRICES.items():
         for schedule in schedule_grid():
             scenario = build_scenario(base, schedule, cap)
-            rows = model.simulate(scenario, HORIZON_YEARS)
+            rows = model.simulate(scenario, horizon)
             problems = model.identity_violations(rows)
             if problems:
                 raise RuntimeError(f"{matrix} {schedule}: {problems[0]}")
-            out.extend(observations_for(matrix, schedule, scenario, rows, stress="none"))
+            out.extend(
+                observations_for(matrix, schedule, scenario, rows, stress="none",
+                                 checkpoints=checkpoints)
+            )
     return out
 
 
-def run_stress_layer(config: Dict[str, Any]) -> List[Observation]:
+def run_stress_layer(config: Dict[str, Any], horizon: int = HORIZON_YEARS) -> List[Observation]:
     """Existing stress mechanisms applied to four representative shapes."""
+    checkpoints = checkpoints_for(horizon)
     base = controlled_scenario(config)
     out: List[Observation] = []
     for stress_name in STRESS_SOURCES:
@@ -352,12 +427,13 @@ def run_stress_layer(config: Dict[str, Any]) -> List[Observation]:
         for _, schedule in sorted(REPRESENTATIVE_SHAPES.items()):
             for matrix, cap in MATRICES.items():
                 scenario = build_scenario(base, schedule, cap, shocks=shocks)
-                rows = model.simulate(scenario, HORIZON_YEARS)
+                rows = model.simulate(scenario, horizon)
                 problems = model.identity_violations(rows)
                 if problems:
                     raise RuntimeError(f"{stress_name} {matrix} {schedule}: {problems[0]}")
                 out.extend(
-                    observations_for(matrix, schedule, scenario, rows, stress=stress_name)
+                    observations_for(matrix, schedule, scenario, rows, stress=stress_name,
+                                     checkpoints=checkpoints)
                 )
     return out
 
@@ -380,37 +456,54 @@ def _range(values: List[float]) -> Tuple[float, float]:
     return (min(values), max(values))
 
 
-def format_summary(observations: List[Observation]) -> str:
-    """Factual ranges, reported per matrix and never combined."""
+def extrapolated_run_count(observations: List[Observation]) -> int:
+    return len({(o.matrix, _schedule(o), o.stress) for o in observations if is_extrapolated_run(o)})
+
+
+def format_summary(observations: List[Observation], horizon: int = HORIZON_YEARS) -> str:
+    """Factual ranges, reported per matrix and never combined. Ranges use only
+    runs whose inputs are defined through the horizon (see `comparable`)."""
     out: List[str] = []
     out.append("=== MBO primary-issuance sensitivity study ===")
     out.append(
-        f"study version: {STUDY_VERSION}   horizon: {HORIZON_YEARS} years   "
+        f"study version: {STUDY_VERSION}   horizon: {horizon} years   "
         f"grid: {len(schedule_grid())} schedules per matrix"
     )
     out.append(f"controlled scenario: {CONTROLLED_SCENARIO} (only schedule and cap replaced)")
     out.append("SENSITIVITY ANALYSIS, NOT OPTIMIZATION. No schedule is ranked or recommended.")
+    total = len({(o.matrix, _schedule(o), o.stress) for o in observations})
+    excluded = extrapolated_run_count(observations)
+    out.append(
+        f"horizon coverage: {total - excluded} of {total} runs have every input defined "
+        f"through year {horizon}; {excluded} extrapolated, excluded from every range"
+    )
     out.append("")
 
     core = [o for o in observations if o.stress == "none"]
     for matrix in MATRICES:
-        rows = [o for o in core if o.matrix == matrix]
-        final = [o for o in rows if o.year == HORIZON_YEARS]
+        every = [o for o in core if o.matrix == matrix]
+        rows = comparable(every)
+        final = [o for o in rows if o.year == horizon]
         out.append(f"--- {matrix} ---")
-        out.append(f"  schedules: {len({(o.initial_annual_issuance, o.step_years, o.step_factor) for o in rows})}")
+        out.append(f"  schedules: {len({(o.initial_annual_issuance, o.step_years, o.step_factor) for o in every})}")
+        out.extend(horizon_lines(every, "horizon"))
+        if not final:
+            out.append(f"  no run is defined through year {horizon}: every range is withheld")
+            out.append("")
+            continue
         lo, hi = _range([o.cumulative_issuance for o in final])
-        out.append(f"  cumulative issuance @100y : {lo:>18,.0f}  ..  {hi:>18,.0f} MBO")
+        out.append(f"  cumulative issuance @{horizon}y : {lo:>18,.0f}  ..  {hi:>18,.0f} MBO")
         lo, hi = _range([o.ending_supply for o in final])
-        out.append(f"  ending supply @100y       : {lo:>18,.0f}  ..  {hi:>18,.0f} MBO")
+        out.append(f"  ending supply @{horizon}y       : {lo:>18,.0f}  ..  {hi:>18,.0f} MBO")
         distinct = len({round(o.cumulative_issuance, 2) for o in final})
         out.append(f"  distinct cumulative totals: {distinct} of {len(final)}")
         y10 = [o for o in rows if o.year == 10]
         lo, hi = _range([o.gross_inflation_rate for o in y10])
         out.append(f"  gross inflation @10y      : {lo:>17.4%}  ..  {hi:>17.4%}")
         lo, hi = _range([o.net_inflation_rate for o in final])
-        out.append(f"  net inflation @100y       : {lo:>17.4%}  ..  {hi:>17.4%}")
+        out.append(f"  net inflation @{horizon}y       : {lo:>17.4%}  ..  {hi:>17.4%}")
         lo, hi = _range([o.security_budget_mbo for o in final])
-        out.append(f"  security budget @100y     : {lo:>18,.0f}  ..  {hi:>18,.0f} MBO")
+        out.append(f"  security budget @{horizon}y     : {lo:>18,.0f}  ..  {hi:>18,.0f} MBO")
         clamped = {
             (o.initial_annual_issuance, o.step_years, o.step_factor)
             for o in rows
@@ -429,7 +522,7 @@ def format_summary(observations: List[Observation]) -> str:
                 f"  cumulative issuance / cap : {min(over):.3f}x .. {max(over):.3f}x "
                 "(above 1.0 means burns reopened headroom)"
             )
-        out.extend(fee_funding_lines(rows, "fee funding infeasible"))
+        out.extend(fee_funding_lines(rows, "fee funding infeasible", horizon))
         out.append("")
 
     stressed = [o for o in observations if o.stress != "none"]
@@ -439,11 +532,13 @@ def format_summary(observations: List[Observation]) -> str:
         out.append(f"  stresses: {', '.join(STRESS_SOURCES)}")
         out.append(f"  observations: {len(stressed)}")
         for matrix in MATRICES:
-            out.extend(
-                fee_funding_lines(
-                    [o for o in stressed if o.matrix == matrix], f"fee funding infeasible, {matrix}"
-                )
-            )
+            every = [o for o in stressed if o.matrix == matrix]
+            out.extend(horizon_lines(every, f"horizon, {matrix}"))
+            rows = comparable(every)
+            if not rows:
+                out.append(f"  {matrix}: no run is defined through year {horizon}, withheld")
+                continue
+            out.extend(fee_funding_lines(rows, f"fee funding infeasible, {matrix}", horizon))
         out.append("")
 
     out.append("Observation only. Interpretation, ranking and policy selection are out of scope.")
@@ -458,22 +553,32 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--output", type=Path, help="write all observations to this CSV")
     parser.add_argument("--summary", action="store_true", help="print the factual summary")
     parser.add_argument("--no-stress", action="store_true", help="skip the stress layer")
+    parser.add_argument(
+        "--horizon", type=int, choices=SUPPORTED_HORIZONS, default=HORIZON_YEARS,
+        help="study horizon in years (default 100, the historical study)",
+    )
     args = parser.parse_args(argv)
 
     try:
         config = model.load_config(args.config)
-        observations = run_core_matrices(config)
+        observations = run_core_matrices(config, args.horizon)
         if not args.no_stress:
-            observations.extend(run_stress_layer(config))
+            observations.extend(run_stress_layer(config, args.horizon))
     except (model.ConfigError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
     if args.summary or not args.output:
-        print(format_summary(observations))
+        print(format_summary(observations, args.horizon))
     if args.output:
         write_csv(observations, args.output)
         print(f"\n{len(observations)} observations written to {args.output}")
+    # Every observation is written, for inspection. Exit 4 says some run went
+    # beyond what its inputs define, as model.py does for a single run.
+    # Infeasible runs keep exiting 0 here: a sweep is expected to contain some,
+    # and they are flagged in the output.
+    if extrapolated_run_count(observations):
+        return model.EXIT_CODES[model.RUN_EXTRAPOLATED]
     return 0
 
 
