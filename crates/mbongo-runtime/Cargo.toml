@@ -14,8 +14,6 @@ description = "WebAssembly smart contract runtime for Mbongo Chain"
 # Internal dependencies
 mbongo-core = { path = "../mbongo-core" }
 
-# WASM runtime
-wasmtime = { workspace = true }
 
 # Serialization
 serde = { workspace = true }

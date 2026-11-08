@@ -144,7 +144,7 @@ fn quoted(line: &str) -> Vec<String> {
         }
     }
     let chars: Vec<char> = line.chars().collect();
-    let boundary = |k: Option<&char>| k.map_or(true, |c| !c.is_alphanumeric());
+    let boundary = |k: Option<&char>| k.is_none_or(|c| !c.is_alphanumeric());
     let mut open: Option<usize> = None;
     for (k, c) in chars.iter().enumerate() {
         if *c != '\'' {

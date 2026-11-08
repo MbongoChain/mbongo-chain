@@ -16,8 +16,11 @@ document disagrees with one of these, this table wins.
 |---|---|---|
 | Project vision and scope | [`VISION_v2.md`](VISION_v2.md) | NORMATIVE (adopted 2026-11-03) |
 | Project vision before 2026-11-03 | [`VISION_v1.md`](VISION_v1.md) | SUPERSEDED (historical record, kept intact) |
+| Whether any MBO monetary policy is decided (cap, emission, burn, fees, security budget), and the gates a decision must pass | [`rfcs/0004-mbo-monetary-decision-framework.md`](rfcs/0004-mbo-monetary-decision-framework.md) §12 and §13 | NON-NORMATIVE RESEARCH (draft). Records that no decision is made |
+| MBO monetary research: the baseline, policy families, the 100-year model and its studies | [`rfcs/0003-mbo-monetary-policy-security-budget.md`](rfcs/0003-mbo-monetary-policy-security-budget.md) | NON-NORMATIVE RESEARCH (draft) |
 | What Mbongo launches first — the MVP: first user, workload, runtime, model, worker, privacy level, provider model, payment, client surface, exit criteria, and the frozen defer list that separates MVP BLOCKING from POST-MVP and PARALLEL RESEARCH | [`product/MVP_v0.1.md`](product/MVP_v0.1.md) | NORMATIVE (FROZEN PRODUCT SCOPE; product decision, non-consensus — every protocol and architecture row above wins on its own subject) |
 | Where the project is going after the MVP: general-purpose compute direction, claims vocabulary (E, T0–T5, B, C, S), architectural boundaries, reference workloads, milestones and implementation gates | [`architecture/GENERAL_PURPOSE_COMPUTE_PROPOSAL.md`](architecture/GENERAL_PURPOSE_COMPUTE_PROPOSAL.md) | APPROVED DIRECTION (plan, non-consensus — not a description of what runs today; every other row wins on its own subject; authorises no implementation) |
+| Which decentralization path the project researches after MVP v0.2: the three stages (single authority, multi-operator BFT research, more open participation), decentralization indicators, gates between stages, and the separation of validators from compute providers | [`architecture/DIRECTION_C_PROGRESSIVE_DECENTRALIZATION.md`](architecture/DIRECTION_C_PROGRESSIVE_DECENTRALIZATION.md) | APPROVED STRATEGIC RESEARCH DIRECTION, NON-NORMATIVE (2026-11-08 — adopts no consensus protocol, validator policy or monetary parameter; RFC 0006, the protocol lock and the MVP v0.2 scope win on their subjects) |
 | What a `ComputeTask` means when it asks for the MVP inference: the `mbongo-infer:v1` `execution_spec` layout, the off-chain job spec and its canonical form and digest, runtime and model artifact identity, the `kaayu-cv-extract:v1` profile (input contract, prompt template, output schema, generation parameters), result canonicalization, the worker validation order and error taxonomy, what the receipt proves | [`product/MVP_INFERENCE_CONTRACT_v1.md`](product/MVP_INFERENCE_CONTRACT_v1.md) | NORMATIVE (APPLICATION CONTRACT, non-consensus — RFC 0005 wins on protocol; implementation in `crates/mbongo-compute/src/inference/`, vectors in `test-vectors/inference/`) |
 | The MVP inference profile `kaayu-cv-extract:v2` (superseded for the MVP by v3, still resolvable and reproducible): why v1 was superseded (output larger than its own token budget), the v2 output bounds and 600-token budget, the maximal-output analysis, the v1/v2 diff, real corpus and latency evidence, and what the profile does not promise (no full CV transcription) | [`product/KAAYU_CV_EXTRACT_PROFILE_v2.md`](product/KAAYU_CV_EXTRACT_PROFILE_v2.md) | NORMATIVE (APPLICATION PROFILE, non-consensus — change control CC-1 of `MVP_v0.1.md`; the inference contract and RFC 0005 win; code in `crates/mbongo-compute/src/profiles/`) |
 | The active MVP inference profile `kaayu-cv-extract:v3`: prompt-injection hardening (change control CC-2) — what changed (the prompt only), the adversarial and corpus evidence, the latency cost, what it does not promise (no immunity, no accuracy) | [`product/KAAYU_CV_EXTRACT_PROFILE_v3.md`](product/KAAYU_CV_EXTRACT_PROFILE_v3.md) | NORMATIVE (APPLICATION PROFILE, non-consensus — change control CC-2 of `MVP_v0.1.md`; the inference contract and RFC 0005 win; code in `crates/mbongo-compute/src/profiles/kaayu_v3.rs`, vector `test-vectors/inference/kaayu-cv-extract-v3.json`) |
@@ -49,11 +52,14 @@ document disagrees with one of these, this table wins.
 | How independently operated clients and providers communicate: TLS termination, trust, executor-to-endpoint mapping, failure handling (P3-C) | [`architecture/P3C_PROVIDER_TRANSPORT_DESIGN.md`](architecture/P3C_PROVIDER_TRANSPORT_DESIGN.md) | NORMATIVE for the reference design (approved; C1 and C2 each need their own authorization) |
 | How a provider puts nginx and the inbound firewall in front of its service on Linux (P3-C2) | [`runbooks/PROVIDER_TLS_REFERENCE_LINUX.md`](runbooks/PROVIDER_TLS_REFERENCE_LINUX.md) | NORMATIVE (operations, non-consensus) |
 | How two providers on separate hosts would be tested, and at what cost (P3-D) | [`architecture/P3D_MULTI_HOST_PLAN.md`](architecture/P3D_MULTI_HOST_PLAN.md) | APPROVED IN PRINCIPLE (environment and cost not approved, nothing provisioned) |
+| How a follower forwards transactions to the producer, mempool bounds, recovery cases, operator status (S3) | [`architecture/S3_TRANSACTION_SERVICE_DESIGN.md`](architecture/S3_TRANSACTION_SERVICE_DESIGN.md) | PROPOSED. PRs 1 and 2a merged, the rest not authorized |
+| How RFC 0006 would be implemented: pull requests, dependencies, protected surfaces, tests (S1) | [`architecture/S1_IMPLEMENTATION_PLAN.md`](architecture/S1_IMPLEMENTATION_PLAN.md) | PROPOSED. Authorizes nothing: RFC 0006 is not accepted |
 | What MVP v0.2 is meant to deliver: a private network with test MBO, wallets and verified compute, its stages and gates | [`product/MVP_v0.2_NETWORK_READINESS.md`](product/MVP_v0.2_NETWORK_READINESS.md) | PROPOSED (overrides no normative document) |
 | Chain identifier, configurable genesis, signed blocks, state commitment, state-transition invariants (protocol v0.5) | [`rfcs/0006-chain-identity-authenticated-blocks.md`](rfcs/0006-chain-identity-authenticated-blocks.md) | DRAFT (not accepted, locks nothing) |
 | What was built and verified from PR #181 to #203, what is experimental, what is deferred | [`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md) | CURRENT (a record, with no authority of its own) |
 | How a confidential input is released to an execution environment: attestation challenge, evidence envelope, verifier boundary, trust and measurement policy, conversion into J evidence, release authorization, conditional fetch capability and content-key release (`confidential-auth-v1`, `attestation-envelope-v1`) | [`architecture/compute-confidential-attestation-key-release.md`](architecture/compute-confidential-attestation-key-release.md) | NORMATIVE (architecture, non-consensus — RFC 0005 wins on protocol; reference path in `crates/mbongo-compute/src/confidential/` is REFERENCE_ATTESTED, test only, not hardware attestation) |
 | The first hardware-backed attestation adapter: AMD SEV-SNP evidence, the pinned AMD root chain, `REPORT_DATA` binding of challenge / session / executor / task / purpose / environment key, platform and TCB policy, normalization into K, the live-guest test and the exact confidentiality claim (`hardware-attestation-v1`, `snp-adapter-v1`) | [`architecture/compute-hardware-attestation-adapter.md`](architecture/compute-hardware-attestation-adapter.md) | NORMATIVE (architecture, non-consensus — RFC 0005 wins on protocol; adapter in `crates/mbongo-compute/src/confidential/snp.rs`; live SEV-SNP end-to-end run **not yet performed** — see §16 and #144) |
+| How Rust dependencies are audited, and which advisories are known | [`development/rust-advisories.md`](development/rust-advisories.md) | CURRENT |
 | Building, signing, anchoring, verifying receipts | [`development/compute-receipts.md`](development/compute-receipts.md) | CURRENT |
 | The reference compute worker, control plane and private data plane: what runs, what is public, what is private, crash and retry | [`development/reference-worker.md`](development/reference-worker.md) | CURRENT (implementation of E and F; not protocol authority) |
 | What every compute implementation must satisfy — the named conformance suite (`compute-conformance-v1`), its cases, how a future worker or data plane runs it | [`development/compute-conformance.md`](development/compute-conformance.md) | CURRENT (tests the architecture contracts; not protocol authority) |
@@ -105,6 +111,20 @@ saying so: [`ts_sdk_overview.md`](ts_sdk_overview.md),
 [`openapi_reference.md`](openapi_reference.md) and
 [`governance_model.md`](governance_model.md). Others may be wrong without
 having been checked yet.
+
+The economic and token documents (section 4 of the catalogue, and
+[`tokenomics.md`](tokenomics.md)) carry a HISTORICAL, NON-NORMATIVE banner since
+2026-11-07. **No MBO supply, emission, block-time, allocation, fee, staking or reward
+figure anywhere in `docs/` is implemented or adopted**, banner or not. Where each
+monetary question stands is RFC 0004 §12.
+
+Fifteen consensus documents carry the same banner since 2026-11-08: the PoX, PoS, PoUW,
+PoC and AIDA specifications, the archived consensus and block-validation documents, the
+validator, guardian and verification guides, the whitepaper, `vision.md` and
+`roadmap.md`. **No consensus mechanism, validator set, staking, slashing, finality rule,
+block-time or epoch figure anywhere in `docs/` is implemented or adopted**, banner or
+not. The runtime has one producer and no consensus protocol; the protocol is defined by
+[`specs/PROTOCOL_LOCK_v0.4.md`](specs/PROTOCOL_LOCK_v0.4.md).
 
 ---
 
@@ -255,6 +275,9 @@ authoritative; the authority map above is the only source of that.
 
 ## 4. Economics & Tokenomics
 
+> Every document in this section is historical and non-normative, and carries a banner
+> saying so. No figure in them is implemented or adopted: see RFC 0004 §12 and §13.
+
 ### 4.1 Token Fundamentals
 ```
 ├── token_intro.md [L1]
@@ -262,7 +285,7 @@ authoritative; the authority map above is the only source of that.
 ├── token_distribution.md [L2]
 │   └── Distribution schedule and allocations
 ├── supply_schedule.md [L2]
-│   └── Emission schedule: 31,536,000 MBO max supply
+│   └── Emission schedule around a 31,536,000 MBO figure (historical, not adopted)
 └── monetary_policy.md [L2]
     └── Inflation, deflation, monetary policy rules
 ```

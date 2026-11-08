@@ -44,7 +44,7 @@ pull request and every push as the job **Mbongo Compute v0.4 Vertical**.
 - Node.js **24** (or ≥ 20.19.0) and npm — for the SDK part of the flow.
 - Docker with Compose v2 — only for the Docker profile.
 - A clean checkout of `dev` at or after the lock commit above.
-- Ports free: harness profile `39944-39946` (RPC), `38080-38082` (REST), `40333-40335` (P2P); Docker profile `127.0.0.1:29944` on the host.
+- Ports free: harness profile `26944-26946` (RPC), `26080-26082` (REST), `26333-26335` (P2P); Docker profile `127.0.0.1:29944` on the host.
 
 **Do not use `@mbongo/sdk` 0.1.0 for this.** It predates ComputeTask support
 and cannot submit a task or decode a task-bearing block. `@mbongo/sdk` 0.2.0
@@ -227,8 +227,8 @@ id, heights, commitments, object ids — never payloads or keys) and the line
   executor key (seed above), running the **REFERENCE / TEST EXECUTION
   PROFILE** `mbongo-ref:reverse-bytes:v1` (reverse the bytes). It takes no
   raw input on any command line: input reaches it only through a
-  data-plane capability. Chain access is rpc_v0.3 (`http://127.0.0.1:39944/rpc`) and
-  the REST nonce read (`http://127.0.0.1:38080`).
+  data-plane capability. Chain access is rpc_v0.3 (`http://127.0.0.1:26944/rpc`) and
+  the REST nonce read (`http://127.0.0.1:26080`).
 - **SDK** — the workspace `@mbongo/sdk` source built into `sdk/typescript/dist`,
   driven by `scripts/compute-vertical.mjs`, which reads its parameters on
   stdin and prints JSON on stdout. It never prints keys or payloads.
@@ -355,7 +355,7 @@ Operational mitigation in this runbook:
 - `cannot run node` — Node.js is not on `PATH`.
 - `port … is already in use` — another devnet or harness is running; the
   operational devnet uses 9944-9946, the devnet harness 19944-19946, Docker
-  29944, this harness 39944-39946.
+  29944, this harness 26944-26946.
 - `did not announce PROTOCOL_LOCK_v0.4` — the binary next to the harness is
   not built from this source; rebuild.
 - Node logs are kept in memory for the log scan and printed only on

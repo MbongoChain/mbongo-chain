@@ -95,6 +95,11 @@ Run:
 
     python3 research/monetary-policy/cap_semantics.py --summary
     python3 research/monetary-policy/cap_semantics.py --output /tmp/cap.csv
+    python3 research/monetary-policy/cap_semantics.py --summary --horizon 150
+
+Exit status: 0, or 4 if any run goes beyond what its inputs define. Every
+observation is still written; extrapolated runs are excluded from every range
+and every divergence count.
 """
 
 from __future__ import annotations
@@ -129,6 +134,7 @@ NO_BURN = "no_burn_control"
 BURN_ENVIRONMENTS: Tuple[str, ...] = (WITH_BURN, NO_BURN)
 
 HORIZON_YEARS = ps.HORIZON_YEARS
+SUPPORTED_HORIZONS = ps.SUPPORTED_HORIZONS
 CHECKPOINTS = (1, 5, 10, 20, 30, 50, 75, 100)
 CONTROLLED_SCENARIO = ps.CONTROLLED_SCENARIO
 HISTORICAL_REFERENCE = ps.HISTORICAL_REFERENCE
@@ -244,6 +250,20 @@ class Observation:
     staked_supply: float
     security_value_at_risk: float
 
+    # Fee funding (see model.FEE_FUNDING_*): the run's first infeasible year,
+    # and the infeasible years up to this checkpoint.
+    fee_funding_first_infeasible_year: str
+    fee_funding_infeasible_years_to_date: int
+    fee_funding_run_status: str
+
+    # Horizon coverage, as in primary_sensitivity.Observation: this year's
+    # status, then the run's first extrapolated year and inputs, empty when
+    # every year is covered, and model.run_validity.
+    horizon_status: str
+    first_extrapolated_year: str
+    extrapolated_inputs: str
+    run_validity: str
+
 
 CSV_COLUMNS = [f.name for f in fields(Observation)]
 
@@ -321,16 +341,21 @@ def observations_for(
     schedule: Tuple[int, int, float],
     scenario: Dict[str, Any],
     rows: List[model.YearRow],
+    checkpoints: Tuple[int, ...] = CHECKPOINTS,
 ) -> List[Observation]:
     initial, step_interval, decay_factor = schedule
     first_clamp, clamped_periods = clamp_profile(scenario, rows)
+    infeasible_years = model.years_with_fee_funding(rows, model.FEE_FUNDING_INFEASIBLE)
+    run_status = model.fee_funding_run_status(rows)
+    validity = model.run_validity(rows)
+    first_extrapolated = validity.first_extrapolated_year
     cumulative_issuance = 0.0
     cumulative_burn = 0.0
     out: List[Observation] = []
     for row in rows:
         cumulative_issuance += row.gross_issuance
         cumulative_burn += row.burned
-        if row.year not in CHECKPOINTS:
+        if row.year not in checkpoints:
             continue
         out.append(
             Observation(
@@ -356,31 +381,51 @@ def observations_for(
                 security_budget_mbo=row.security_budget_mbo,
                 staked_supply=row.staked_supply,
                 security_value_at_risk=row.security_value_at_risk,
+                fee_funding_first_infeasible_year=(
+                    str(infeasible_years[0]) if infeasible_years else ""
+                ),
+                fee_funding_infeasible_years_to_date=sum(
+                    1 for y in infeasible_years if y <= row.year
+                ),
+                fee_funding_run_status=run_status,
+                horizon_status=row.horizon_status,
+                first_extrapolated_year=(
+                    "" if first_extrapolated is None else str(first_extrapolated)
+                ),
+                extrapolated_inputs=";".join(validity.extrapolated_inputs),
+                run_validity=validity.status,
             )
         )
     return out
 
 
+def is_extrapolated_run(o: Observation) -> bool:
+    """True for every observation of a run with an extrapolated year."""
+    return bool(o.first_extrapolated_year)
+
+
 def run_matrix(
-    config: Dict[str, Any], burn_environment: str
+    config: Dict[str, Any], burn_environment: str, horizon: int = HORIZON_YEARS
 ) -> List[Observation]:
     """All three cap families over the shared 80-schedule grid."""
+    checkpoints = ps.checkpoints_for(horizon, CHECKPOINTS)
     base = controlled_scenario(config)
     out: List[Observation] = []
     for semantics in CAP_FAMILIES:
         for schedule in ps.schedule_grid():
             scenario = build_scenario(base, schedule, semantics, burn_environment)
-            rows = model.simulate(scenario, HORIZON_YEARS)
+            rows = model.simulate(scenario, horizon)
             out.extend(
-                observations_for(semantics, burn_environment, schedule, scenario, rows)
+                observations_for(semantics, burn_environment, schedule, scenario, rows,
+                                 checkpoints=checkpoints)
             )
     return out
 
 
-def run_all(config: Dict[str, Any]) -> List[Observation]:
+def run_all(config: Dict[str, Any], horizon: int = HORIZON_YEARS) -> List[Observation]:
     out: List[Observation] = []
     for burn_environment in BURN_ENVIRONMENTS:
-        out.extend(run_matrix(config, burn_environment))
+        out.extend(run_matrix(config, burn_environment, horizon))
     return out
 
 
@@ -396,31 +441,45 @@ DIVERGENCE_FIELDS = (
 
 
 def terminal_index(
-    observations: List[Observation],
+    observations: List[Observation], horizon: int = HORIZON_YEARS
 ) -> Dict[Tuple[str, str, Tuple[int, int, float]], Observation]:
     """Horizon-year observation, keyed by (burn env, cap family, schedule)."""
     return {
         (o.burn_environment, o.cap_semantics, (o.initial_issuance, o.step_interval, o.decay_factor)): o
         for o in observations
-        if o.year == HORIZON_YEARS
+        if o.year == horizon
     }
 
 
 def pair_divergence(
-    observations: List[Observation], burn_environment: str, left: str, right: str
+    observations: List[Observation],
+    burn_environment: str,
+    left: str,
+    right: str,
+    horizon: int = HORIZON_YEARS,
 ) -> Dict[str, Any]:
-    """How far apart two cap families end up, schedule by schedule."""
-    index = terminal_index(observations)
+    """How far apart two cap families end up, schedule by schedule.
+
+    A schedule whose run is extrapolated in either family is not compared:
+    it is counted in `excluded_extrapolated` and in nothing else."""
+    index = terminal_index(observations, horizon)
     identical = 0
     different = 0
+    excluded_extrapolated = 0
     deltas: Dict[str, float] = {f: 0.0 for f in DIVERGENCE_FIELDS}
     clamp_year_deltas = 0
+    different_not_fully_feasible = 0
     for schedule in ps.schedule_grid():
         a = index[(burn_environment, left, schedule)]
         b = index[(burn_environment, right, schedule)]
+        if is_extrapolated_run(a) or is_extrapolated_run(b):
+            excluded_extrapolated += 1
+            continue
         gaps = {f: abs(getattr(a, f) - getattr(b, f)) for f in DIVERGENCE_FIELDS}
         if max(gaps.values()) > EPSILON:
             different += 1
+            if model.FEE_FUNDING_FEASIBLE != a.fee_funding_run_status or model.FEE_FUNDING_FEASIBLE != b.fee_funding_run_status:
+                different_not_fully_feasible += 1
         else:
             identical += 1
         for f, g in gaps.items():
@@ -435,27 +494,31 @@ def pair_divergence(
         "different": different,
         "max_deltas": deltas,
         "differing_clamp_years": clamp_year_deltas,
+        "different_not_fully_feasible": different_not_fully_feasible,
+        "excluded_extrapolated": excluded_extrapolated,
     }
 
 
-def all_divergences(observations: List[Observation]) -> List[Dict[str, Any]]:
+def all_divergences(
+    observations: List[Observation], horizon: int = HORIZON_YEARS
+) -> List[Dict[str, Any]]:
     pairs = ((LIFETIME, OUTSTANDING), (LIFETIME, DUAL), (OUTSTANDING, DUAL))
     return [
-        pair_divergence(observations, env, left, right)
+        pair_divergence(observations, env, left, right, horizon)
         for env in BURN_ENVIRONMENTS
         for left, right in pairs
     ]
 
 
 def historical_reference_rows(
-    config: Dict[str, Any], burn_environment: str = WITH_BURN
+    config: Dict[str, Any], burn_environment: str = WITH_BURN, horizon: int = HORIZON_YEARS
 ) -> Dict[str, List[model.YearRow]]:
-    """Full 101-row trajectory of the documented schedule, per cap family."""
+    """Full trajectory (horizon + 1 rows) of the documented schedule, per cap family."""
     base = controlled_scenario(config)
     return {
         semantics: model.simulate(
             build_scenario(base, HISTORICAL_REFERENCE, semantics, burn_environment),
-            HORIZON_YEARS,
+            horizon,
         )
         for semantics in CAP_FAMILIES
     }
@@ -465,7 +528,7 @@ def first_divergence_year(
     left: List[model.YearRow], right: List[model.YearRow]
 ) -> Optional[int]:
     """Earliest year two trajectories differ in any reported quantity."""
-    names = [f.name for f in fields(model.YearRow) if f.name != "year"]
+    names = [f.name for f in fields(model.YearRow) if f.name != "year" and f.type == "float"]
     for a, b in zip(left, right):
         for name in names:
             if abs(getattr(a, name) - getattr(b, name)) > EPSILON:
@@ -488,16 +551,33 @@ def _span(values: List[float]) -> str:
     return f"{min(values):>18,.2f} .. {max(values):>18,.2f}"
 
 
-def format_summary(observations: List[Observation], config: Dict[str, Any]) -> str:
+def format_summary(
+    observations: List[Observation], config: Dict[str, Any], horizon: int = HORIZON_YEARS
+) -> str:
+    """Ranges and divergences over runs whose inputs are defined through the
+    horizon only. Extrapolated runs are counted and excluded."""
     lines: List[str] = []
     lines.append("MBO CAP SEMANTICS COMPARISON -- RESEARCH, NOT A DECISION")
     lines.append("Three readings of the same documented figure, measured side by side.")
     lines.append("No family here is preferred, endorsed or recommended.")
     lines.append("")
+    grid = len(ps.schedule_grid())
     lines.append(f"cap                     : {CAP:,}")
-    lines.append(f"schedules per family    : {len(ps.schedule_grid())}")
+    lines.append(f"schedules per family    : {grid}")
     lines.append(f"cap families            : {len(CAP_FAMILIES)}")
-    lines.append(f"horizon                 : {HORIZON_YEARS} years")
+    lines.append(f"horizon                 : {horizon} years")
+    terminal = [o for o in observations if o.year == horizon]
+    excluded = [o for o in terminal if is_extrapolated_run(o)]
+    lines.append(
+        f"horizon coverage        : {len(terminal) - len(excluded)} of {len(terminal)} runs "
+        f"defined through year {horizon}; {len(excluded)} extrapolated, excluded"
+    )
+    if excluded:
+        firsts = sorted({int(o.first_extrapolated_year) for o in excluded})
+        seen = {n for o in excluded for n in o.extrapolated_inputs.split(";") if n}
+        inputs = [m for m in model.TRAJECTORY_METRICS if m in seen]
+        lines.append(f"  first extrapolated year     : {firsts[0]} .. {firsts[-1]}")
+        lines.append(f"  inputs continued implicitly : {', '.join(inputs)}")
     lines.append("")
 
     for env in BURN_ENVIRONMENTS:
@@ -508,10 +588,14 @@ def format_summary(observations: List[Observation], config: Dict[str, Any]) -> s
                 for o in observations
                 if o.burn_environment == env
                 and o.cap_semantics == semantics
-                and o.year == HORIZON_YEARS
+                and o.year == horizon
+                and not is_extrapolated_run(o)
             ]
             clamped = [o for o in final if o.clamped_periods > 0]
             lines.append(f"  [{semantics}]")
+            if not final:
+                lines.append(f"    no run is defined through year {horizon}: every range is withheld")
+                continue
             lines.append(
                 f"    cumulative gross issuance : {_span([o.cumulative_gross_issuance for o in final])}"
             )
@@ -537,30 +621,68 @@ def format_summary(observations: List[Observation], config: Dict[str, Any]) -> s
             lines.append(
                 f"    schedules with outstanding supply > cap  : {len(supply_over)}"
             )
+            conditional = [o for o in final
+                           if o.fee_funding_run_status == model.FEE_FUNDING_VELOCITY_DEPENDENT]
+            lines.append(
+                f"    schedules conditional on velocity        : {len(conditional)}"
+            )
+            infeasible = [o for o in final if o.fee_funding_first_infeasible_year]
+            lines.append(
+                f"    schedules with infeasible fee funding    : {len(infeasible)}"
+                + (
+                    f" (first infeasible years "
+                    f"{min(int(o.fee_funding_first_infeasible_year) for o in infeasible)} .. "
+                    f"{max(int(o.fee_funding_first_infeasible_year) for o in infeasible)}; "
+                    "NOT VALID in those years, included in the ranges above)"
+                    if infeasible
+                    else ""
+                )
+            )
         lines.append("")
 
-    lines.append("=== pairwise divergence at year 100 (never ranked) ===")
-    for d in all_divergences(observations):
+    lines.append(f"=== pairwise divergence at year {horizon} (never ranked) ===")
+    for d in all_divergences(observations, horizon):
+        compared = grid - d["excluded_extrapolated"]
         lines.append(
             f"  [{d['burn_environment']}] {d['left']} vs {d['right']}: "
-            f"identical {d['identical']}/80, different {d['different']}/80, "
-            f"differing first-clamp years {d['differing_clamp_years']}/80"
+            f"identical {d['identical']}/{compared}, different {d['different']}/{compared}, "
+            f"differing first-clamp years {d['differing_clamp_years']}/{compared}"
+        )
+        if d["excluded_extrapolated"]:
+            lines.append(
+                f"      not compared, extrapolated : {d['excluded_extrapolated']}/{grid}"
+            )
+        if not compared:
+            continue
+        lines.append(
+            f"      different and involving a run not fully feasible : "
+            f"{d['different_not_fully_feasible']}/{d['different']}"
         )
         for field_name, gap in d["max_deltas"].items():
             lines.append(f"      max delta {field_name:<28}: {gap:>18,.2f}")
     lines.append("")
 
     lines.append("=== documented historical schedule (3,153,600 / 5 / 0.50) ===")
-    traj = historical_reference_rows(config)
+    traj = historical_reference_rows(config, horizon=horizon)
     base_rows = traj[LIFETIME]
-    for semantics in CAP_FAMILIES[1:]:
-        year = first_divergence_year(base_rows, traj[semantics])
-        verdict = "identical over 100 years" if year is None else f"first differs in year {year}"
-        lines.append(f"  {LIFETIME} vs {semantics}: {verdict}")
-    lines.append(
-        f"  cumulative gross issuance : {sum(r.gross_issuance for r in base_rows):,.2f}"
-    )
-    lines.append(f"  outstanding supply        : {base_rows[-1].ending_supply:,.2f}")
+    firsts = [model.first_extrapolated_year(rows) for rows in traj.values()]
+    if any(first is not None for first in firsts):
+        first = min(f for f in firsts if f is not None)
+        lines.append(
+            f"  withheld: inputs extrapolated from year {first}, not a valid comparison"
+        )
+    else:
+        for semantics in CAP_FAMILIES[1:]:
+            year = first_divergence_year(base_rows, traj[semantics])
+            verdict = (
+                f"identical over {horizon} years" if year is None
+                else f"first differs in year {year}"
+            )
+            lines.append(f"  {LIFETIME} vs {semantics}: {verdict}")
+        lines.append(
+            f"  cumulative gross issuance : {sum(r.gross_issuance for r in base_rows):,.2f}"
+        )
+        lines.append(f"  outstanding supply        : {base_rows[-1].ending_supply:,.2f}")
     lines.append("")
     lines.append("Historical documentation asserts both readings and settles neither.")
     lines.append("The runtime implements neither. This study settles neither.")
@@ -571,19 +693,35 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="Compare three candidate MBO cap semantics. Decides nothing."
     )
-    parser.add_argument("--config", default=model.DEFAULT_CONFIG)
+    # type=Path: without it a --config given on the command line reached
+    # load_config as a str and crashed (AttributeError, exit 1).
+    parser.add_argument("--config", type=Path, default=model.DEFAULT_CONFIG)
     parser.add_argument("--output", help="write the full observation CSV here")
     parser.add_argument("--summary", action="store_true", help="print the summary")
+    parser.add_argument(
+        "--horizon", type=int, choices=SUPPORTED_HORIZONS, default=HORIZON_YEARS,
+        help="study horizon in years (default 100, the historical study)",
+    )
     args = parser.parse_args(argv)
 
-    config = model.load_config(args.config)
-    observations = run_all(config)
+    # A rejected configuration exits 2, as in model.py and primary_sensitivity.
+    # Uncaught, it would exit 1, the code for a violated accounting identity.
+    try:
+        config = model.load_config(args.config)
+        observations = run_all(config, args.horizon)
+    except model.ConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
     if args.output:
         write_csv(observations, args.output)
         print(f"CSV written to {args.output}   rows: {len(observations)}")
     if args.summary or not args.output:
-        print(format_summary(observations, config))
+        print(format_summary(observations, config, args.horizon))
+    # As in primary_sensitivity: everything is written, and exit 4 says some
+    # run went beyond what its inputs define.
+    if any(is_extrapolated_run(o) for o in observations):
+        return model.EXIT_CODES[model.RUN_EXTRAPOLATED]
     return 0
 
 

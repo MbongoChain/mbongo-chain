@@ -405,11 +405,10 @@ git commit --amend --no-edit
 
 **Do NOT report security issues in public GitHub issues.**
 
-Report vulnerabilities privately to:
+Report vulnerabilities privately through GitHub private vulnerability reporting, as
+[`SECURITY.md`](../.github/SECURITY.md) describes.
 
-📧 **security@mbongo.money**
-
-We follow responsible disclosure practices and will acknowledge your report within 48 hours.
+We follow coordinated disclosure, and will acknowledge your report within 72 hours.
 
 ---
 

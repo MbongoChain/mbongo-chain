@@ -911,9 +911,8 @@ fn evaluate_requirement(r: &Requirement, input: &Input<'_>) -> Finding {
         // Evidence, where present, must be bound to this session. A
         // session-scoped claim with no evidence passes here and meets the
         // evidence bar, or not, in step 3.
-        let evidence_bound_here = evidence.map_or(true, |e| {
-            !matches!(e.binding, Binding::Provider) && bound_here(e)
-        });
+        let evidence_bound_here =
+            evidence.is_none_or(|e| !matches!(e.binding, Binding::Provider) && bound_here(e));
         let ok = scope == Scope::Session && evidence_bound_here;
         if !ok {
             f.code = Some(Code::EvidenceNotSessionBound);
@@ -929,7 +928,7 @@ fn evaluate_requirement(r: &Requirement, input: &Input<'_>) -> Finding {
         Some(e) => {
             let live = !e.revoked
                 && input.now >= e.issued_at
-                && e.expires_at.map_or(true, |x| input.now <= x);
+                && e.expires_at.is_none_or(|x| input.now <= x);
             if live {
                 (e.level, false)
             } else {

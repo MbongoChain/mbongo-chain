@@ -302,9 +302,8 @@ impl Journal {
             self.poisoned = true;
             return Err(io_error(&e));
         }
-        sync_dir(&self.path).map_err(|e| {
+        sync_dir(&self.path).inspect_err(|_| {
             self.poisoned = true;
-            e
         })?;
         self.file = OpenOptions::new().append(true).open(&self.path).map_err(|e| {
             self.poisoned = true;

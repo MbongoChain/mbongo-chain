@@ -77,4 +77,4 @@ By contributing, you agree your code is released under:
 ## 6. Security
 
 For vulnerabilities, do NOT open a public issue.  
-Use: security@mbongo.money (placeholder)
+Use GitHub private vulnerability reporting, as described in [`SECURITY.md`](SECURITY.md).
