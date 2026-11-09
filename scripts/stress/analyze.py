@@ -80,6 +80,25 @@ def counters(path):
     return last
 
 
+def alloc_stats(path):
+    """Live heap bytes from a diagnostic build's `alloc-stats` lines: the
+    highest seen, and the last (the end of the trial)."""
+    live = re.compile(r"alloc-stats: live_bytes=(\d+) peak_live_bytes=(\d+)")
+    readings = []
+    with open(path, errors="replace") as f:
+        for line in f:
+            m = live.search(line)
+            if m:
+                readings.append((int(m.group(1)), int(m.group(2))))
+    if not readings:
+        return {"live_max_mib": None, "live_last_mib": None, "peak_live_mib": None}
+    return {
+        "live_max_mib": max(r[0] for r in readings) / MIB,
+        "live_last_mib": readings[-1][0] / MIB,
+        "peak_live_mib": readings[-1][1] / MIB,
+    }
+
+
 def summarise(trial_dir):
     trial = json.load(open(os.path.join(trial_dir, "trial.json")))
     samples = load(os.path.join(trial_dir, "samples.jsonl"))
@@ -125,6 +144,8 @@ def summarise(trial_dir):
         "after_anon_mib": (after[-1].get("memory_anon") / MIB) if after and after[-1].get("memory_anon") is not None else None,
         "after_file_mib": (after[-1].get("memory_file") / MIB) if after and after[-1].get("memory_file") is not None else None,
         "victim_env": trial.get("victim_env"),
+        # Diagnostic builds (`alloc-stats`) only; None otherwise.
+        **alloc_stats(os.path.join(trial_dir, "victim.log")),
     }
     out.update(log_rates(os.path.join(trial_dir, "victim.log"), trial))
     json.dump(out, open(os.path.join(trial_dir, "summary.json"), "w"), indent=2)

@@ -22,6 +22,8 @@
 //! mbongo-node --chain mainnet --provider --gpu nvidia-rtx-4090
 //! ```
 
+#[cfg(feature = "alloc-stats")]
+mod alloc_stats;
 mod backend;
 mod mempool;
 mod sync_service;
@@ -155,6 +157,11 @@ const RPC_AUTHORITY: &str = "rpc_v0.3";
 /// is the authority and stamps it itself).
 const STORAGE_SCHEMA: u32 = 3;
 
+/// Diagnostic builds count every heap allocation (S3 A2.2a, `alloc-stats`).
+#[cfg(feature = "alloc-stats")]
+#[global_allocator]
+static ALLOCATOR: alloc_stats::Counting = alloc_stats::Counting;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The same RUST_LOG configuration as `env_logger::init()`, wrapped so that
@@ -163,6 +170,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let logger = env_logger::Builder::from_default_env().build();
     let max = logger.filter();
     mbongo_network::capacity_log::install(logger, max)?;
+
+    // Diagnostic builds only (S3 A2.2a): live heap bytes next to the kernel's
+    // view of this process, every few seconds.
+    #[cfg(feature = "alloc-stats")]
+    tokio::spawn(async {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(5));
+        loop {
+            tick.tick().await;
+            let memory = mbongo_network::proc_memory::ProcessMemory::read().unwrap_or_default();
+            log::info!("alloc-stats: {} {memory}", alloc_stats::snapshot());
+        }
+    });
 
     let args = Args::parse();
 
