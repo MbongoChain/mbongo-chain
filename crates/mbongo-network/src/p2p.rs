@@ -45,8 +45,8 @@ use crate::limits::{
 /// How often the counters are summarised in the log, when they changed.
 const SUMMARY_INTERVAL: Duration = Duration::from_secs(60);
 use crate::p2p_protocol::{
-    BlockNotifyAck, BlockNotifyCodec, SyncCodec, SyncNotification, SyncRequest, SyncResponse,
-    BLOCK_NOTIFY_PROTOCOL, SYNC_PROTOCOL,
+    Announcement, BlockNotifyAck, BlockNotifyCodec, SyncCodec, SyncNotification, SyncRequest,
+    SyncResponse, BLOCK_NOTIFY_PROTOCOL, SYNC_PROTOCOL,
 };
 
 // ── Sync event / command types ─────────────────────────────────────────
@@ -482,6 +482,9 @@ impl P2PNode {
     ///
     /// Iterates over all connected peers and sends a [`SyncNotification::NewBlock`]
     /// to each. Peers that fail to receive are logged and skipped.
+    ///
+    /// The announcement is encoded once and its bytes shared by every peer's
+    /// request (S3 A2.2d-1); each peer holds a pointer, not a copy.
     fn broadcast_block(&mut self, block: &Block) {
         let peers: Vec<PeerId> = self.swarm.connected_peers().copied().collect();
         if peers.is_empty() {
@@ -493,13 +496,12 @@ impl P2PNode {
             block.header.height,
             peers.len()
         );
+        let announcement = Announcement::new_block(block);
         for peer in peers {
-            self.swarm.behaviour_mut().block_notify.send_request(
-                &peer,
-                SyncNotification::NewBlock {
-                    block: block.clone(),
-                },
-            );
+            self.swarm
+                .behaviour_mut()
+                .block_notify
+                .send_request(&peer, announcement.clone());
         }
     }
 
@@ -976,9 +978,17 @@ impl P2PNode {
                         },
                 },
             )) => {
-                let SyncNotification::NewBlock { block } = request;
-                // Acknowledged only once admitted to the bounded queue.
-                self.admit_announcement(peer, block, channel);
+                match request {
+                    // Acknowledged only once admitted to the bounded queue.
+                    Announcement::Decoded(SyncNotification::NewBlock { block }) => {
+                        self.admit_announcement(peer, block, channel);
+                    }
+                    // The codec decodes everything it reads; an encoded form
+                    // only ever leaves this node. Not acknowledged.
+                    Announcement::Encoded(_) => {
+                        debug!("Ignoring an undecoded announcement from {peer}");
+                    }
+                }
             }
             SwarmEvent::Behaviour(BehaviourEvent::BlockNotify(
                 request_response::Event::Message {
