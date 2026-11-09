@@ -99,6 +99,30 @@ def alloc_stats(path):
     }
 
 
+def malloc_diag(trial_dir):
+    """The node's `malloc-diag before/after` lines (one explicit trim) and the
+    cgroup read from outside just before and after; empty when not run."""
+    out = {}
+    pair = re.compile(r"(\w+)=(-?\w+)")
+    with open(os.path.join(trial_dir, "victim.log"), errors="replace") as f:
+        for line in f:
+            for when in ("before", "after"):
+                marker = f"malloc-diag {when}: "
+                if marker in line:
+                    fields = dict(pair.findall(line.split(marker, 1)[1]))
+                    out[f"trim_{when}"] = fields
+    for when in ("before", "after"):
+        path = os.path.join(trial_dir, f"trim_{when}.jsonl")
+        if os.path.exists(path):
+            rows = load(path)
+            if rows:
+                out[f"cgroup_{when}_trim"] = {
+                    k: rows[-1].get(k) for k in ("memory_current", "memory_anon", "memory_file",
+                                                 "vm_rss_kib", "rss_anon_kib")
+                }
+    return out
+
+
 def summarise(trial_dir):
     trial = json.load(open(os.path.join(trial_dir, "trial.json")))
     samples = load(os.path.join(trial_dir, "samples.jsonl"))
@@ -146,6 +170,7 @@ def summarise(trial_dir):
         "victim_env": trial.get("victim_env"),
         # Diagnostic builds (`alloc-stats`) only; None otherwise.
         **alloc_stats(os.path.join(trial_dir, "victim.log")),
+        **malloc_diag(trial_dir),
     }
     out.update(log_rates(os.path.join(trial_dir, "victim.log"), trial))
     json.dump(out, open(os.path.join(trial_dir, "summary.json"), "w"), indent=2)

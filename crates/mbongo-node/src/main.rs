@@ -183,6 +183,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // Diagnostic builds on Linux GNU only (S3 A2.2c attribution): on SIGUSR1,
+    // report memory as Rust, glibc and the kernel see it, trim glibc once, and
+    // report again. Sent once by the test harness, never periodic.
+    #[cfg(all(feature = "alloc-stats", target_os = "linux", target_env = "gnu"))]
+    tokio::spawn(async {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::user_defined1()) {
+            Ok(mut usr1) => {
+                while usr1.recv().await.is_some() {
+                    alloc_stats::glibc::trim_and_report();
+                }
+            }
+            Err(e) => log::warn!("malloc-diag: no SIGUSR1 handler: {e}"),
+        }
+    });
+
     let args = Args::parse();
 
     // Resolve bind addresses up front so an invalid host fails before any

@@ -16,8 +16,14 @@ path = "src/main.rs"
 
 [features]
 # Diagnostics only (S3 A2.2a): wrap the global allocator to count live heap
-# bytes. Off by default; never part of a release or an operated node.
-alloc-stats = []
+# bytes. Off by default; never part of a release or an operated node. On Linux
+# GNU it also reads glibc's allocator state and can trim it on SIGUSR1 (A2.2c
+# attribution), through libc.
+alloc-stats = ["dep:libc"]
+
+[target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
+# Only with alloc-stats: mallinfo2 and malloc_trim for diagnostics.
+libc = { version = "0.2", optional = true }
 
 [dependencies]
 # Internal dependencies
