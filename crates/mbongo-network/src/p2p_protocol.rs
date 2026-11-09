@@ -9,6 +9,9 @@ use futures::prelude::*;
 use libp2p::request_response;
 use mbongo_core::{Block, Hash};
 use parity_scale_codec::{Decode, Encode};
+use std::sync::Arc;
+
+use crate::frame_budget::{Category, FrameBudget, Reservation, SMALL_FRAME};
 
 /// Maximum number of blocks that can be requested in a single `GetBlocks` range.
 pub const MAX_RANGE: u64 = 256;
@@ -86,7 +89,18 @@ pub struct BlockNotifyAck;
 /// Messages are framed as `[u32 LE length][SCALE payload]`.
 /// Maximum frame size is 16 MiB (generous upper bound for 256 full blocks).
 #[derive(Debug, Clone, Default)]
-pub struct SyncCodec;
+pub struct SyncCodec {
+    budget: Arc<FrameBudget>,
+}
+
+impl SyncCodec {
+    /// A codec that reserves inbound frame bytes from `budget`, shared with
+    /// every clone libp2p makes of it (S3 A2.2b-lite).
+    #[must_use]
+    pub fn with_budget(budget: Arc<FrameBudget>) -> Self {
+        Self { budget }
+    }
+}
 
 /// Maximum frame size: 16 MiB.
 const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
@@ -105,7 +119,9 @@ impl request_response::Codec for SyncCodec {
     where
         T: AsyncRead + Unpin + Send,
     {
-        read_length_delimited(io).await?.decode::<SyncRequest>()
+        read_length_delimited(io, &self.budget, Category::Unsolicited)
+            .await?
+            .decode::<SyncRequest>()
     }
 
     async fn read_response<T>(
@@ -116,7 +132,9 @@ impl request_response::Codec for SyncCodec {
     where
         T: AsyncRead + Unpin + Send,
     {
-        read_length_delimited(io).await?.decode::<SyncResponse>()
+        read_length_delimited(io, &self.budget, Category::Solicited)
+            .await?
+            .decode::<SyncResponse>()
     }
 
     async fn write_request<T>(
@@ -150,7 +168,18 @@ impl request_response::Codec for SyncCodec {
 ///
 /// Uses the same framing as [`SyncCodec`]: `[u32 LE length][SCALE payload]`.
 #[derive(Debug, Clone, Default)]
-pub struct BlockNotifyCodec;
+pub struct BlockNotifyCodec {
+    budget: Arc<FrameBudget>,
+}
+
+impl BlockNotifyCodec {
+    /// A codec that reserves inbound frame bytes from `budget`, shared with
+    /// every clone libp2p makes of it (S3 A2.2b-lite).
+    #[must_use]
+    pub fn with_budget(budget: Arc<FrameBudget>) -> Self {
+        Self { budget }
+    }
+}
 
 #[async_trait]
 impl request_response::Codec for BlockNotifyCodec {
@@ -166,7 +195,9 @@ impl request_response::Codec for BlockNotifyCodec {
     where
         T: AsyncRead + Unpin + Send,
     {
-        read_length_delimited(io).await?.decode::<SyncNotification>()
+        read_length_delimited(io, &self.budget, Category::Unsolicited)
+            .await?
+            .decode::<SyncNotification>()
     }
 
     async fn read_response<T>(
@@ -177,7 +208,9 @@ impl request_response::Codec for BlockNotifyCodec {
     where
         T: AsyncRead + Unpin + Send,
     {
-        read_length_delimited(io).await?.decode::<BlockNotifyAck>()
+        read_length_delimited(io, &self.budget, Category::Solicited)
+            .await?
+            .decode::<BlockNotifyAck>()
     }
 
     async fn write_request<T>(
@@ -215,6 +248,8 @@ const READ_CHUNK: usize = 64 * 1024;
 struct Frame {
     chunks: Vec<Vec<u8>>,
     len: usize,
+    /// The bytes this frame holds, given back when the frame is dropped.
+    _reservation: Reservation,
 }
 
 impl Frame {
@@ -278,7 +313,19 @@ impl parity_scale_codec::Input for FrameInput<'_> {
 /// the body is read piece by piece, so a frame holds what has arrived plus one
 /// piece of [`READ_CHUNK`] bytes, never the length a peer merely claims, and
 /// nothing is reallocated as it grows.
-async fn read_length_delimited<T: AsyncRead + Unpin>(io: &mut T) -> std::io::Result<Frame> {
+///
+/// S3 A2.2b-lite: each piece is reserved from `budget` before it is allocated,
+/// in `category`, or in the small pool for a frame of at most [`SMALL_FRAME`]
+/// bytes. When the budget refuses, the read fails with
+/// [`std::io::ErrorKind::OutOfMemory`]: a resource refusal, distinct from the
+/// [`std::io::ErrorKind::InvalidData`] given to an invalid frame. The
+/// reservation is given back when the returned frame is dropped, or on any
+/// error or cancellation.
+async fn read_length_delimited<T: AsyncRead + Unpin>(
+    io: &mut T,
+    budget: &Arc<FrameBudget>,
+    category: Category,
+) -> std::io::Result<Frame> {
     let mut len_buf = [0u8; 4];
     io.read_exact(&mut len_buf).await?;
     let len = u32::from_le_bytes(len_buf) as usize;
@@ -288,10 +335,19 @@ async fn read_length_delimited<T: AsyncRead + Unpin>(io: &mut T) -> std::io::Res
             format!("frame too large: {len} > {MAX_FRAME_SIZE}"),
         ));
     }
+    let category = if len <= SMALL_FRAME {
+        Category::Small
+    } else {
+        category
+    };
+    let mut reservation = budget.reservation(category);
     let mut chunks = Vec::with_capacity(len.div_ceil(READ_CHUNK));
     let mut filled = 0;
     while filled < len {
-        let mut chunk = vec![0u8; (len - filled).min(READ_CHUNK)];
+        let size = (len - filled).min(READ_CHUNK);
+        // Reserved before it is allocated, and only once its turn comes.
+        reservation.grow(size)?;
+        let mut chunk = vec![0u8; size];
         let mut at = 0;
         while at < chunk.len() {
             let n = io.read(&mut chunk[at..]).await?;
@@ -303,7 +359,11 @@ async fn read_length_delimited<T: AsyncRead + Unpin>(io: &mut T) -> std::io::Res
         filled += chunk.len();
         chunks.push(chunk);
     }
-    Ok(Frame { chunks, len })
+    Ok(Frame {
+        chunks,
+        len,
+        _reservation: reservation,
+    })
 }
 
 /// Write a length-delimited frame to an async writer.
@@ -506,6 +566,19 @@ mod tests {
         }
     }
 
+    /// A budget too large to refuse anything, for tests about framing alone.
+    fn roomy() -> Arc<FrameBudget> {
+        Arc::new(FrameBudget::new(
+            usize::MAX / 4,
+            usize::MAX / 4,
+            usize::MAX / 4,
+        ))
+    }
+
+    async fn read_roomy<T: AsyncRead + Unpin>(io: &mut T) -> std::io::Result<Frame> {
+        read_length_delimited(io, &roomy(), Category::Unsolicited).await
+    }
+
     fn frame(len: u32, body_len: usize) -> Vec<u8> {
         let mut bytes = len.to_le_bytes().to_vec();
         bytes.extend((0..body_len).map(|i| u8::try_from(i % 251).unwrap()));
@@ -540,10 +613,8 @@ mod tests {
         let mut compared = 0;
         for case in &cases {
             for step in [1, 3, 4096, READ_CHUNK + 1, usize::MAX] {
-                let new = futures::executor::block_on(read_length_delimited(&mut Trickle {
-                    data: case,
-                    step,
-                }));
+                let new =
+                    futures::executor::block_on(read_roomy(&mut Trickle { data: case, step }));
                 let old =
                     futures::executor::block_on(reference_read(&mut Trickle { data: case, step }));
                 assert_eq!(
@@ -573,7 +644,7 @@ mod tests {
         expected.extend(9u64.to_le_bytes());
         assert_eq!(wire, expected);
 
-        let body = futures::executor::block_on(read_length_delimited(&mut Trickle {
+        let body = futures::executor::block_on(read_roomy(&mut Trickle {
             data: &wire,
             step: 1,
         }))
@@ -592,7 +663,7 @@ mod tests {
     #[test]
     fn a_frame_cut_short_is_unexpected_eof() {
         let cut = frame(1_000_000, 999_999);
-        let Err(err) = futures::executor::block_on(read_length_delimited(&mut Trickle {
+        let Err(err) = futures::executor::block_on(read_roomy(&mut Trickle {
             data: &cut,
             step: usize::MAX,
         })) else {
@@ -646,7 +717,7 @@ mod tests {
                 let body = &payload[..cut];
                 let mut wire = u32::try_from(cut).unwrap().to_le_bytes().to_vec();
                 wire.extend_from_slice(body);
-                let frame = futures::executor::block_on(read_length_delimited(&mut Trickle {
+                let frame = futures::executor::block_on(read_roomy(&mut Trickle {
                     data: &wire,
                     step: 1000,
                 }))
@@ -661,5 +732,203 @@ mod tests {
             }
         }
         assert_eq!(compared, 3 * 4);
+    }
+
+    // ── S3 A2.2b-lite: the inbound frame budget ──────────────────────────
+
+    fn used(budget: &FrameBudget, category: Category) -> usize {
+        budget.reading(category).used
+    }
+
+    fn tight(unsolicited: usize) -> Arc<FrameBudget> {
+        Arc::new(FrameBudget::new(1 << 30, unsolicited, 1 << 20))
+    }
+
+    #[test]
+    fn a_frame_beyond_the_budget_is_refused_as_a_resource_and_gives_everything_back() {
+        let budget = tight(100 * 1024);
+        let wire = frame(200 * 1024, 200 * 1024);
+        let Err(err) = futures::executor::block_on(read_length_delimited(
+            &mut Trickle {
+                data: &wire,
+                step: usize::MAX,
+            },
+            &budget,
+            Category::Unsolicited,
+        )) else {
+            panic!("a frame beyond the budget was accepted");
+        };
+        assert_eq!(err.kind(), std::io::ErrorKind::OutOfMemory);
+        let reading = budget.reading(Category::Unsolicited);
+        assert_eq!((reading.used, reading.refusals), (0, 1));
+        assert!(reading.peak <= 100 * 1024, "never above the budget");
+    }
+
+    #[test]
+    fn a_frame_holds_its_bytes_until_dropped_even_when_it_does_not_decode() {
+        let budget = tight(1 << 20);
+        let wire = frame(5000, 5000);
+        let frame = futures::executor::block_on(read_length_delimited(
+            &mut Trickle {
+                data: &wire,
+                step: 777,
+            },
+            &budget,
+            Category::Unsolicited,
+        ))
+        .unwrap();
+        assert_eq!(used(&budget, Category::Unsolicited), 5000);
+        assert!(frame.decode::<SyncNotification>().is_err(), "not a block");
+        drop(frame);
+        assert_eq!(used(&budget, Category::Unsolicited), 0);
+    }
+
+    #[test]
+    fn a_frame_cut_short_gives_its_bytes_back() {
+        let budget = tight(1 << 20);
+        let wire = frame(300_000, 100_000);
+        let Err(err) = futures::executor::block_on(read_length_delimited(
+            &mut Trickle {
+                data: &wire,
+                step: 4096,
+            },
+            &budget,
+            Category::Unsolicited,
+        )) else {
+            panic!("a cut-short frame was accepted");
+        };
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+        assert_eq!(used(&budget, Category::Unsolicited), 0);
+        assert!(budget.reading(Category::Unsolicited).peak > 0);
+    }
+
+    /// A reader that hands out what it has, then waits forever.
+    struct Stalls<'a> {
+        data: &'a [u8],
+    }
+
+    impl AsyncRead for Stalls<'_> {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            out: &mut [u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            if self.data.is_empty() {
+                return std::task::Poll::Pending;
+            }
+            let n = out.len().min(self.data.len());
+            out[..n].copy_from_slice(&self.data[..n]);
+            self.data = &self.data[n..];
+            std::task::Poll::Ready(Ok(n))
+        }
+    }
+
+    #[test]
+    fn a_cancelled_read_gives_its_bytes_back() {
+        use std::future::Future;
+        let budget = tight(1 << 20);
+        let wire = frame(500_000, 150_000);
+        let mut reader = Stalls { data: &wire };
+        let mut read = Box::pin(read_length_delimited(
+            &mut reader,
+            &budget,
+            Category::Unsolicited,
+        ));
+        let waker = futures::task::noop_waker();
+        let mut cx = std::task::Context::from_waker(&waker);
+        assert!(read.as_mut().poll(&mut cx).is_pending());
+        let held = used(&budget, Category::Unsolicited);
+        assert!(held >= 150_000, "what arrived is reserved: {held}");
+        assert!(
+            held <= 150_000 + READ_CHUNK,
+            "plus one piece at most: {held}"
+        );
+        drop(read);
+        assert_eq!(
+            used(&budget, Category::Unsolicited),
+            0,
+            "a timeout or a closed stream drops the read"
+        );
+    }
+
+    #[test]
+    fn small_frames_use_the_small_pool_and_large_ones_their_category() {
+        let budget = Arc::new(FrameBudget::default());
+        let small = frame(17, 17);
+        let held = futures::executor::block_on(read_length_delimited(
+            &mut Trickle {
+                data: &small,
+                step: usize::MAX,
+            },
+            &budget,
+            Category::Unsolicited,
+        ))
+        .unwrap();
+        assert_eq!(used(&budget, Category::Small), 17);
+        assert_eq!(used(&budget, Category::Unsolicited), 0);
+        drop(held);
+        let large = frame(2000, 2000);
+        let held = futures::executor::block_on(read_length_delimited(
+            &mut Trickle {
+                data: &large,
+                step: usize::MAX,
+            },
+            &budget,
+            Category::Solicited,
+        ))
+        .unwrap();
+        assert_eq!(used(&budget, Category::Solicited), 2000);
+        drop(held);
+        assert_eq!(budget.reading(Category::Small).peak, 17);
+    }
+
+    /// Requests and announcements draw on the unsolicited pool, answers on
+    /// the solicited one, through the codecs libp2p clones.
+    #[test]
+    fn codecs_and_their_clones_share_one_budget_by_direction() {
+        use libp2p::request_response::Codec;
+        let budget = Arc::new(FrameBudget::default());
+        let notify = BlockNotifyCodec::with_budget(Arc::clone(&budget));
+        let sync = SyncCodec::with_budget(Arc::clone(&budget));
+
+        let announcement = SyncNotification::NewBlock {
+            block: block_with_transfers(5, 20),
+        }
+        .encode();
+        assert!(announcement.len() > SMALL_FRAME);
+        let mut wire = Vec::new();
+        futures::executor::block_on(write_length_delimited(&mut wire, &announcement)).unwrap();
+        let mut clone = notify.clone();
+        futures::executor::block_on(clone.read_request(
+            &BLOCK_NOTIFY_PROTOCOL,
+            &mut Trickle {
+                data: &wire,
+                step: usize::MAX,
+            },
+        ))
+        .unwrap();
+        assert_eq!(
+            budget.reading(Category::Unsolicited).peak,
+            announcement.len()
+        );
+        assert_eq!(budget.reading(Category::Solicited).peak, 0);
+
+        let answer =
+            SyncResponse::Blocks(vec![(Hash([3u8; 32]), block_with_transfers(6, 20))]).encode();
+        let mut wire = Vec::new();
+        futures::executor::block_on(write_length_delimited(&mut wire, &answer)).unwrap();
+        let mut clone = sync.clone();
+        futures::executor::block_on(clone.read_response(
+            &SYNC_PROTOCOL,
+            &mut Trickle {
+                data: &wire,
+                step: usize::MAX,
+            },
+        ))
+        .unwrap();
+        assert_eq!(budget.reading(Category::Solicited).peak, answer.len());
+        for category in [Category::Solicited, Category::Unsolicited, Category::Small] {
+            assert_eq!(used(&budget, category), 0, "{category:?} returned");
+        }
     }
 }

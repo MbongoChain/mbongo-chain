@@ -104,7 +104,7 @@ fn a_pending_frame_holds_memory_in_proportion_to_what_arrived() {
         read: 0,
     }));
     let mut wire = Wire(Arc::clone(&feed));
-    let mut codec = BlockNotifyCodec;
+    let mut codec = BlockNotifyCodec::default();
     let waker = futures::task::noop_waker();
     let mut cx = Context::from_waker(&waker);
 

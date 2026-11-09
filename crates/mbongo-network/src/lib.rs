@@ -16,6 +16,8 @@
 pub mod bootnodes;
 /// Counts libp2p's per-stream capacity warning instead of writing it (S3 A2.5).
 pub mod capacity_log;
+/// A global budget for inbound frame bytes (S3 A2.2b-lite).
+pub mod frame_budget;
 /// Admission limits, quotas and counters for inbound P2P work (S3 A1).
 pub mod limits;
 /// A stable P2P identity read from a file.
