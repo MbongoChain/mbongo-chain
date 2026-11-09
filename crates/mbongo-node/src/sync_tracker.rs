@@ -102,9 +102,14 @@ impl SyncTracker {
 
     /// A peer announced a block above the next expected one. It may be ahead,
     /// so it is asked: the announced height itself is not believed.
-    pub fn ask_height(&mut self, peer: PeerId) {
-        if let Some(entry) = self.peers.get_mut(&peer) {
-            entry.wants_height = true;
+    ///
+    /// Returns whether this changed anything: `false` when the peer is unknown
+    /// or a height request to it was already wanted. Only the caller's logging
+    /// depends on it; what is asked is the same either way.
+    pub fn ask_height(&mut self, peer: PeerId) -> bool {
+        match self.peers.get_mut(&peer) {
+            Some(entry) => !std::mem::replace(&mut entry.wants_height, true),
+            None => false,
         }
     }
 
@@ -586,6 +591,24 @@ mod tests {
         tracker.height_answered(peer, u64::MAX);
         assert_eq!(tracker.block_source(0, now), Some((peer, u64::MAX)));
         assert_eq!(tracker.block_source(u64::MAX, now), None);
+    }
+
+    /// `ask_height` says only whether it changed what is wanted; the request
+    /// state is the same as before A2.5 whatever it returns.
+    #[test]
+    fn asking_a_height_already_wanted_changes_nothing_and_says_so() {
+        let now = Instant::now();
+        let peer = PeerId::random();
+        let mut tracker = tracker_with(&[peer]);
+        tracker.height_requested(peer);
+        assert!(
+            tracker.ask_height(peer),
+            "in flight but not wanted: now wanted"
+        );
+        assert!(!tracker.ask_height(peer), "already wanted");
+        assert!(!tracker.ask_height(PeerId::random()), "unknown peer");
+        tracker.height_answered(peer, 4);
+        assert_eq!(tracker.heights_due(now), vec![peer], "still asked again");
     }
 
     /// Connected peers whose height request was sent and answered.
