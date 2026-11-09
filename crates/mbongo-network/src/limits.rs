@@ -423,6 +423,12 @@ counters! {
     broadcasts_dropped,
     /// Inbound connections refused by a connection limit.
     connections_denied,
+    /// Of those, refused before the handshake because their source exceeded
+    /// its connection-attempt rate (S3 A2.3-a).
+    inbound_rate_refused_source,
+    /// Of those, refused before the handshake because all sources together
+    /// exceeded the global connection-attempt rate (S3 A2.3-a).
+    inbound_rate_refused_global,
     /// mDNS discoveries not dialed: the outbound budget was spent.
     mdns_dials_skipped,
 }

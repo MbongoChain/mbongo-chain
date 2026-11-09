@@ -41,6 +41,7 @@ use crate::limits::{
     MAX_PENDING_INCOMING, MAX_PENDING_OUTGOING, MDNS_DIAL_BUDGET, NOTIFY_STREAMS_PER_CONNECTION,
     SYNC_QUEUE_CAPACITY, SYNC_QUOTA_PER_PEER, SYNC_STREAMS_PER_CONNECTION,
 };
+use crate::rate_limit::{InboundRateLimit, RateRefusal};
 
 /// How often the counters are summarised in the log, when they changed.
 const SUMMARY_INTERVAL: Duration = Duration::from_secs(60);
@@ -170,6 +171,9 @@ const AGENT_VERSION: &str = "mbongo-node/0.1.0";
 /// Composite libp2p behaviour for the Mbongo devnet.
 #[derive(NetworkBehaviour)]
 struct Behaviour {
+    /// Inbound connection attempts per source and in all, decided before the
+    /// handshake (S3 A2.3-a). First, so every attempt is charged.
+    rate_limit: InboundRateLimit,
     /// Connection counts: pending, established, per direction and per peer.
     limits: connection_limits::Behaviour,
     /// Inbound connections per IP address.
@@ -378,6 +382,7 @@ impl P2PNode {
                 );
 
                 Ok(Behaviour {
+                    rate_limit: InboundRateLimit::default(),
                     limits,
                     ip_limits: IpLimits::default(),
                     ping,
@@ -679,12 +684,13 @@ impl P2PNode {
         format!(
             "{memory} sync_queue={sync_held} sync_queue_peak={sync_peak} \
              block_queue={blocks_held} block_queue_peak={blocks_peak} \
-             connections_in={} connections_out={} pending_in={} pending_out={} {}",
+             connections_in={} connections_out={} pending_in={} pending_out={} {} {}",
             c.num_established_incoming(),
             c.num_established_outgoing(),
             c.num_pending_incoming(),
             c.num_pending_outgoing(),
-            self.frame_budget
+            self.frame_budget,
+            self.swarm.behaviour().rate_limit.stats()
         )
     }
 
@@ -875,8 +881,17 @@ impl P2PNode {
                 error,
                 ..
             } => {
-                if matches!(error, ListenError::Denied { .. }) {
+                if let ListenError::Denied { cause } = &error {
                     P2PCounters::add(&self.counters.connections_denied);
+                    match cause.downcast_ref::<RateRefusal>() {
+                        Some(RateRefusal::Source) => {
+                            P2PCounters::add(&self.counters.inbound_rate_refused_source);
+                        }
+                        Some(RateRefusal::Global) => {
+                            P2PCounters::add(&self.counters.inbound_rate_refused_global);
+                        }
+                        None => {}
+                    }
                 }
                 debug!("Incoming connection from {send_back_addr} failed: {error}");
             }
