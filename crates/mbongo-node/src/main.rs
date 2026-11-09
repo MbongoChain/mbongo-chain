@@ -157,7 +157,12 @@ const STORAGE_SCHEMA: u32 = 3;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::init();
+    // The same RUST_LOG configuration as `env_logger::init()`, wrapped so that
+    // libp2p's per-stream capacity warning is counted instead of written once
+    // per refused stream (S3 A2.5). Every other record is unchanged.
+    let logger = env_logger::Builder::from_default_env().build();
+    let max = logger.filter();
+    mbongo_network::capacity_log::install(logger, max)?;
 
     let args = Args::parse();
 
@@ -405,11 +410,20 @@ async fn run_sync_orchestrator<S: mbongo_storage::Storage + Send + Sync + 'stati
                 } else if incoming_height > local_height {
                     // Gap: the peer may be ahead, so ask it. The announced
                     // height itself proves nothing.
-                    log::info!(
-                        "Gap detected: local={local_height}, incoming={incoming_height}; \
-                         asking {peer_id}"
-                    );
-                    tracker.ask_height(peer_id);
+                    // Logged at INFO only when it changes what is wanted of the
+                    // peer; further gaps while a request is already wanted add
+                    // nothing (S3 A2.5). Sync failures keep their own WARN lines.
+                    if tracker.ask_height(peer_id) {
+                        log::info!(
+                            "Gap detected: local={local_height}, incoming={incoming_height}; \
+                             asking {peer_id}"
+                        );
+                    } else {
+                        log::debug!(
+                            "Gap detected: local={local_height}, incoming={incoming_height}; \
+                             {peer_id} already being asked"
+                        );
+                    }
                 }
                 // else: incoming_height <= local_height → already have it, ignore.
             }

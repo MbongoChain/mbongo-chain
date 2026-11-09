@@ -270,6 +270,8 @@ pub struct P2PNode {
     counters: Arc<P2PCounters>,
     /// The counters as last logged.
     last_summary: P2PCountersSnapshot,
+    /// The capacity-warning count as last logged.
+    last_dropped: Option<u64>,
     /// Events pushed to the sync orchestrator (peer connected, sync responses).
     sync_event_tx: mpsc::UnboundedSender<SyncEvent>,
     /// Receive-half for sync events; taken via [`P2PNode::take_sync_event_rx`].
@@ -404,6 +406,7 @@ impl P2PNode {
             broadcast_tx,
             counters: Arc::new(P2PCounters::default()),
             last_summary: P2PCountersSnapshot::default(),
+            last_dropped: None,
             sync_event_tx,
             sync_event_rx: Some(sync_event_rx),
             sync_cmd_rx,
@@ -636,9 +639,18 @@ impl P2PNode {
     /// Logs the counters in one line, if they changed since the last line.
     fn log_summary(&mut self) {
         let now = self.counters.snapshot();
-        if now != self.last_summary {
-            info!("P2P counters since start: {now}");
+        // Process-wide, and present only when the capacity logger is installed.
+        let dropped = crate::capacity_log::dropped_at_capacity();
+        if now != self.last_summary || dropped != self.last_dropped {
+            match dropped {
+                Some(n) if n > 0 => info!(
+                    "P2P counters since start: {now} \
+                     inbound_streams_dropped_at_capacity_warnings={n}"
+                ),
+                _ => info!("P2P counters since start: {now}"),
+            }
             self.last_summary = now;
+            self.last_dropped = dropped;
         }
     }
 

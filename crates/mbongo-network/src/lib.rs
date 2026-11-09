@@ -14,6 +14,8 @@
 
 /// Keeping configured bootnodes connected.
 pub mod bootnodes;
+/// Counts libp2p's per-stream capacity warning instead of writing it (S3 A2.5).
+pub mod capacity_log;
 /// Admission limits, quotas and counters for inbound P2P work (S3 A1).
 pub mod limits;
 /// A stable P2P identity read from a file.
