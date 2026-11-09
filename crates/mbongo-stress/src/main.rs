@@ -161,7 +161,10 @@ struct Flood {
 #[derive(Default)]
 struct Stats {
     sent: AtomicU64,
+    /// Answers that carried bytes: an acknowledgement or a reply.
     answered: AtomicU64,
+    /// Streams the node closed without a byte of reply: a refusal.
+    closed_unanswered: AtomicU64,
     failed: AtomicU64,
     connections: AtomicU64,
     closed: AtomicU64,
@@ -178,6 +181,7 @@ impl Stats {
             "scenario": format!("{scenario:?}"),
             "sent": r(&self.sent),
             "answered": r(&self.answered),
+            "closed_unanswered": r(&self.closed_unanswered),
             "failed": r(&self.failed),
             "connections": r(&self.connections),
             "closed": r(&self.closed),
@@ -406,7 +410,13 @@ async fn run_identity(
                         ..
                     } => {
                         in_flight = in_flight.saturating_sub(1);
-                        add(&stats.answered, 1);
+                        // A refused request is closed with nothing written: no
+                        // acknowledgement. Only an answer with bytes counts as one.
+                        if response == 0 {
+                            add(&stats.closed_unanswered, 1);
+                        } else {
+                            add(&stats.answered, 1);
+                        }
                         add(&stats.bytes_in, response);
                     }
                     request_response::Event::OutboundFailure { .. } => {

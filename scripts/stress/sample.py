@@ -98,6 +98,9 @@ def main():
                 "threads": as_int(status.get("Threads")),
                 "tcp_established": tcp_established(args.pid, args.port) if status else None,
             }
+            stat = pairs(f"{cg}/memory.stat")
+            sample["memory_anon"] = as_int(stat.get("anon"))
+            sample["memory_file"] = as_int(stat.get("file"))
             for name, url in rpcs.items():
                 sample[f"height_{name}"] = height(url)
             out.write(json.dumps(sample) + "\n")
