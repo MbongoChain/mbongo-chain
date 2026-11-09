@@ -2733,6 +2733,7 @@ dependencies = [
  "ed25519-dalek",
  "env_logger",
  "hex",
+ "libc",
  "libp2p",
  "log",
  "mbongo-api",

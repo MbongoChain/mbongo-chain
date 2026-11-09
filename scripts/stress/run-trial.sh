@@ -87,6 +87,21 @@ docker wait a2-attacker >/dev/null
 date -u +%s > "$OUT/attack_end"
 docker wait a2-sampler >/dev/null
 
+# DIAG_TRIM=1 (alloc-stats builds only): after recovery, one explicit SIGUSR1
+# makes the node log its memory, trim glibc once and log it again. The cgroup
+# is read just before and just after, from outside, as during the trial.
+if [ "${DIAG_TRIM:-}" = 1 ]; then
+  one_reading() { # out-file
+    docker run --rm --network $NET --pid=host -v /sys/fs/cgroup:/hostcg:ro -v "$HERE:/s:ro" \
+      -v "$OUT_W:/out" "$IMAGE" python3 /s/sample.py --cgroup "$CG" --pid "$PID" \
+      --out "/out/$1" --seconds 0.5 --interval 1 >/dev/null
+  }
+  one_reading trim_before.jsonl
+  docker kill --signal=SIGUSR1 a2-victim >/dev/null
+  sleep 5
+  one_reading trim_after.jsonl
+fi
+
 docker logs a2-attacker > "$OUT/attacker.jsonl" 2> "$OUT/attacker.err" || true
 docker logs -t a2-victim > "$OUT/victim.log" 2>&1 || true
 docker inspect -f '{{json .State}}' a2-victim > "$OUT/victim_state.json"
