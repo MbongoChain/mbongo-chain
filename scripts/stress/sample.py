@@ -95,6 +95,8 @@ def main():
                 "vm_rss_kib": as_int(status.get("VmRSS")),
                 "vm_hwm_kib": as_int(status.get("VmHWM")),
                 "vm_size_kib": as_int(status.get("VmSize")),
+                "rss_anon_kib": as_int(status.get("RssAnon")),
+                "rss_file_kib": as_int(status.get("RssFile")),
                 "threads": as_int(status.get("Threads")),
                 "tcp_established": tcp_established(args.pid, args.port) if status else None,
             }

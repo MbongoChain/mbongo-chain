@@ -649,9 +649,30 @@ impl P2PNode {
                 ),
                 _ => info!("P2P counters since start: {now}"),
             }
+            info!("P2P resources: {}", self.resources());
             self.last_summary = now;
             self.last_dropped = dropped;
         }
+    }
+
+    /// Process memory, bounded-queue occupancy and connection counts, read
+    /// from supported APIs only (S3 A2.2a). Streams per connection are not
+    /// exposed by libp2p 0.53 and are not reported.
+    fn resources(&self) -> String {
+        let memory = crate::proc_memory::ProcessMemory::read().unwrap_or_default();
+        let (sync_held, sync_peak) = self.sync_admission.occupancy();
+        let (blocks_held, blocks_peak) = self.block_admission.occupancy();
+        let info = self.swarm.network_info();
+        let c = info.connection_counters();
+        format!(
+            "{memory} sync_queue={sync_held} sync_queue_peak={sync_peak} \
+             block_queue={blocks_held} block_queue_peak={blocks_peak} \
+             connections_in={} connections_out={} pending_in={} pending_out={}",
+            c.num_established_incoming(),
+            c.num_established_outgoing(),
+            c.num_pending_incoming(),
+            c.num_pending_outgoing()
+        )
     }
 
     /// Admits an inbound sync request into the bounded queue, or refuses it.

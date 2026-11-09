@@ -39,7 +39,7 @@ anyhow = { workspace = true }
 async-trait = "0.1"
 
 # Logging
-log = { workspace = true }
+log = { workspace = true, features = ["std"] }  # set_boxed_logger (capacity_log) needs std
 
 [dev-dependencies]
 env_logger = { workspace = true }

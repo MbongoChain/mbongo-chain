@@ -24,6 +24,8 @@ pub mod node_key;
 pub mod p2p;
 /// Block sync protocol messages and SCALE codec.
 pub mod p2p_protocol;
+/// This process's memory as the kernel accounts it, for diagnostics (S3 A2.2a).
+pub mod proc_memory;
 /// JSON-RPC 2.0 request/response types and backend trait.
 pub mod rpc;
 /// HTTP server wiring (Axum router + serve).

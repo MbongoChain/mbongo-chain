@@ -103,6 +103,8 @@ pub enum Refusal {
 struct AdmissionState {
     per_peer: HashMap<PeerId, usize>,
     total: usize,
+    /// The most messages ever held at once; for diagnostics only (A2.2a).
+    peak: usize,
 }
 
 /// Counts admitted messages, per peer and in all, against two limits. Each
@@ -121,6 +123,7 @@ impl Admission {
             state: Arc::new(Mutex::new(AdmissionState {
                 per_peer: HashMap::new(),
                 total: 0,
+                peak: 0,
             })),
             per_peer_limit,
             total_limit,
@@ -141,10 +144,17 @@ impl Admission {
         }
         state.per_peer.insert(peer, held + 1);
         state.total += 1;
+        state.peak = state.peak.max(state.total);
         Ok(Permit {
             peer,
             state: Arc::clone(&self.state),
         })
+    }
+
+    /// Messages held now, and the most ever held at once. Read-only.
+    pub(crate) fn occupancy(&self) -> (usize, usize) {
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        (state.total, state.peak)
     }
 
     /// Messages admitted and not yet released: in all, and for `peer`.
@@ -426,6 +436,29 @@ impl P2PCounters {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn occupancy_reports_the_current_and_the_highest_count() {
+        let admission = Admission::new(4, 8);
+        let peer = PeerId::random();
+        assert_eq!(admission.occupancy(), (0, 0));
+        let a = admission.try_admit(peer).unwrap();
+        let b = admission.try_admit(peer).unwrap();
+        let c = admission.try_admit(PeerId::random()).unwrap();
+        assert_eq!(admission.occupancy(), (3, 3));
+        drop((a, b));
+        assert_eq!(admission.occupancy(), (1, 3), "the peak stays");
+        let d = admission.try_admit(peer).unwrap();
+        assert_eq!(admission.occupancy(), (2, 3));
+        drop((c, d));
+        assert_eq!(admission.occupancy(), (0, 3));
+        // A refusal changes neither.
+        let full = Admission::new(1, 1);
+        let held = full.try_admit(peer).unwrap();
+        assert!(full.try_admit(peer).is_err());
+        assert_eq!(full.occupancy(), (1, 1));
+        drop(held);
+    }
 
     #[test]
     fn a_peer_cannot_take_more_than_its_quota() {

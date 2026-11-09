@@ -29,7 +29,8 @@ build() { # name rev cargo-args out-binary
 
 : > "$WORK/bin/BUILD.txt"
 for pair in "$@"; do
-  build "${pair%%=*}" "${pair#*=}" "-p mbongo-node --bin mbongo-node" mbongo-node
+  # NODE_FEATURES (optional), e.g. alloc-stats for a diagnostic build.
+  build "${pair%%=*}" "${pair#*=}" "-p mbongo-node --bin mbongo-node${NODE_FEATURES:+ --features $NODE_FEATURES}" mbongo-node
 done
 build stress "$STRESS_REV" "-p mbongo-stress --bin p2p_stress" p2p_stress
 echo "image $IMAGE" >> "$WORK/bin/BUILD.txt"
