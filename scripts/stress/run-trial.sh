@@ -57,8 +57,11 @@ rpc_height() { # ip
 node a2-producer $SUBNET.10 -- --producer --block-time "$BLOCK_TIME"
 # VICTIM_ENV (optional, NAME=value) is set for the victim only, for diagnostic
 # trials, and recorded in trial.json.
+# VICTIM_DOCKER_ARGS (optional) adds docker options for the victim only, e.g.
+# --cap-add PERFMON for a profiling trial. Recorded in trial.json.
+# shellcheck disable=SC2086
 node a2-victim $SUBNET.20 --memory "$MEM" --memory-swap "$MEM" --cpus "$CPUS" \
-  ${VICTIM_ENV:+-e "$VICTIM_ENV"} -- \
+  ${VICTIM_ENV:+-e "$VICTIM_ENV"} ${VICTIM_DOCKER_ARGS:-} -- \
   --bootnodes /ip4/$SUBNET.10/tcp/30333
 
 # The victim is synced before anything is measured.
@@ -90,11 +93,23 @@ for i in $(seq 1 "$ATTACKERS"); do
   docker run -d --name "$(attacker_name "$i")" --network $NET --ip "$SUBNET.$((29 + i))" \
     -v "$STRESS_BIN:/opt/s:ro" "$IMAGE" \
     /opt/s/p2p_stress --target /ip4/$SUBNET.20/tcp/30333 --scenario "$SCENARIO" \
-    --identities "$IDENTITIES" --concurrency "$CONCURRENCY" --duration-secs "$ATTACK" >/dev/null
+    --identities "$IDENTITIES" --concurrency "$CONCURRENCY" --duration-secs "$ATTACK" \
+    --attempts-per-second "${RATE:-10}" >/dev/null
 done
+# PERF_SECONDS (optional; needs perf in IMAGE and VICTIM_DOCKER_ARGS granting
+# CAP_PERFMON): sample the node process for that long, starting 5 s into the
+# traffic, and keep a flat per-symbol report.
+if [ -n "${PERF_SECONDS:-}" ]; then
+  (sleep 5
+   docker exec a2-victim perf record -q -F 499 -p 1 -o /tmp/perf.data -- sleep "$PERF_SECONDS" >/dev/null 2>&1
+   docker exec a2-victim sh -c 'perf report -i /tmp/perf.data --stdio --no-children --sort dso,symbol 2>/dev/null' \
+     > "$OUT/perf.txt") &
+  PERF_JOB=$!
+fi
 sleep $((ATTACK / 2))
 node a2-late $SUBNET.40 -- --bootnodes /ip4/$SUBNET.20/tcp/30333
 for i in $(seq 1 "$ATTACKERS"); do docker wait "$(attacker_name "$i")" >/dev/null; done
+[ -n "${PERF_JOB:-}" ] && wait "$PERF_JOB"
 date -u +%s > "$OUT/attack_end"
 docker wait a2-sampler >/dev/null
 
@@ -121,6 +136,7 @@ docker logs -t a2-victim > "$OUT/victim.log" 2>&1 || true
 docker inspect -f '{{json .State}}' a2-victim > "$OUT/victim_state.json"
 docker logs -t a2-late > "$OUT/late.log" 2>&1 || true
 docker logs a2-sampler > "$OUT/sampler.log" 2>&1 || true
-printf '{"scenario":"%s","warm":%s,"attack":%s,"recover":%s,"mem":"%s","cpus":%s,"block_time":%s,"identities":%s,"concurrency":%s,"image":"%s","victim_env":"%s","attackers":%s}\n' \
-  "$SCENARIO" "$WARM" "$ATTACK" "$RECOVER" "$MEM" "$CPUS" "$BLOCK_TIME" "$IDENTITIES" "$CONCURRENCY" "$IMAGE" "${VICTIM_ENV:-}" "$ATTACKERS" > "$OUT/trial.json"
+printf '{"scenario":"%s","warm":%s,"attack":%s,"recover":%s,"mem":"%s","cpus":%s,"block_time":%s,"identities":%s,"concurrency":%s,"image":"%s","victim_env":"%s","attackers":%s,"rate":"%s","victim_docker_args":"%s","perf_seconds":"%s"}\n' \
+  "$SCENARIO" "$WARM" "$ATTACK" "$RECOVER" "$MEM" "$CPUS" "$BLOCK_TIME" "$IDENTITIES" "$CONCURRENCY" "$IMAGE" "${VICTIM_ENV:-}" "$ATTACKERS" \
+  "${RATE:-}" "${VICTIM_DOCKER_ARGS:-}" "${PERF_SECONDS:-}" > "$OUT/trial.json"
 echo "trial done: $SCENARIO -> $OUT"
