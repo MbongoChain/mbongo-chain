@@ -82,6 +82,45 @@ pub enum SyncNotification {
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct BlockNotifyAck;
 
+/// A block announcement as [`BlockNotifyCodec`] carries it (S3 A2.2d-1).
+///
+/// Read from a peer, it is [`Announcement::Decoded`]. Broadcast by this node,
+/// it is [`Announcement::Encoded`]: the SCALE bytes of the
+/// [`SyncNotification`], encoded once and shared by every peer's request
+/// through an [`Arc`], instead of one clone of the block per peer and one
+/// encoding per write. libp2p moves a request from `send_request` to
+/// `write_request` without cloning it. Both forms put the same bytes on the
+/// wire.
+#[derive(Debug, Clone)]
+pub enum Announcement {
+    /// Decoded, as read from a peer.
+    Decoded(SyncNotification),
+    /// The SCALE encoding of a [`SyncNotification`], shared.
+    Encoded(Arc<Vec<u8>>),
+}
+
+impl Announcement {
+    /// Encodes `block` once as a [`SyncNotification::NewBlock`], without
+    /// cloning it: the variant's index byte, then the block.
+    #[must_use]
+    pub fn new_block(block: &Block) -> Self {
+        // `SyncNotification::NewBlock` is variant 0 of a derived SCALE enum;
+        // a test checks these bytes against the derived encoding.
+        // `encoded_size` is exact and allocates nothing; `size_hint` may
+        // overestimate, which would over-allocate the shared buffer.
+        let mut bytes = Vec::with_capacity(1 + block.encoded_size());
+        bytes.push(0);
+        block.encode_to(&mut bytes);
+        Self::Encoded(Arc::new(bytes))
+    }
+}
+
+impl From<SyncNotification> for Announcement {
+    fn from(notification: SyncNotification) -> Self {
+        Self::Decoded(notification)
+    }
+}
+
 // ── Codec ──────────────────────────────────────────────────────────────
 
 /// Length-delimited SCALE codec for libp2p request/response.
@@ -159,7 +198,10 @@ impl request_response::Codec for SyncCodec {
     where
         T: AsyncWrite + Unpin + Send,
     {
-        let encoded = resp.encode();
+        let encoded = encode_exact(&resp);
+        // The decoded answer is no longer needed: free it before the write,
+        // which may take up to the request timeout (S3 A2.2d-1).
+        drop(resp);
         write_length_delimited(io, &encoded).await
     }
 }
@@ -184,7 +226,7 @@ impl BlockNotifyCodec {
 #[async_trait]
 impl request_response::Codec for BlockNotifyCodec {
     type Protocol = &'static str;
-    type Request = SyncNotification;
+    type Request = Announcement;
     type Response = BlockNotifyAck;
 
     async fn read_request<T>(
@@ -198,6 +240,7 @@ impl request_response::Codec for BlockNotifyCodec {
         read_length_delimited(io, &self.budget, Category::Unsolicited)
             .await?
             .decode::<SyncNotification>()
+            .map(Announcement::Decoded)
     }
 
     async fn read_response<T>(
@@ -222,8 +265,15 @@ impl request_response::Codec for BlockNotifyCodec {
     where
         T: AsyncWrite + Unpin + Send,
     {
-        let encoded = req.encode();
-        write_length_delimited(io, &encoded).await
+        match req {
+            // Shared bytes, encoded once for every peer: written as they are.
+            Announcement::Encoded(bytes) => write_length_delimited(io, &bytes).await,
+            Announcement::Decoded(notification) => {
+                let encoded = encode_exact(&notification);
+                drop(notification);
+                write_length_delimited(io, &encoded).await
+            }
+        }
     }
 
     async fn write_response<T>(
@@ -364,6 +414,15 @@ async fn read_length_delimited<T: AsyncRead + Unpin>(
         len,
         _reservation: reservation,
     })
+}
+
+/// SCALE-encodes `value` into a buffer of exactly its size. `encode()` sizes
+/// its buffer from `size_hint`, which can overestimate; this buffer is held
+/// for a whole write (S3 A2.2d-1). The bytes are the same.
+fn encode_exact<E: Encode>(value: &E) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(value.encoded_size());
+    value.encode_to(&mut bytes);
+    bytes
 }
 
 /// Write a length-delimited frame to an async writer.
@@ -930,5 +989,150 @@ mod tests {
         for category in [Category::Solicited, Category::Unsolicited, Category::Small] {
             assert_eq!(used(&budget, category), 0, "{category:?} returned");
         }
+    }
+
+    // ── S3 A2.2d-1: shared broadcast bytes, earlier release ─────────────
+
+    fn write_announcement(announcement: Announcement) -> Vec<u8> {
+        use libp2p::request_response::Codec;
+        let mut wire = Vec::new();
+        futures::executor::block_on(BlockNotifyCodec::default().write_request(
+            &BLOCK_NOTIFY_PROTOCOL,
+            &mut wire,
+            announcement,
+        ))
+        .unwrap();
+        wire
+    }
+
+    /// The encoded-once announcement is byte for byte the derived SCALE
+    /// encoding of `SyncNotification::NewBlock`, for empty and full blocks.
+    #[test]
+    fn a_shared_announcement_is_the_derived_encoding_byte_for_byte() {
+        let mut compared = 0;
+        for block in [block_with_transfers(0, 0), block_with_transfers(9, 300)] {
+            let derived = SyncNotification::NewBlock {
+                block: block.clone(),
+            }
+            .encode();
+            let Announcement::Encoded(shared) = Announcement::new_block(&block) else {
+                panic!("new_block encodes");
+            };
+            assert_eq!(shared.as_slice(), derived.as_slice());
+            compared += 1;
+        }
+        assert_eq!(compared, 2);
+    }
+
+    /// Both forms write the same frame, which reads back to the same block.
+    #[test]
+    fn both_forms_write_the_same_frame() {
+        use libp2p::request_response::Codec;
+        let block = block_with_transfers(4, 50);
+        let shared = write_announcement(Announcement::new_block(&block));
+        let decoded = write_announcement(
+            SyncNotification::NewBlock {
+                block: block.clone(),
+            }
+            .into(),
+        );
+        assert_eq!(shared, decoded);
+        let read = futures::executor::block_on(BlockNotifyCodec::default().read_request(
+            &BLOCK_NOTIFY_PROTOCOL,
+            &mut Trickle {
+                data: &shared,
+                step: 1000,
+            },
+        ))
+        .unwrap();
+        let Announcement::Decoded(SyncNotification::NewBlock { block: back }) = read else {
+            panic!("the codec reads decoded announcements");
+        };
+        assert_eq!(back.encode(), block.encode());
+    }
+
+    /// Concurrent writes of one shared announcement all produce the same
+    /// frame, and the bytes are freed once every request is done.
+    #[test]
+    fn concurrent_broadcast_writes_share_one_buffer_and_release_it() {
+        let block = block_with_transfers(2, 100);
+        let announcement = Announcement::new_block(&block);
+        let Announcement::Encoded(bytes) = &announcement else {
+            panic!("encoded");
+        };
+        let weak = Arc::downgrade(bytes);
+        let expected = write_announcement(announcement.clone());
+        let outputs: Vec<Vec<u8>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| {
+                    let copy = announcement.clone();
+                    scope.spawn(move || write_announcement(copy))
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        assert_eq!(outputs.len(), 8);
+        assert!(outputs.iter().all(|o| *o == expected));
+        drop(announcement);
+        assert!(
+            weak.upgrade().is_none(),
+            "no request holds the bytes any longer"
+        );
+    }
+
+    /// A writer that takes the length prefix, then never more.
+    struct StallsAfterHeader {
+        taken: usize,
+    }
+
+    impl AsyncWrite for StallsAfterHeader {
+        fn poll_write(
+            mut self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            buf: &[u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            if self.taken >= 4 {
+                return std::task::Poll::Pending;
+            }
+            let n = buf.len().min(4 - self.taken);
+            self.taken += n;
+            std::task::Poll::Ready(Ok(n))
+        }
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+        fn poll_close(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    /// A broadcast write cancelled mid-frame (timeout or closed connection)
+    /// gives the shared bytes back.
+    #[test]
+    fn a_cancelled_broadcast_write_releases_the_shared_bytes() {
+        use libp2p::request_response::Codec;
+        let announcement = Announcement::new_block(&block_with_transfers(1, 100));
+        let Announcement::Encoded(bytes) = &announcement else {
+            panic!("encoded");
+        };
+        let weak = Arc::downgrade(bytes);
+        let mut codec = BlockNotifyCodec::default();
+        let mut writer = StallsAfterHeader { taken: 0 };
+        let mut write = codec.write_request(&BLOCK_NOTIFY_PROTOCOL, &mut writer, announcement);
+        let waker = futures::task::noop_waker();
+        let mut cx = std::task::Context::from_waker(&waker);
+        assert!(write.as_mut().poll(&mut cx).is_pending());
+        assert!(weak.upgrade().is_some(), "held while the write is pending");
+        drop(write);
+        assert!(
+            weak.upgrade().is_none(),
+            "released when the write is dropped"
+        );
     }
 }

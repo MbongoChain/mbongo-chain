@@ -40,8 +40,8 @@ pub use crate::p2p::{
     SyncEvent, SyncReply, SyncRequestKind,
 };
 pub use crate::p2p_protocol::{
-    BlockNotifyAck, BlockNotifyCodec, SyncCodec, SyncNotification, SyncRequest, SyncResponse,
-    BLOCK_NOTIFY_PROTOCOL, MAX_RANGE, SYNC_PROTOCOL,
+    Announcement, BlockNotifyAck, BlockNotifyCodec, SyncCodec, SyncNotification, SyncRequest,
+    SyncResponse, BLOCK_NOTIFY_PROTOCOL, MAX_RANGE, SYNC_PROTOCOL,
 };
 pub use crate::rpc::{
     BackendError, JsonRpcRequest, JsonRpcResponse, RpcBackend, RpcError, RpcErrorCode,
