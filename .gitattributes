@@ -5,3 +5,6 @@ test-vectors/mvp/** -text
 
 # Run inside Linux containers: keep LF even on a Windows checkout with core.autocrlf.
 scripts/dev-binaries/*.sh text eol=lf
+
+# Mounted into Linux containers by the A2.0 harness: keep LF on Windows checkouts.
+scripts/stress/* text eol=lf
