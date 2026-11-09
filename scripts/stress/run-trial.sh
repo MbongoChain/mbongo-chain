@@ -52,7 +52,10 @@ rpc_height() { # ip
 }
 
 node a2-producer $SUBNET.10 -- --producer --block-time "$BLOCK_TIME"
-node a2-victim $SUBNET.20 --memory "$MEM" --memory-swap "$MEM" --cpus "$CPUS" -- \
+# VICTIM_ENV (optional, NAME=value) is set for the victim only, for diagnostic
+# trials, and recorded in trial.json.
+node a2-victim $SUBNET.20 --memory "$MEM" --memory-swap "$MEM" --cpus "$CPUS" \
+  ${VICTIM_ENV:+-e "$VICTIM_ENV"} -- \
   --bootnodes /ip4/$SUBNET.10/tcp/30333
 
 # The victim is synced before anything is measured.
@@ -89,6 +92,6 @@ docker logs -t a2-victim > "$OUT/victim.log" 2>&1 || true
 docker inspect -f '{{json .State}}' a2-victim > "$OUT/victim_state.json"
 docker logs -t a2-late > "$OUT/late.log" 2>&1 || true
 docker logs a2-sampler > "$OUT/sampler.log" 2>&1 || true
-printf '{"scenario":"%s","warm":%s,"attack":%s,"recover":%s,"mem":"%s","cpus":%s,"block_time":%s,"identities":%s,"concurrency":%s,"image":"%s"}\n' \
-  "$SCENARIO" "$WARM" "$ATTACK" "$RECOVER" "$MEM" "$CPUS" "$BLOCK_TIME" "$IDENTITIES" "$CONCURRENCY" "$IMAGE" > "$OUT/trial.json"
+printf '{"scenario":"%s","warm":%s,"attack":%s,"recover":%s,"mem":"%s","cpus":%s,"block_time":%s,"identities":%s,"concurrency":%s,"image":"%s","victim_env":"%s"}\n' \
+  "$SCENARIO" "$WARM" "$ATTACK" "$RECOVER" "$MEM" "$CPUS" "$BLOCK_TIME" "$IDENTITIES" "$CONCURRENCY" "$IMAGE" "${VICTIM_ENV:-}" > "$OUT/trial.json"
 echo "trial done: $SCENARIO -> $OUT"

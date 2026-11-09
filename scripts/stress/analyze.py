@@ -120,6 +120,11 @@ def summarise(trial_dir):
         "producer_height_end": producer_end,
         "attacker_final": attacker[-1] if attacker else None,
         "victim_counters": counters(os.path.join(trial_dir, "victim.log")),
+        # memory.stat split, present only in samples taken after the first campaign.
+        "attack_max_anon_mib": (maxof(during, "memory_anon") or 0) / MIB if maxof(during, "memory_anon") is not None else None,
+        "after_anon_mib": (after[-1].get("memory_anon") / MIB) if after and after[-1].get("memory_anon") is not None else None,
+        "after_file_mib": (after[-1].get("memory_file") / MIB) if after and after[-1].get("memory_file") is not None else None,
+        "victim_env": trial.get("victim_env"),
     }
     out.update(log_rates(os.path.join(trial_dir, "victim.log"), trial))
     json.dump(out, open(os.path.join(trial_dir, "summary.json"), "w"), indent=2)
