@@ -27,7 +27,10 @@ HERE=$(cd "$(dirname "$0")" && pwd -W 2>/dev/null || pwd)
 mkdir -p "$OUT"
 OUT_W=$(cd "$OUT" && pwd -W 2>/dev/null || pwd)
 
-cleanup() { docker rm -f a2-producer a2-victim a2-attacker a2-late a2-sampler >/dev/null 2>&1 || true; }
+cleanup() {
+  docker rm -f a2-producer a2-victim a2-attacker a2-late a2-sampler >/dev/null 2>&1 || true
+  for i in 2 3 4 5 6 7 8 9; do docker rm -f "a2-attacker-$i" >/dev/null 2>&1 || true; done
+}
 cleanup
 trap cleanup EXIT
 
@@ -78,12 +81,20 @@ docker run -d --name a2-sampler --network $NET --ip $SUBNET.50 --pid=host \
 
 sleep "$WARM"
 date -u +%s > "$OUT/attack_start"
-docker run -d --name a2-attacker --network $NET --ip $SUBNET.30 -v "$STRESS_BIN:/opt/s:ro" "$IMAGE" \
-  /opt/s/p2p_stress --target /ip4/$SUBNET.20/tcp/30333 --scenario "$SCENARIO" \
-  --identities "$IDENTITIES" --concurrency "$CONCURRENCY" --duration-secs "$ATTACK" >/dev/null
+# ATTACKERS (1 to 9): that many traffic containers, each with its own IPv4
+# address ($SUBNET.30 upward), so that per-source limits see distinct sources.
+ATTACKERS=${ATTACKERS:-1}
+[ "$ATTACKERS" -ge 1 ] && [ "$ATTACKERS" -le 9 ] || { echo "ATTACKERS must be 1 to 9" >&2; exit 2; }
+attacker_name() { [ "$1" = 1 ] && echo a2-attacker || echo "a2-attacker-$1"; }
+for i in $(seq 1 "$ATTACKERS"); do
+  docker run -d --name "$(attacker_name "$i")" --network $NET --ip "$SUBNET.$((29 + i))" \
+    -v "$STRESS_BIN:/opt/s:ro" "$IMAGE" \
+    /opt/s/p2p_stress --target /ip4/$SUBNET.20/tcp/30333 --scenario "$SCENARIO" \
+    --identities "$IDENTITIES" --concurrency "$CONCURRENCY" --duration-secs "$ATTACK" >/dev/null
+done
 sleep $((ATTACK / 2))
 node a2-late $SUBNET.40 -- --bootnodes /ip4/$SUBNET.20/tcp/30333
-docker wait a2-attacker >/dev/null
+for i in $(seq 1 "$ATTACKERS"); do docker wait "$(attacker_name "$i")" >/dev/null; done
 date -u +%s > "$OUT/attack_end"
 docker wait a2-sampler >/dev/null
 
@@ -103,10 +114,13 @@ if [ "${DIAG_TRIM:-}" = 1 ]; then
 fi
 
 docker logs a2-attacker > "$OUT/attacker.jsonl" 2> "$OUT/attacker.err" || true
+for i in $(seq 2 "$ATTACKERS"); do
+  docker logs "a2-attacker-$i" > "$OUT/attacker-$i.jsonl" 2>> "$OUT/attacker.err" || true
+done
 docker logs -t a2-victim > "$OUT/victim.log" 2>&1 || true
 docker inspect -f '{{json .State}}' a2-victim > "$OUT/victim_state.json"
 docker logs -t a2-late > "$OUT/late.log" 2>&1 || true
 docker logs a2-sampler > "$OUT/sampler.log" 2>&1 || true
-printf '{"scenario":"%s","warm":%s,"attack":%s,"recover":%s,"mem":"%s","cpus":%s,"block_time":%s,"identities":%s,"concurrency":%s,"image":"%s","victim_env":"%s"}\n' \
-  "$SCENARIO" "$WARM" "$ATTACK" "$RECOVER" "$MEM" "$CPUS" "$BLOCK_TIME" "$IDENTITIES" "$CONCURRENCY" "$IMAGE" "${VICTIM_ENV:-}" > "$OUT/trial.json"
+printf '{"scenario":"%s","warm":%s,"attack":%s,"recover":%s,"mem":"%s","cpus":%s,"block_time":%s,"identities":%s,"concurrency":%s,"image":"%s","victim_env":"%s","attackers":%s}\n' \
+  "$SCENARIO" "$WARM" "$ATTACK" "$RECOVER" "$MEM" "$CPUS" "$BLOCK_TIME" "$IDENTITIES" "$CONCURRENCY" "$IMAGE" "${VICTIM_ENV:-}" "$ATTACKERS" > "$OUT/trial.json"
 echo "trial done: $SCENARIO -> $OUT"
