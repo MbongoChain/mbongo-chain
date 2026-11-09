@@ -33,6 +33,7 @@ use tokio::sync::mpsc::{self, error::TrySendError};
 use mbongo_core::Block;
 
 use crate::bootnodes::BootnodeSet;
+use crate::frame_budget::FrameBudget;
 use crate::limits::{
     Admission, IpLimits, P2PCounters, P2PCountersSnapshot, Permit, Refusal, BLOCK_QUEUE_CAPACITY,
     BLOCK_QUOTA_PER_PEER, BROADCAST_QUEUE_CAPACITY, MAX_ESTABLISHED_INCOMING,
@@ -268,6 +269,8 @@ pub struct P2PNode {
     broadcast_tx: mpsc::Sender<Block>,
     /// What was admitted, refused and dropped.
     counters: Arc<P2PCounters>,
+    /// The inbound frame budget the codecs reserve from.
+    frame_budget: Arc<FrameBudget>,
     /// The counters as last logged.
     last_summary: P2PCountersSnapshot,
     /// The capacity-warning count as last logged.
@@ -321,6 +324,10 @@ impl P2PNode {
         keypair: Option<libp2p::identity::Keypair>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let keypair = keypair.unwrap_or_else(libp2p::identity::Keypair::generate_ed25519);
+        // One inbound frame budget, shared by both codecs and every clone
+        // libp2p makes of them (S3 A2.2b-lite).
+        let frame_budget = Arc::new(FrameBudget::default());
+        let codec_budget = Arc::clone(&frame_budget);
         let swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
             .with_tokio()
             .with_tcp(
@@ -346,14 +353,16 @@ impl P2PNode {
                 // Block-sync request/response behaviour. The stream cap is per
                 // connection, inbound and outbound together; a stream past it
                 // is dropped (inbound) or fails (outbound), never queued.
-                let sync = request_response::Behaviour::new(
+                let sync = request_response::Behaviour::with_codec(
+                    SyncCodec::with_budget(Arc::clone(&codec_budget)),
                     iter::once((SYNC_PROTOCOL, ProtocolSupport::Full)),
                     request_response::Config::default()
                         .with_max_concurrent_streams(SYNC_STREAMS_PER_CONNECTION),
                 );
 
                 // Block notification push behaviour.
-                let block_notify = request_response::Behaviour::new(
+                let block_notify = request_response::Behaviour::with_codec(
+                    BlockNotifyCodec::with_budget(Arc::clone(&codec_budget)),
                     iter::once((BLOCK_NOTIFY_PROTOCOL, ProtocolSupport::Full)),
                     request_response::Config::default()
                         .with_max_concurrent_streams(NOTIFY_STREAMS_PER_CONNECTION),
@@ -405,6 +414,7 @@ impl P2PNode {
             broadcast_rx,
             broadcast_tx,
             counters: Arc::new(P2PCounters::default()),
+            frame_budget,
             last_summary: P2PCountersSnapshot::default(),
             last_dropped: None,
             sync_event_tx,
@@ -667,11 +677,12 @@ impl P2PNode {
         format!(
             "{memory} sync_queue={sync_held} sync_queue_peak={sync_peak} \
              block_queue={blocks_held} block_queue_peak={blocks_peak} \
-             connections_in={} connections_out={} pending_in={} pending_out={}",
+             connections_in={} connections_out={} pending_in={} pending_out={} {}",
             c.num_established_incoming(),
             c.num_established_outgoing(),
             c.num_pending_incoming(),
-            c.num_pending_outgoing()
+            c.num_pending_outgoing(),
+            self.frame_budget
         )
     }
 
