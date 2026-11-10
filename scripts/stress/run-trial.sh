@@ -94,7 +94,7 @@ for i in $(seq 1 "$ATTACKERS"); do
     -v "$STRESS_BIN:/opt/s:ro" "$IMAGE" \
     /opt/s/p2p_stress --target /ip4/$SUBNET.20/tcp/30333 --scenario "$SCENARIO" \
     --identities "$IDENTITIES" --concurrency "$CONCURRENCY" --duration-secs "$ATTACK" \
-    --attempts-per-second "${RATE:-10}" >/dev/null
+    ${RATE:+--attempts-per-second "$RATE"} >/dev/null
 done
 # PERF_SECONDS (optional; needs perf in IMAGE and VICTIM_DOCKER_ARGS granting
 # CAP_PERFMON): sample the node process for that long, starting 5 s into the
