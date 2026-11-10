@@ -75,15 +75,26 @@ impl Default for InboundRateConfig {
     }
 }
 
-/// One token bucket, in thousandths of a token.
+/// One token bucket, in thousandths of a token. Also used by the request
+/// limits (S3 A2.3-b-1).
 #[derive(Debug, Clone, Copy)]
-struct Bucket {
+pub(crate) struct Bucket {
     tokens: u64,
     updated: Instant,
 }
 
 impl Bucket {
-    fn full(burst: u32, now: Instant) -> Self {
+    /// Whether `units` whole tokens are available.
+    pub(crate) fn has(&self, units: u32) -> bool {
+        self.tokens >= u64::from(units) * MILLI
+    }
+
+    /// Takes `units` whole tokens; call only after [`Bucket::has`].
+    pub(crate) fn take(&mut self, units: u32) {
+        self.tokens -= u64::from(units) * MILLI;
+    }
+
+    pub(crate) fn full(burst: u32, now: Instant) -> Self {
         Self {
             tokens: u64::from(burst) * MILLI,
             updated: now,
@@ -92,7 +103,7 @@ impl Bucket {
 
     /// Adds what has accrued since the last update, up to the capacity. A
     /// clock reading earlier than the last one adds nothing.
-    fn refill(&mut self, per_second: u32, burst: u32, now: Instant) {
+    pub(crate) fn refill(&mut self, per_second: u32, burst: u32, now: Instant) {
         let elapsed = now.saturating_duration_since(self.updated);
         let millis = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX);
         let earned = millis.saturating_mul(u64::from(per_second));
@@ -111,7 +122,7 @@ impl Bucket {
         self.tokens -= MILLI;
     }
 
-    fn is_full(&self, burst: u32) -> bool {
+    pub(crate) fn is_full(&self, burst: u32) -> bool {
         self.tokens >= u64::from(burst) * MILLI
     }
 }
@@ -275,7 +286,7 @@ impl RateLimiter {
 }
 
 /// The IP address a multiaddr starts with, if any.
-fn ip_of(addr: &Multiaddr) -> Option<IpAddr> {
+pub(crate) fn ip_of(addr: &Multiaddr) -> Option<IpAddr> {
     match addr.iter().next()? {
         Protocol::Ip4(ip) => Some(IpAddr::V4(ip)),
         Protocol::Ip6(ip) => Some(IpAddr::V6(ip)),

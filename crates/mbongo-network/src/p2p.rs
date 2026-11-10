@@ -41,7 +41,10 @@ use crate::limits::{
     MAX_PENDING_INCOMING, MAX_PENDING_OUTGOING, MDNS_DIAL_BUDGET, NOTIFY_STREAMS_PER_CONNECTION,
     SYNC_QUEUE_CAPACITY, SYNC_QUOTA_PER_PEER, SYNC_STREAMS_PER_CONNECTION,
 };
-use crate::rate_limit::{InboundRateLimit, RateRefusal};
+use crate::rate_limit::{ip_of, InboundRateLimit, RateRefusal};
+use crate::request_rate::{
+    announcement_cost, sync_request_cost, Cost, RequestLimiter, RequestRateConfig, RequestRefusal,
+};
 
 /// How often the counters are summarised in the log, when they changed.
 const SUMMARY_INTERVAL: Duration = Duration::from_secs(60);
@@ -275,6 +278,9 @@ pub struct P2PNode {
     counters: Arc<P2PCounters>,
     /// The inbound frame budget the codecs reserve from.
     frame_budget: Arc<FrameBudget>,
+    /// Rate limits on decoded inbound requests, per peer, per source and in
+    /// all (S3 A2.3-b-1).
+    request_limiter: RequestLimiter,
     /// The counters as last logged.
     last_summary: P2PCountersSnapshot,
     /// The capacity-warning count as last logged.
@@ -420,6 +426,10 @@ impl P2PNode {
             broadcast_tx,
             counters: Arc::new(P2PCounters::default()),
             frame_budget,
+            request_limiter: RequestLimiter::new(
+                RequestRateConfig::default(),
+                std::time::Instant::now(),
+            ),
             last_summary: P2PCountersSnapshot::default(),
             last_dropped: None,
             sync_event_tx,
@@ -684,14 +694,33 @@ impl P2PNode {
         format!(
             "{memory} sync_queue={sync_held} sync_queue_peak={sync_peak} \
              block_queue={blocks_held} block_queue_peak={blocks_peak} \
-             connections_in={} connections_out={} pending_in={} pending_out={} {} {}",
+             connections_in={} connections_out={} pending_in={} pending_out={} {} {} {}",
             c.num_established_incoming(),
             c.num_established_outgoing(),
             c.num_pending_incoming(),
             c.num_pending_outgoing(),
             self.frame_budget,
-            self.swarm.behaviour().rate_limit.stats()
+            self.swarm.behaviour().rate_limit.stats(),
+            self.request_limiter.stats()
         )
+    }
+
+    /// Whether a decoded request from `peer` costing `cost` is within the
+    /// request rates. A refusal is logged at DEBUG only; it is counted by the
+    /// caller and in the limiter's own statistics.
+    fn within_request_rate(&mut self, peer: PeerId, cost: Cost) -> bool {
+        match self.request_limiter.try_admit(peer, cost, std::time::Instant::now()) {
+            Ok(()) => true,
+            Err(
+                refusal @ (RequestRefusal::Peer | RequestRefusal::Source | RequestRefusal::Global),
+            ) => {
+                debug!(
+                    "{:?} from {peer} refused by the {refusal:?} rate",
+                    cost.kind
+                );
+                false
+            }
+        }
     }
 
     /// Admits an inbound sync request into the bounded queue, or refuses it.
@@ -703,6 +732,11 @@ impl P2PNode {
         request: SyncRequest,
         channel: ResponseChannel<SyncResponse>,
     ) {
+        // Rate first, before any queue slot or storage read (S3 A2.3-b-1).
+        if !self.within_request_rate(peer, sync_request_cost(&request)) {
+            P2PCounters::add(&self.counters.sync_requests_refused_rate);
+            return;
+        }
         let permit = match self.sync_admission.try_admit(peer) {
             Ok(permit) => permit,
             Err(refusal) => {
@@ -745,6 +779,15 @@ impl P2PNode {
             "Block announcement from {peer}: height {}",
             block.header.height
         );
+        // Rate first, before any queue slot (S3 A2.3-b-1). Unacknowledged, as
+        // for the other refusals.
+        if !self.within_request_rate(
+            peer,
+            announcement_cost(parity_scale_codec::Encode::encoded_size(&block)),
+        ) {
+            P2PCounters::add(&self.counters.announcements_refused_rate);
+            return;
+        }
         let permit = match self.block_admission.try_admit(peer) {
             Ok(permit) => permit,
             Err(refusal) => {
@@ -845,16 +888,23 @@ impl P2PNode {
                 ..
             } => {
                 info!("Peer connected: {peer_id} via {endpoint:?}");
+                self.request_limiter.connection_established(
+                    connection_id,
+                    peer_id,
+                    ip_of(endpoint.get_remote_address()),
+                );
                 self.bootnodes.connected(connection_id, peer_id, tokio::time::Instant::now());
                 // Notify the sync orchestrator so it can trigger an initial sync.
                 let _ = self.sync_event_tx.send(SyncEvent::PeerConnected { peer_id });
             }
             SwarmEvent::ConnectionClosed {
                 peer_id,
+                connection_id,
                 cause,
                 num_established,
                 ..
             } => {
+                self.request_limiter.connection_closed(connection_id);
                 info!("Peer disconnected: {peer_id} (cause: {cause:?})");
                 if num_established == 0 {
                     self.bootnodes.disconnected(peer_id, tokio::time::Instant::now(), jitter());

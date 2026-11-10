@@ -20,6 +20,7 @@ const HARNESSES = [
   { file: "crates/mbongo-network/tests/reconnect.rs", pattern: CONST, count: 4 },
   { file: "crates/mbongo-network/tests/a1_limits.rs", pattern: CONST, count: 2 },
   { file: "crates/mbongo-network/tests/a2_3a_rate.rs", pattern: CONST, count: 1 },
+  { file: "crates/mbongo-network/tests/a2_3b_rate.rs", pattern: CONST, count: 1 },
   { file: "crates/mbongo-node/tests/a1_flood_convergence.rs", pattern: CONST, count: 6 },
 ];
 
