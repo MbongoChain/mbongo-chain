@@ -30,6 +30,8 @@ pub mod p2p_protocol;
 pub mod proc_memory;
 /// Rate limits on inbound connection attempts, before the handshake (S3 A2.3-a).
 pub mod rate_limit;
+/// Rate limits on decoded inbound requests (S3 A2.3-b-1).
+pub mod request_rate;
 /// JSON-RPC 2.0 request/response types and backend trait.
 pub mod rpc;
 /// HTTP server wiring (Axum router + serve).

@@ -429,6 +429,10 @@ counters! {
     /// Of those, refused before the handshake because all sources together
     /// exceeded the global connection-attempt rate (S3 A2.3-a).
     inbound_rate_refused_global,
+    /// Sync requests refused by the request rate limits (S3 A2.3-b-1).
+    sync_requests_refused_rate,
+    /// Announcements refused by the request rate limits (S3 A2.3-b-1).
+    announcements_refused_rate,
     /// mDNS discoveries not dialed: the outbound budget was spent.
     mdns_dials_skipped,
 }
