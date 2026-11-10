@@ -44,6 +44,11 @@ enum Scenario {
     Announce,
     /// Full-range block requests, each answer read and discarded.
     Sync,
+    /// Connection attempts on a fixed schedule, `--attempts-per-second` per
+    /// identity, whatever happened to the previous ones; each connection that
+    /// comes up is closed at once. The offered rate does not depend on the
+    /// target's answers, so two targets can be compared at the same rate.
+    ChurnRate,
     /// Connect, disconnect at once, and again.
     Churn,
     /// Streams opened and negotiated, then held with nothing sent.
@@ -71,6 +76,9 @@ struct Args {
     /// How long a held stream is kept before this side gives up.
     #[arg(long, default_value_t = 120)]
     hold_secs: u64,
+    /// Attempts per second per identity (churn-rate only).
+    #[arg(long, default_value_t = 10)]
+    attempts_per_second: u32,
 }
 
 /// Refuses anything that is not a loopback or private address.
@@ -188,6 +196,7 @@ impl Stats {
             "dial_failed": r(&self.dial_failed),
             "bytes_queued": r(&self.bytes_queued),
             "bytes_in": r(&self.bytes_in),
+            "own_cpu_ms": own_cpu_ms(),
         })
         .to_string()
     }
@@ -300,10 +309,56 @@ fn payloads(scenario: Scenario) -> Payloads {
             sync: vec![raw(Vec::new(), true)],
             notify: vec![raw(Vec::new(), true)],
         },
-        Scenario::Churn => Payloads {
+        Scenario::Churn | Scenario::ChurnRate => Payloads {
             sync: Vec::new(),
             notify: Vec::new(),
         },
+    }
+}
+
+/// This process's CPU time in milliseconds, user plus system, all threads
+/// (Linux `/proc/self/stat`, in 1/100 s ticks); `None` elsewhere.
+fn own_cpu_ms() -> Option<u64> {
+    let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
+    // Fields after the parenthesised command name; utime and stime are the
+    // 12th and 13th of them (14th and 15th of the line).
+    let rest = &stat[stat.rfind(')')? + 2..];
+    let fields: Vec<&str> = rest.split_whitespace().collect();
+    let ticks = fields.get(11)?.parse::<u64>().ok()? + fields.get(12)?.parse::<u64>().ok()?;
+    Some(ticks * 10)
+}
+
+/// One identity, attempting connections on a fixed schedule until the
+/// deadline. `sent` counts attempts offered, `connections` those that came
+/// up (and were closed at once), `dial_failed` those that did not.
+async fn run_identity_at_rate(
+    args: Arc<Args>,
+    stats: Arc<Stats>,
+    deadline: Instant,
+) -> Result<(), String> {
+    let mut swarm = build_swarm(&args).map_err(|e| e.to_string())?;
+    let period = Duration::from_secs(1) / args.attempts_per_second.max(1);
+    let mut tick = tokio::time::interval(period);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Burst);
+    loop {
+        tokio::select! {
+            () = tokio::time::sleep_until(deadline) => return Ok(()),
+            _ = tick.tick() => {
+                add(&stats.sent, 1);
+                if swarm.dial(args.target.clone()).is_err() {
+                    add(&stats.dial_failed, 1);
+                }
+            }
+            event = swarm.select_next_some() => match event {
+                SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                    add(&stats.connections, 1);
+                    let _ = swarm.disconnect_peer_id(peer_id);
+                }
+                SwarmEvent::ConnectionClosed { .. } => add(&stats.closed, 1),
+                SwarmEvent::OutgoingConnectionError { .. } => add(&stats.dial_failed, 1),
+                _ => {}
+            },
+        }
     }
 }
 
@@ -442,6 +497,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut tasks = Vec::new();
     for _ in 0..args.identities.max(1) {
+        if args.scenario == Scenario::ChurnRate {
+            tasks.push(tokio::spawn(run_identity_at_rate(
+                Arc::clone(&args),
+                Arc::clone(&stats),
+                deadline,
+            )));
+            continue;
+        }
         tasks.push(tokio::spawn(run_identity(
             Arc::clone(&args),
             Arc::clone(&payloads),
