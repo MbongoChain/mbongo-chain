@@ -44,6 +44,11 @@ enum Scenario {
     Announce,
     /// Full-range block requests, each answer read and discarded.
     Sync,
+    /// Streams held open: each identity speaks TCP, Noise and yamux directly,
+    /// opens `--concurrency` streams, writes one byte on each (yamux 0.13
+    /// announces a stream with its first frame) and never negotiates them.
+    /// When the target closes the connection it reconnects at once.
+    HoldStreams,
     /// Connection attempts on a fixed schedule, `--attempts-per-second` per
     /// identity, whatever happened to the previous ones; each connection that
     /// comes up is closed at once. The offered rate does not depend on the
@@ -309,7 +314,7 @@ fn payloads(scenario: Scenario) -> Payloads {
             sync: vec![raw(Vec::new(), true)],
             notify: vec![raw(Vec::new(), true)],
         },
-        Scenario::Churn | Scenario::ChurnRate => Payloads {
+        Scenario::Churn | Scenario::ChurnRate | Scenario::HoldStreams => Payloads {
             sync: Vec::new(),
             notify: Vec::new(),
         },
@@ -331,6 +336,80 @@ fn own_cpu_ms() -> Option<u64> {
 /// One identity, attempting connections on a fixed schedule until the
 /// deadline. `sent` counts attempts offered, `connections` those that came
 /// up (and were closed at once), `dial_failed` those that did not.
+/// One identity holding streams open until the deadline. `connections` counts
+/// connections that came up, `closed` those the target closed, `sent` the
+/// streams opened, `dial_failed` connections that failed, `failed` streams
+/// that could not be opened or written.
+async fn run_identity_holding(
+    args: Arc<Args>,
+    stats: Arc<Stats>,
+    deadline: Instant,
+) -> Result<(), String> {
+    use futures::future::poll_fn;
+    use libp2p::core::muxing::{StreamMuxerBox, StreamMuxerExt};
+    use libp2p::core::transport::Transport;
+    use libp2p::core::upgrade::Version;
+
+    let key = libp2p::identity::Keypair::generate_ed25519();
+    let mut transport = tcp::tokio::Transport::new(tcp::Config::default())
+        .upgrade(Version::V1)
+        .authenticate(noise::Config::new(&key).map_err(|e| e.to_string())?)
+        .multiplex(yamux::Config::default())
+        .map(|(peer, muxer), _| (peer, StreamMuxerBox::new(muxer)))
+        .boxed();
+    let target: Multiaddr = args.target.iter().filter(|p| !matches!(p, Protocol::P2p(_))).collect();
+    while Instant::now() < deadline {
+        let dial = match transport.dial(target.clone()) {
+            Ok(dial) => dial,
+            Err(_) => {
+                add(&stats.dial_failed, 1);
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                continue;
+            }
+        };
+        let mut muxer = match tokio::time::timeout_at(deadline, dial).await {
+            Ok(Ok((_peer, muxer))) => muxer,
+            Ok(Err(_)) => {
+                add(&stats.dial_failed, 1);
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                continue;
+            }
+            Err(_) => return Ok(()),
+        };
+        add(&stats.connections, 1);
+        let mut streams = Vec::new();
+        for _ in 0..args.concurrency {
+            let opened =
+                tokio::time::timeout_at(deadline, poll_fn(|cx| muxer.poll_outbound_unpin(cx)))
+                    .await;
+            let Ok(Ok(mut stream)) = opened else {
+                add(&stats.failed, 1);
+                break;
+            };
+            if stream.write_all(&[0x13]).await.is_err() {
+                add(&stats.failed, 1);
+                break;
+            }
+            add(&stats.sent, 1);
+            streams.push(stream);
+        }
+        // Drive the connection until the target closes it or time is up.
+        loop {
+            tokio::select! {
+                () = tokio::time::sleep_until(deadline) => return Ok(()),
+                event = poll_fn(|cx| muxer.poll_unpin(cx)) => {
+                    if event.is_err() {
+                        add(&stats.closed, 1);
+                        break;
+                    }
+                }
+            }
+        }
+        drop(streams);
+    }
+    Ok(())
+}
+
 async fn run_identity_at_rate(
     args: Arc<Args>,
     stats: Arc<Stats>,
@@ -497,6 +576,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut tasks = Vec::new();
     for _ in 0..args.identities.max(1) {
+        if args.scenario == Scenario::HoldStreams {
+            tasks.push(tokio::spawn(run_identity_holding(
+                Arc::clone(&args),
+                Arc::clone(&stats),
+                deadline,
+            )));
+            continue;
+        }
         if args.scenario == Scenario::ChurnRate {
             tasks.push(tokio::spawn(run_identity_at_rate(
                 Arc::clone(&args),
