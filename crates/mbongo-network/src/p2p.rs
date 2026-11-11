@@ -38,8 +38,9 @@ use crate::limits::{
     Admission, IpLimits, P2PCounters, P2PCountersSnapshot, Permit, Refusal, BLOCK_QUEUE_CAPACITY,
     BLOCK_QUOTA_PER_PEER, BROADCAST_QUEUE_CAPACITY, MAX_ESTABLISHED_INCOMING,
     MAX_ESTABLISHED_OUTGOING, MAX_ESTABLISHED_PER_PEER, MAX_NEGOTIATING_INBOUND_STREAMS,
-    MAX_PENDING_INCOMING, MAX_PENDING_OUTGOING, MDNS_DIAL_BUDGET, NOTIFY_STREAMS_PER_CONNECTION,
-    SYNC_QUEUE_CAPACITY, SYNC_QUOTA_PER_PEER, SYNC_STREAMS_PER_CONNECTION,
+    MAX_PENDING_INCOMING, MAX_PENDING_OUTGOING, MAX_YAMUX_STREAMS_PER_CONNECTION, MDNS_DIAL_BUDGET,
+    NOTIFY_STREAMS_PER_CONNECTION, SYNC_QUEUE_CAPACITY, SYNC_QUOTA_PER_PEER,
+    SYNC_STREAMS_PER_CONNECTION,
 };
 use crate::rate_limit::{ip_of, InboundRateLimit, RateRefusal};
 use crate::request_rate::{
@@ -76,6 +77,14 @@ fn answers(kind: SyncRequestKind, response: &SyncResponse) -> bool {
 
 /// A value from 0 to 1000, for spreading retries out. It decides nothing else,
 /// so the standard library's per-instance hash seed is random enough.
+/// The yamux configuration: the defaults, with at most
+/// [`MAX_YAMUX_STREAMS_PER_CONNECTION`] streams per connection (S3 A2.3).
+pub(crate) fn yamux_config() -> yamux::Config {
+    let mut config = yamux::Config::default();
+    config.set_max_num_streams(MAX_YAMUX_STREAMS_PER_CONNECTION);
+    config
+}
+
 fn jitter() -> u16 {
     u16::try_from(RandomState::new().hash_one(0u8) % 1001).unwrap_or(500)
 }
@@ -285,6 +294,8 @@ pub struct P2PNode {
     last_summary: P2PCountersSnapshot,
     /// The capacity-warning count as last logged.
     last_dropped: Option<u64>,
+    /// The yamux stream-limit count as last logged (S3 A2.3).
+    last_yamux_limit: Option<u64>,
     /// Events pushed to the sync orchestrator (peer connected, sync responses).
     sync_event_tx: mpsc::UnboundedSender<SyncEvent>,
     /// Receive-half for sync events; taken via [`P2PNode::take_sync_event_rx`].
@@ -340,11 +351,7 @@ impl P2PNode {
         let codec_budget = Arc::clone(&frame_budget);
         let swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
             .with_tokio()
-            .with_tcp(
-                tcp::Config::default(),
-                noise::Config::new,
-                yamux::Config::default,
-            )?
+            .with_tcp(tcp::Config::default(), noise::Config::new, yamux_config)?
             .with_behaviour(|key| {
                 let identify = identify::Behaviour::new(
                     identify::Config::new(IDENTIFY_PROTOCOL_VERSION.to_string(), key.public())
@@ -432,6 +439,7 @@ impl P2PNode {
             ),
             last_summary: P2PCountersSnapshot::default(),
             last_dropped: None,
+            last_yamux_limit: None,
             sync_event_tx,
             sync_event_rx: Some(sync_event_rx),
             sync_cmd_rx,
@@ -668,7 +676,11 @@ impl P2PNode {
         let now = self.counters.snapshot();
         // Process-wide, and present only when the capacity logger is installed.
         let dropped = crate::capacity_log::dropped_at_capacity();
-        if now != self.last_summary || dropped != self.last_dropped {
+        let yamux_limit = crate::capacity_log::yamux_stream_limit_reached();
+        if now != self.last_summary
+            || dropped != self.last_dropped
+            || yamux_limit != self.last_yamux_limit
+        {
             match dropped {
                 Some(n) if n > 0 => info!(
                     "P2P counters since start: {now} \
@@ -676,9 +688,17 @@ impl P2PNode {
                 ),
                 _ => info!("P2P counters since start: {now}"),
             }
-            info!("P2P resources: {}", self.resources());
+            match yamux_limit {
+                Some(n) => info!(
+                    "P2P resources: {} yamux_stream_limit_errors={n} yamux_max_streams={}",
+                    self.resources(),
+                    MAX_YAMUX_STREAMS_PER_CONNECTION
+                ),
+                None => info!("P2P resources: {}", self.resources()),
+            }
             self.last_summary = now;
             self.last_dropped = dropped;
+            self.last_yamux_limit = yamux_limit;
         }
     }
 

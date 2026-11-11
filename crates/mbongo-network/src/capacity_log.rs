@@ -34,6 +34,25 @@ pub const CAPACITY_TARGET: &str = "libp2p_request_response::handler";
 /// The capacity warning's text in `libp2p-request-response` 0.26.3.
 pub const CAPACITY_MESSAGE: &str = "Dropping inbound stream because we are at capacity";
 
+/// The target yamux 0.13 logs its stream-limit error from.
+pub const YAMUX_TARGET: &str = "yamux::connection";
+
+/// How yamux 0.13 ends that error, after a connection id: "{id}: maximum
+/// number of streams reached". Logged when a peer opens a stream past
+/// `max_num_streams` (yamux then terminates the connection), and when this
+/// side tries to.
+pub const YAMUX_LIMIT_SUFFIX: &str = ": maximum number of streams reached";
+
+/// yamux stream-limit errors seen by the installed [`CapacityLog`] (S3 A2.3).
+static YAMUX_LIMIT: AtomicU64 = AtomicU64::new(0);
+
+/// yamux stream-limit errors counted in this process: `None` when no
+/// [`CapacityLog`] is installed. Unlike the capacity warning, those errors are
+/// still written; this only counts them.
+pub fn yamux_stream_limit_reached() -> Option<u64> {
+    INSTALLED.get().map(|_| YAMUX_LIMIT.load(Ordering::Relaxed))
+}
+
 /// The counter of the installed [`CapacityLog`], if one is installed.
 static INSTALLED: OnceLock<Arc<AtomicU64>> = OnceLock::new();
 
@@ -56,6 +75,15 @@ impl<L: Log> CapacityLog<L> {
         Self { inner, count }
     }
 
+    fn is_yamux_limit_error(record: &Record<'_>) -> bool {
+        record.level() == Level::Error
+            && record.target() == YAMUX_TARGET
+            && match record.args().as_str() {
+                Some(text) => text.ends_with(YAMUX_LIMIT_SUFFIX),
+                None => record.args().to_string().ends_with(YAMUX_LIMIT_SUFFIX),
+            }
+    }
+
     fn is_capacity_warning(record: &Record<'_>) -> bool {
         record.level() == Level::Warn
             && record.target() == CAPACITY_TARGET
@@ -71,6 +99,7 @@ impl<L: Log> Log for CapacityLog<L> {
         // The capacity warning is always wanted, to be counted, whatever the
         // filter of the wrapped logger says.
         (metadata.level() == Level::Warn && metadata.target() == CAPACITY_TARGET)
+            || (metadata.level() == Level::Error && metadata.target() == YAMUX_TARGET)
             || self.inner.enabled(metadata)
     }
 
@@ -81,6 +110,12 @@ impl<L: Log> Log for CapacityLog<L> {
                 Some(n.saturating_add(1))
             });
             return;
+        }
+        if Self::is_yamux_limit_error(record) {
+            // Counted, and still written below.
+            let _ = YAMUX_LIMIT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                Some(n.saturating_add(1))
+            });
         }
         if self.inner.enabled(record.metadata()) {
             self.inner.log(record);
@@ -249,5 +284,59 @@ mod tests {
             emit(&logger, Level::Warn, CAPACITY_TARGET, CAPACITY_MESSAGE);
         }
         assert_eq!(count.load(Ordering::Relaxed), u64::MAX);
+    }
+
+    /// The yamux stream-limit error is counted and still written; nothing
+    /// else from yamux, and no other level or target, is counted.
+    #[test]
+    fn yamux_stream_limit_errors_are_counted_and_still_written() {
+        let recorder = Recorder::new(LevelFilter::Warn);
+        let logger = CapacityLog::new(&recorder, Arc::new(AtomicU64::new(0)));
+        let before = YAMUX_LIMIT.load(Ordering::Relaxed);
+        emit(
+            &logger,
+            Level::Error,
+            YAMUX_TARGET,
+            "7f3a: maximum number of streams reached",
+        );
+        emit(
+            &logger,
+            Level::Error,
+            YAMUX_TARGET,
+            "1b2c: maximum number of streams reached",
+        );
+        emit(
+            &logger,
+            Level::Error,
+            YAMUX_TARGET,
+            "1b2c: stream already exists",
+        );
+        emit(
+            &logger,
+            Level::Warn,
+            YAMUX_TARGET,
+            "1b2c: maximum number of streams reached",
+        );
+        emit(
+            &logger,
+            Level::Error,
+            "other",
+            "x: maximum number of streams reached",
+        );
+        // No other test in this binary logs that error, so the count is exact.
+        assert_eq!(YAMUX_LIMIT.load(Ordering::Relaxed), before + 2);
+        let seen = recorder.seen();
+        assert_eq!(seen.len(), 5, "every record still written: {seen:?}");
+    }
+
+    /// Wanted even when the wrapped logger filters yamux out, so it is counted.
+    #[test]
+    fn the_yamux_limit_error_is_wanted_whatever_the_inner_filter() {
+        let recorder = Recorder::new(LevelFilter::Off);
+        let logger = CapacityLog::new(&recorder, Arc::new(AtomicU64::new(0)));
+        let yamux = Metadata::builder().level(Level::Error).target(YAMUX_TARGET).build();
+        assert!(logger.enabled(&yamux));
+        let other = Metadata::builder().level(Level::Error).target("other").build();
+        assert!(!logger.enabled(&other));
     }
 }

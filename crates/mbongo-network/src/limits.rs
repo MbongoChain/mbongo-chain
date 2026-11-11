@@ -74,6 +74,15 @@ pub const SYNC_STREAMS_PER_CONNECTION: usize = 4;
 /// Most block-announcement streams on one connection, both directions.
 pub const NOTIFY_STREAMS_PER_CONNECTION: usize = 2;
 
+/// Most yamux streams one connection may hold at once, both directions
+/// together (S3 A2.3, experimental). yamux counts a stream from its opening
+/// until this side drops it; when a peer opens one more, yamux terminates the
+/// whole connection, before any protocol negotiation. An honest connection
+/// holds at most 16 negotiating streams, the request/response streams above
+/// and a few outbound requests. This caps concurrency, not the rate at which
+/// streams are opened. yamux's default is 512.
+pub const MAX_YAMUX_STREAMS_PER_CONNECTION: usize = 64;
+
 // ── Queues ─────────────────────────────────────────────────────────────
 
 /// Inbound sync requests admitted and not yet answered, from all peers.
