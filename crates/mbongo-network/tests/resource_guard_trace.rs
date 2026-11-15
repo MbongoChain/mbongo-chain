@@ -170,7 +170,7 @@ async fn each_inbound_stream_leaves_an_opening_and_a_closing_record() {
         assert_eq!(number(&open, "active"), 1);
         assert_eq!(number(&close, "conn_active"), 0);
         assert_eq!(number(&close, "active"), 0);
-        assert_eq!(close["negotiation_reached"], "true");
+        assert_eq!(close["negotiation_started"], "true");
         assert_eq!(close["error"], "false");
         let (opened_at, closed_at) = (number(&open, "t_us"), number(&close, "t_us"));
         assert!(

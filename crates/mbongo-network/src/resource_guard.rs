@@ -26,8 +26,9 @@
 //!
 //! **What it cannot see.** The protocol a stream ends up speaking, and whether
 //! negotiation succeeded: both happen in the swarm, after the muxer has given
-//! the stream away. "Reached negotiation" here means the swarm performed a
-//! first read or write on the stream.
+//! the stream away. What is counted is a negotiation *started*: the swarm
+//! performed a first read or write on the stream. A negotiation that then
+//! fails, or times out, has been counted all the same.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -133,7 +134,7 @@ pub struct P2pResourceGuard {
     inbound_active_peak: AtomicU64,
     per_connection_peak: AtomicU64,
     passed_on: AtomicU64,
-    negotiation_reached: AtomicU64,
+    negotiations_started: AtomicU64,
     outbound_total: AtomicU64,
     stream_errors: AtomicU64,
     muxer_errors: AtomicU64,
@@ -161,7 +162,7 @@ impl Default for P2pResourceGuard {
             inbound_active_peak: AtomicU64::new(0),
             per_connection_peak: AtomicU64::new(0),
             passed_on: AtomicU64::new(0),
-            negotiation_reached: AtomicU64::new(0),
+            negotiations_started: AtomicU64::new(0),
             outbound_total: AtomicU64::new(0),
             stream_errors: AtomicU64::new(0),
             muxer_errors: AtomicU64::new(0),
@@ -259,7 +260,7 @@ impl P2pResourceGuard {
             streams_per_connection_peak: self.per_connection_peak.load(ORD),
             connections_active,
             connections_total: self.connections_total.load(ORD),
-            negotiated_streams_total: self.negotiation_reached.load(ORD),
+            stream_negotiations_started_total: self.negotiations_started.load(ORD),
             streams_observation_only_total: self.passed_on.load(ORD),
             observation_errors_total: self.observation_errors.load(ORD),
             stream_errors_total: self.stream_errors.load(ORD),
@@ -296,9 +297,11 @@ pub struct GuardSnapshot {
     pub connections_active: u64,
     /// Connections wrapped since start.
     pub connections_total: u64,
-    /// `p2p_negotiated_streams_total`: inbound streams the swarm read from or
-    /// wrote to at least once, which is how negotiation starts.
-    pub negotiated_streams_total: u64,
+    /// `p2p_stream_negotiations_started_total`: inbound streams the swarm read
+    /// from or wrote to at least once, which is how negotiation starts. It
+    /// says nothing of the outcome: a stream whose negotiation fails is
+    /// counted here.
+    pub stream_negotiations_started_total: u64,
     /// `p2p_streams_observation_only_total`: inbound streams returned to the
     /// swarm untouched. Equal to `inbound_streams_total` in this mode.
     pub streams_observation_only_total: u64,
@@ -392,10 +395,10 @@ impl GuardSnapshot {
             &plain(self.observation_errors_total),
         );
         metric(
-            "p2p_negotiated_streams_total",
+            "p2p_stream_negotiations_started_total",
             "counter",
-            "Inbound streams on which the swarm started protocol negotiation.",
-            &plain(self.negotiated_streams_total),
+            "Inbound streams on which the swarm started protocol negotiation, whatever its outcome.",
+            &plain(self.stream_negotiations_started_total),
         );
         metric(
             "p2p_streams_observation_only_total",
@@ -441,7 +444,7 @@ impl fmt::Display for GuardSnapshot {
             f,
             "p2p_guard_mode={} p2p_inbound_streams_total={} p2p_inbound_streams_active={} \
              p2p_inbound_streams_active_peak={} p2p_streams_per_connection_max={} \
-             p2p_streams_per_connection_peak={} p2p_negotiated_streams_total={} \
+             p2p_streams_per_connection_peak={} p2p_stream_negotiations_started_total={} \
              p2p_streams_observation_only_total={} p2p_stream_observation_errors_total={} \
              p2p_stream_errors_total={} p2p_muxer_errors_total={} p2p_guard_connections={} \
              p2p_guard_connections_total={} p2p_outbound_streams_total={} \
@@ -453,7 +456,7 @@ impl fmt::Display for GuardSnapshot {
             self.inbound_streams_active_peak,
             self.streams_per_connection_max,
             self.streams_per_connection_peak,
-            self.negotiated_streams_total,
+            self.stream_negotiations_started_total,
             self.streams_observation_only_total,
             self.observation_errors_total,
             self.stream_errors_total,
@@ -628,7 +631,7 @@ impl StreamObservation {
     fn io(&mut self) {
         if !self.io_started {
             self.io_started = true;
-            bump(&self.connection.guard.negotiation_reached);
+            bump(&self.connection.guard.negotiations_started);
         }
     }
 
@@ -662,7 +665,7 @@ impl Drop for StreamObservation {
             .fetch_update(ORD, ORD, |sum| Some(sum.saturating_add(micros)));
         bump(&guard.closed_total);
         trace!(
-            "stream_closed conn={} stream={} t_us={} lifetime_us={micros} negotiation_reached={} \
+            "stream_closed conn={} stream={} t_us={} lifetime_us={micros} negotiation_started={} \
              error={} conn_active={} active={}",
             connection.id,
             self.number,
@@ -940,7 +943,7 @@ mod tests {
         assert_quiescent(&seen);
         assert_eq!(seen.streams_per_connection_peak, u64::from(N));
         assert_eq!(
-            seen.negotiated_streams_total, 0,
+            seen.stream_negotiations_started_total, 0,
             "no stream was read or written"
         );
     }
@@ -986,13 +989,13 @@ mod tests {
         let waker = waker();
         let mut cx = Context::from_waker(&waker);
 
-        assert_eq!(guard.snapshot().negotiated_streams_total, 0);
+        assert_eq!(guard.snapshot().stream_negotiations_started_total, 0);
         let mut buf = [0u8; 64];
         let Poll::Ready(Ok(n)) = Pin::new(&mut stream).poll_read(&mut cx, &mut buf) else {
             panic!("read did not complete");
         };
         assert_eq!(&buf[..n], b"\x13/multistream/1.0.0\n");
-        assert_eq!(guard.snapshot().negotiated_streams_total, 1);
+        assert_eq!(guard.snapshot().stream_negotiations_started_total, 1);
 
         let Poll::Ready(Ok(4)) = Pin::new(&mut stream).poll_write(&mut cx, b"na\n\0") else {
             panic!("write did not complete");
@@ -1012,7 +1015,7 @@ mod tests {
         ));
         assert!(stream.inner.written.starts_with(b"na\n\0ab"));
         assert_eq!(
-            guard.snapshot().negotiated_streams_total,
+            guard.snapshot().stream_negotiations_started_total,
             1,
             "counted once per stream"
         );
@@ -1020,6 +1023,57 @@ mod tests {
 
         drop(stream);
         assert_quiescent(&guard.snapshot());
+    }
+
+    /// The counter is of negotiations started, not of negotiations that
+    /// succeeded: it moves on the first read or write, and what happens to
+    /// the stream afterwards does not move it back.
+    #[test]
+    fn a_negotiation_is_counted_when_it_starts_whatever_becomes_of_it() {
+        let guard = P2pResourceGuard::new();
+        let mut muxer = guard.observe(MockMuxer::yielding(3), &listener());
+        let waker = waker();
+        let mut cx = Context::from_waker(&waker);
+        let started = |guard: &P2pResourceGuard| guard.snapshot().stream_negotiations_started_total;
+
+        // Observed, never read or written: no negotiation started.
+        let untouched = stream(&mut muxer);
+        assert_eq!(guard.snapshot().inbound_streams_total, 1);
+        assert_eq!(started(&guard), 0);
+        drop(untouched);
+        assert_eq!(started(&guard), 0);
+
+        // The first read starts one; the peer's proposal is then refused, as
+        // multistream-select does for a protocol it does not have.
+        let mut refused = stream(&mut muxer);
+        refused.inner.to_read =
+            VecDeque::from(b"\x13/multistream/1.0.0\n\x0b/unknown/1\n".to_vec());
+        let mut buf = [0u8; 64];
+        assert!(matches!(
+            Pin::new(&mut refused).poll_read(&mut cx, &mut buf),
+            Poll::Ready(Ok(n)) if n > 0
+        ));
+        assert_eq!(started(&guard), 1, "counted at the first read");
+        assert!(matches!(
+            Pin::new(&mut refused).poll_write(&mut cx, b"\x03na\n"),
+            Poll::Ready(Ok(4))
+        ));
+        drop(refused);
+        assert_eq!(started(&guard), 1, "a refused negotiation stays counted");
+
+        // The first read fails outright: still a negotiation started.
+        let mut failing = stream(&mut muxer);
+        failing.inner.fail = true;
+        assert!(matches!(
+            Pin::new(&mut failing).poll_read(&mut cx, &mut buf),
+            Poll::Ready(Err(_))
+        ));
+        drop(failing);
+        let seen = guard.snapshot();
+        assert_eq!(seen.stream_negotiations_started_total, 2);
+        assert_eq!(seen.inbound_streams_total, 3, "three observed, two started");
+        assert_eq!(seen.stream_errors_total, 1);
+        assert_quiescent(&seen);
     }
 
     #[test]
@@ -1280,7 +1334,7 @@ mod tests {
             "p2p_streams_per_connection",
             "p2p_stream_lifetime_seconds",
             "p2p_stream_observation_errors_total",
-            "p2p_negotiated_streams_total",
+            "p2p_stream_negotiations_started_total",
             "p2p_streams_observation_only_total",
             "p2p_guard_mode",
         ];

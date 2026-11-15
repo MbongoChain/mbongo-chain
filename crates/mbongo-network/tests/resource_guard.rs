@@ -50,6 +50,7 @@ const T4_P2P: u16 = 27135;
 const T5_P2P: u16 = 27136;
 const T8_P2P: u16 = 27137;
 const NODELAY_P2P: u16 = 27138;
+const NEGOTIATION_P2P: u16 = 27140;
 
 /// A protocol the node does not speak: negotiation on it fails.
 const UNKNOWN_PROTOCOL: &str = "/mbongo-phase1/unknown/1";
@@ -568,7 +569,7 @@ async fn t1_every_admissible_stream_is_served() {
         seen.inbound_streams_total, total,
         "one stream per request, no other"
     );
-    assert_eq!(seen.negotiated_streams_total, total);
+    assert_eq!(seen.stream_negotiations_started_total, total);
     assert_eq!(seen.connections_total, PEERS);
     assert!(seen.outbound_streams_total >= PEERS, "{seen}");
     assert_settled(&seen);
@@ -691,7 +692,7 @@ async fn t2_a_session_with_a_with_tcp_peer_is_unchanged() {
     let seen = node.guard.snapshot();
     println!("T2: guard: {seen}");
     assert_eq!(seen.inbound_streams_total, 5);
-    assert_eq!(seen.negotiated_streams_total, 5);
+    assert_eq!(seen.stream_negotiations_started_total, 5);
     assert_eq!(seen.connections_total, 2);
     assert_settled(&seen);
 }
@@ -805,7 +806,7 @@ async fn t3_openings_and_closings_agree_and_active_returns_to_zero() {
     assert_eq!(seen.inbound_streams_total, 2);
     assert_eq!(seen.inbound_streams_closed_total, 0);
     assert_eq!(seen.streams_per_connection_max, 2);
-    assert_eq!(seen.negotiated_streams_total, 2);
+    assert_eq!(seen.stream_negotiations_started_total, 2);
 
     // Three failed negotiations come and go beside them.
     for _ in 0..3 {
@@ -1043,6 +1044,49 @@ async fn t8_nothing_makes_the_node_guard_refuse_a_stream() {
         "the existing limits did refuse some of the burst"
     );
     assert_settled(&seen);
+}
+
+// ───────────────────────────── negotiations started, not succeeded ────────
+
+/// The negotiation counter moves when a negotiation starts, and says nothing
+/// of how it ends. On the real node: one request on the sync protocol, whose
+/// negotiation succeeds, and two on a protocol the node does not have, whose
+/// negotiation fails. Three negotiations started; the node's own counters
+/// know of one request.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn negotiations_started_include_those_that_fail() {
+    let node = victim(NEGOTIATION_P2P);
+    let mut peer = RawPeer::spawn();
+    peer.connect(&node.addr).await;
+
+    let answered = peer.request(node.peer, SyncRequest::GetHeight).await;
+    assert!(
+        matches!(answered, Ok(SyncResponse::Height(NODE_HEIGHT))),
+        "{answered:?}"
+    );
+    for _ in 0..2 {
+        peer.send(Cmd::Unknown(node.peer));
+        assert_eq!(peer.outcome().await.unwrap_err(), "UnsupportedProtocols");
+    }
+
+    until(&node.guard, "every stream closed", |s| {
+        s.inbound_streams_closed_total == 3
+    })
+    .await;
+    let seen = node.guard.snapshot();
+    let counters = node.counters.snapshot();
+    println!("negotiations: guard: {seen}; node: {counters}");
+    assert_eq!(seen.inbound_streams_total, 3);
+    assert_eq!(
+        seen.stream_negotiations_started_total, 3,
+        "started, whatever the outcome"
+    );
+    assert_eq!(
+        counters.sync_requests_admitted, 1,
+        "one of the three negotiations led to a request"
+    );
+    assert_settled(&seen);
+    assert!(peer.closed.is_empty(), "{:?}", peer.closed);
 }
 
 // ───────────────────────────── measurements (ignored) ─────────────────────
