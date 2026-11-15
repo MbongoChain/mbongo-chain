@@ -13,6 +13,8 @@
 > - **Mesuré ou supposé.** Les tableaux des sections 5, 6 et 8 sont des mesures. Sont des hypothèses, et signalées comme telles dans le texte : la cause de l'écart de 8 à 16 flux sous inondation (T3), et l'attribution des paliers de 44 ms à Nagle et aux accusés retardés (8.2). L'écart est suivi dans le [backlog de sécurité P2P](p2p-security-backlog.md).
 > - **Suite :** rapports de [Phase 1B](p2p-resource-guard-phase1b-report.md) et [Phase 1C](p2p-resource-guard-phase1c-report.md).
 
+> **Précision du 2026-11-15 (Phase 1D-R1).** Là où ce rapport dit que le compteur de négociations compte les flux sur lesquels le Swarm « a fait une première lecture ou écriture », il faut lire : une première **tentative** de lecture ou d'écriture, indépendamment du résultat de l'opération et sans garantie d'échange d'octets ni de réussite de la négociation. Le texte et les relevés ci-dessous ne sont pas modifiés.
+
 Convention : *démontré* signifie « exécuté et observé dans cette mission » ; tout le reste est marqué NOT TESTED ou PARTIAL.
 
 ---

@@ -40,7 +40,7 @@ Seven flood trials are documented. In each, the guard saw **more** streams than 
 ### Three events that must be told apart
 
 1. **A stream handed by yamux to the wrapper.** Counted by the guard as `p2p_inbound_streams_total`, before any negotiation byte is read.
-2. **A negotiation started.** Counted by the guard as `p2p_stream_negotiations_started_total`: the swarm did a first read or write on the stream. It says nothing of the outcome. In every trial above, (1) and (2) were equal.
+2. **A negotiation started.** Counted by the guard as `p2p_stream_negotiations_started_total`: the number of inbound streams on which a first read or write was polled, regardless of whether the operation returned `Pending`, succeeded, or failed. This does not prove that bytes were exchanged or that protocol negotiation succeeded. The swarm polls a stream as soon as it takes it up, which is why, in every trial above, (1) and (2) were equal.
 3. **A stream actually handled by the application protocol.** Counted by the node's existing counters once a request has been decoded, then admitted or refused (`sync_requests_*`, `announcements_*`), or once request-response has dropped the stream at its per-connection capacity.
 
 Between (2) and (3) a stream can exist without being in any application counter: while its negotiation runs, and while its request is being read. If it disappears in that interval, only the guard has seen it. Nothing counts that case today.
@@ -64,10 +64,10 @@ Between (2) and (3) a stream can exist without being in any application counter:
 
 A future test, or set of tests, that meets all of these:
 
-1. **Known states.** A client opens a known number of streams and brings each to one chosen state before closing the connection: (a) opened, no byte sent; (b) negotiation started, not finished; (c) negotiated, request partly sent; (d) request fully sent, not yet answered; (e) answered.
+1. **Known states.** A client opens a known number of streams and brings each to one chosen state before closing the connection: (a) opened, no byte sent by the client; (b) protocol proposed by the client, negotiation not finished; (c) negotiated, request partly sent; (d) request fully sent, not yet answered; (e) answered.
 2. **One terminal category per stream.** After the connection has closed and no stream is active on it, every stream the guard observed falls in exactly one category: answered; refused, by which rule; dropped at capacity; negotiation failed; **closed before a request was decoded**; ping or identify.
 3. **The sum closes to the unit.** The categories add up to `p2p_inbound_streams_total`, with no remainder, for each state mix in (1).
-4. **Each state lands where predicted.** States (a), (b) and (c) fall in "closed before a request was decoded" and nowhere else; (d) and (e) in the application counters.
+4. **Each state lands where predicted.** States (a), (b) and (c) fall in "closed before a request was decoded" and nowhere else; (d) and (e) in the application counters. The guard's own negotiation counter does not separate these states: it will have counted a stream in state (a) as soon as the swarm polled it, with no byte received.
 5. **Under flood too.** On the A2.0 harness, with the traffic tool stopping abruptly, the remainder is zero in every trial, for 1, 4 and 8 flooding connections. If it is not, the entry stays open.
 6. **Readings taken at rest.** Both readings are taken after the closed connections have no active stream, and the test says how it knows.
 7. **Observation only.** The test and whatever it needs change no admission decision.

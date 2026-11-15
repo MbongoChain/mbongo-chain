@@ -13,6 +13,8 @@
 > - **Décisions prises depuis.** Parmi celles que la section 13 laissait ouvertes : le renommage de la métrique et l'intégration des documents sont faits en Phase 1C. L'écart de réconciliation (section 3) est suivi dans le [backlog de sécurité P2P](p2p-security-backlog.md), toujours non résolu.
 > - **Suite :** rapport de [Phase 1C](p2p-resource-guard-phase1c-report.md).
 
+> **Précision du 2026-11-15 (Phase 1D-R1).** Là où ce rapport dit que le compteur de négociations compte les flux sur lesquels le Swarm « a fait une première lecture ou écriture », il faut lire : une première **tentative** de lecture ou d'écriture, indépendamment du résultat de l'opération et sans garantie d'échange d'octets ni de réussite de la négociation. Le texte et les relevés ci-dessous ne sont pas modifiés.
+
 Convention : *démontré* signifie « exécuté et observé dans cette mission ». Un contrôle GitHub n'est dit réussi que s'il s'est terminé sur le SHA indiqué.
 
 ---

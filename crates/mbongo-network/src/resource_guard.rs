@@ -26,9 +26,10 @@
 //!
 //! **What it cannot see.** The protocol a stream ends up speaking, and whether
 //! negotiation succeeded: both happen in the swarm, after the muxer has given
-//! the stream away. What is counted is a negotiation *started*: the swarm
-//! performed a first read or write on the stream. A negotiation that then
-//! fails, or times out, has been counted all the same.
+//! the stream away. What is counted is a negotiation *started*: a first read
+//! or write was polled on the stream, regardless of whether the operation
+//! returned `Pending`, succeeded, or failed. This does not prove that bytes
+//! were exchanged or that protocol negotiation succeeded.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -297,10 +298,12 @@ pub struct GuardSnapshot {
     pub connections_active: u64,
     /// Connections wrapped since start.
     pub connections_total: u64,
-    /// `p2p_stream_negotiations_started_total`: inbound streams the swarm read
-    /// from or wrote to at least once, which is how negotiation starts. It
-    /// says nothing of the outcome: a stream whose negotiation fails is
-    /// counted here.
+    /// `p2p_stream_negotiations_started_total`: number of inbound streams on
+    /// which a first read or write was polled, regardless of whether the
+    /// operation returned `Pending`, succeeded, or failed. This does not
+    /// prove that bytes were exchanged or protocol negotiation succeeded.
+    /// The swarm polls a stream as soon as it takes it up, so in practice
+    /// this follows `inbound_streams_total` closely.
     pub stream_negotiations_started_total: u64,
     /// `p2p_streams_observation_only_total`: inbound streams returned to the
     /// swarm untouched. Equal to `inbound_streams_total` in this mode.
@@ -397,7 +400,9 @@ impl GuardSnapshot {
         metric(
             "p2p_stream_negotiations_started_total",
             "counter",
-            "Inbound streams on which the swarm started protocol negotiation, whatever its outcome.",
+            "Inbound streams on which a first read or write was polled, whether it returned \
+             Pending, succeeded or failed. Not proof of bytes exchanged or of a successful \
+             negotiation.",
             &plain(self.stream_negotiations_started_total),
         );
         metric(
@@ -595,7 +600,7 @@ struct StreamObservation {
     /// The stream's number on its connection, from 1.
     number: u64,
     opened: Instant,
-    /// Set by the first read or write.
+    /// Set when a first read or write is polled, whatever it returns.
     io_started: bool,
     /// Set by the first failed read, write, flush or close.
     errored: bool,
@@ -627,7 +632,10 @@ impl StreamObservation {
         }
     }
 
-    /// The swarm's first read or write on the stream: negotiation has begun.
+    /// Called when the swarm polls a first read or write on the stream,
+    /// before the wrapped stream is polled: a negotiation has been started.
+    /// The poll may then return `Pending`, succeed or fail; none of that is
+    /// known here, and none of it undoes the count.
     fn io(&mut self) {
         if !self.io_started {
             self.io_started = true;
@@ -1026,8 +1034,9 @@ mod tests {
     }
 
     /// The counter is of negotiations started, not of negotiations that
-    /// succeeded: it moves on the first read or write, and what happens to
-    /// the stream afterwards does not move it back.
+    /// succeeded: it moves when a first read or write is polled, and what
+    /// that poll returns, or what happens to the stream afterwards, does not
+    /// move it back.
     #[test]
     fn a_negotiation_is_counted_when_it_starts_whatever_becomes_of_it() {
         let guard = P2pResourceGuard::new();

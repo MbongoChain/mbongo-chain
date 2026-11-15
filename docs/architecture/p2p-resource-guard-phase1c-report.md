@@ -5,6 +5,8 @@
 **Documents de référence :** [étude](p2p-resource-guard-study.md), [Phase 0](p2p-resource-guard-phase0-report.md), [Phase 1](p2p-resource-guard-phase1-report.md), [Phase 1B](p2p-resource-guard-phase1b-report.md), [backlog de sécurité P2P](p2p-security-backlog.md).
 **Verdict :** voir la [section 13](#13-décision-recommandée).
 
+> **Précision du 2026-11-15 (Phase 1D-R1), ajoutée après coup.** `p2p_stream_negotiations_started_total` est le nombre de flux entrants sur lesquels une première tentative de lecture ou d'écriture a été effectuée, indépendamment du résultat de l'opération et sans garantie d'échange d'octets ni de réussite de la négociation. Le compteur avance dès que le Swarm sollicite le flux, que l'opération reste en attente, réussisse ou échoue. La section 3 a été précisée en ce sens ; le texte d'aide Prometheus qu'elle cite est celui de la Phase 1C, remplacé depuis. Aucun résultat de ce rapport n'est modifié, et ce qui est mesuré n'a pas changé.
+
 > **Comment lire ce rapport.** Il est committé en deux temps. Une première version accompagne les documents, pour que leurs liens vers ce fichier soient valides dès le premier push. Les sections 8 à 10 et le verdict sont complétés dans un commit suivant, une fois la CI terminée sur le premier push. **Ce commit suivant ne contient que ce fichier** : la CI qu'il décrit porte donc sur un SHA qui ne le contient pas dans sa forme finale. La CI du SHA final est consignée dans la description de la PR.
 
 Convention : *démontré* signifie « exécuté et observé dans cette mission ». Un contrôle GitHub n'est dit réussi que s'il s'est terminé sur le SHA indiqué. Ce qui n'a pas été exécuté est marqué NOT TESTED.
@@ -53,7 +55,7 @@ Relevé sur GitHub avant toute écriture :
 
 ## 3. Description exacte du renommage
 
-**Pourquoi.** `p2p_negotiated_streams_total` se lisait comme un nombre de négociations réussies. Le compteur compte les flux entrants sur lesquels le Swarm a fait une première lecture ou écriture, ce qui est le début d'une négociation ; son issue n'est pas visible à l'étage du multiplexeur.
+**Pourquoi.** `p2p_negotiated_streams_total` se lisait comme un nombre de négociations réussies. Le compteur compte les flux entrants sur lesquels une première tentative de lecture ou d'écriture a été effectuée, indépendamment du résultat de l'opération et sans garantie d'échange d'octets ni de réussite de la négociation. C'est ainsi que le Swarm commence une négociation ; son issue n'est pas visible à l'étage du multiplexeur.
 
 **Quoi.**
 
@@ -66,7 +68,7 @@ Relevé sur GitHub avant toute écriture :
 
 Le troisième renommage aligne les journaux structurés sur la métrique : sans lui, le même fait porterait deux noms.
 
-Texte d'aide Prometheus : « Inbound streams on which the swarm started protocol negotiation, whatever its outcome. » Les commentaires du module et du champ disent la même chose.
+Texte d'aide Prometheus, tel qu'il était en Phase 1C : « Inbound streams on which the swarm started protocol negotiation, whatever its outcome. » Il a été précisé en Phase 1D-R1 (voir la note en tête).
 
 **Ce qui n'a pas changé.** Le diff du code de production (761 lignes avant, 764 après) ne contient que ces noms et ces commentaires. Le point d'observation, la logique de comptage, les autres métriques et le reste de l'API publique sont identiques. Aucune métrique n'a été ajoutée.
 
