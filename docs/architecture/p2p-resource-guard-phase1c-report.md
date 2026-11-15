@@ -168,28 +168,97 @@ Au-dessus de `6376cf6a`, sans réécriture d'historique :
 | Commit | Contenu |
 |---|---|
 | `22d9734fc45d53e32c889c81dae58497d31eacca` | `net: name the negotiation counter for what it counts (resource guard)` — le renommage, ses deux tests, le port du second |
-| commit documentaire | Les quatre documents, le backlog, la première version de ce rapport, les deux lignes de l'index |
-| commit suivant | Ce rapport seul, complété après la CI |
-
-Les empreintes des deux derniers figurent en section 8.
+| `80f55efd3860d8df2c83947402e9a507abb0416e` | `docs(p2p): the resource guard study, its phase reports and a P2P security backlog (non-normative)` — les quatre documents, le backlog, la première version de ce rapport, les deux lignes de l'index |
+| le commit qui porte cette version | Ce rapport seul, complété après la CI. Son empreinte ne peut pas figurer dans le fichier qu'il contient ; elle est dans la description de la PR |
 
 ---
 
 ## 8. Nouveau SHA soumis
 
-*Complété après le premier push.*
+| | Valeur |
+|---|---|
+| SHA du premier push de cette phase | **`80f55efd3860d8df2c83947402e9a507abb0416e`** |
+| Son arbre | `8ace0720e727fe47565b0cd4a6a2e4d6ecc1b2ae` |
+| Base | `232becb7e9bfb4270c9d2d82d87560794fdf0a87` (`dev`) |
+| Mode de push | normal, en avance rapide de `6376cf6a` ; aucun force-push |
+| Contenu | les deux commits d'origine, le renommage, les documents |
+
+**Tout le code de la PR est dans ce SHA.** Le commit qui le suit n'ajoute que les sections 7 à 10 et 13 de ce rapport : un fichier Markdown, aucun code. Son empreinte et sa CI sont dans la description de la PR, pas ici.
 
 ---
 
 ## 9. Résultats CI
 
-*Complété une fois la CI terminée sur le premier push.*
+**Sur `80f55efd3860d8df2c83947402e9a507abb0416e`**, événement `pull_request`. La CI de `6376cf6a` n'a pas été réutilisée.
+
+| Workflow | Exécution | Conclusion |
+|---|---|---|
+| Mbongo CI | [43678405797](https://github.com/MbongoChain/mbongo-chain/actions/runs/43678405797) | succès |
+| Spelling Check | [43678405825](https://github.com/MbongoChain/mbongo-chain/actions/runs/43678405825) | succès |
+
+| Contrôle | Requis sur `dev` | Résultat | Durée | Job |
+|---|---|---|---|---|
+| Rust Checks (fmt, clippy, test, replay) | oui | **réussi** | 7 min 25 s | [132703511435](https://github.com/MbongoChain/mbongo-chain/actions/runs/43678405797/job/132703511435) |
+| Rust 1.85 (minimum supported version) | oui | **réussi** | 2 min 14 s | [132703511372](https://github.com/MbongoChain/mbongo-chain/actions/runs/43678405797/job/132703511372) |
+| Mbongo Provider Containment (Linux) | oui | **réussi** | 3 min 27 s | [132703511202](https://github.com/MbongoChain/mbongo-chain/actions/runs/43678405797/job/132703511202) |
+| Mbongo Compute v0.4 Vertical | oui | **réussi** | 1 min 10 s | [132705066068](https://github.com/MbongoChain/mbongo-chain/actions/runs/43678405797/job/132705066068) |
+| TypeScript SDK (Node 20.19.0) | oui | **réussi** | 19 s | [132703511471](https://github.com/MbongoChain/mbongo-chain/actions/runs/43678405797/job/132703511471) |
+| TypeScript SDK (Node 24) | oui | **réussi** | 16 s | [132703511443](https://github.com/MbongoChain/mbongo-chain/actions/runs/43678405797/job/132703511443) |
+| Docker Devnet Bootstrap | non | réussi | 11 min 0 s | [132703511383](https://github.com/MbongoChain/mbongo-chain/actions/runs/43678405797/job/132703511383) |
+| Mbongo Provider (Windows compatibility) | non | réussi | 2 min 19 s | [132703511342](https://github.com/MbongoChain/mbongo-chain/actions/runs/43678405797/job/132703511342) |
+| Monetary Policy Model | non | réussi | 27 s | [132703511458](https://github.com/MbongoChain/mbongo-chain/actions/runs/43678405797/job/132703511458) |
+| spelling | non | réussi | 5 s | [132703511048](https://github.com/MbongoChain/mbongo-chain/actions/runs/43678405825/job/132703511048) |
+| Devnet Convergence Harness | non | **ignoré** | — | [132705067004](https://github.com/MbongoChain/mbongo-chain/actions/runs/43678405797/job/132705067004) |
+| Mbongo Compute Hardware Attestation (live, SEV-SNP) | non | **ignoré** | — | [132705066821](https://github.com/MbongoChain/mbongo-chain/actions/runs/43678405797/job/132705066821) |
+
+**10 réussis, 0 échec, 2 ignorés. Les six contrôles requis sont verts.**
+
+**Les contrôles ignorés ne sont pas des réussites.**
+
+- *Devnet Convergence Harness* ne tourne que sur push, par conception du workflow. Il n'a donc tourné en CI sur aucun SHA de cette PR. Il a réussi en local sur l'arbre d'avant le renommage (`37169478…`), pas sur celui-ci.
+- *Hardware Attestation* demande un runner matériel que le dépôt n'a pas. Sans rapport avec cette PR.
+- L'audit des dépendances Rust ne se déclenche que si `Cargo.lock` ou un `Cargo.toml` change. Cette PR n'en touche aucun : il n'a pas tourné.
+
+Vérifié dans le journal du job « Rust Checks » (2 790 lignes) :
+
+- **Tests Rust :** 86 lignes de résultat, **1 161 réussis**, 0 échec, 15 ignorés, toutes étapes du job confondues. C'est 2 de plus que sur `6376cf6a` : les deux tests ajoutés.
+- **Tests du garde :** les 13 tests unitaires ; `tests/resource_guard.rs`, 8 réussis et 4 ignorés ; `tests/resource_guard_trace.rs`, 1 réussi.
+- **Les deux nouveaux tests ont bien été exécutés et réussis :** `a_negotiation_is_counted_when_it_starts_whatever_becomes_of_it` et `negotiations_started_include_those_that_fail`.
+- **Tests réseau :** les fichiers d'intégration existants du crate réseau sont dans ces 86 lignes de résultat, sans échec.
+- **Harnais :** `DETERMINISTIC REPLAY: PASS`, `REFERENCE COMPUTE FLOW: PASS` ; 60 ports de harnais distincts et hors de la plage éphémère, vérifiée cette fois sous Linux.
+- **Rust 1.85 :** le job vérifie tout le workspace avec rustc 1.85.0. C'est la vérification qui manquait en local.
+- **Avertissements :** aucun de compilation ni de clippy. Un avertissement d'infrastructure, sans rapport avec cette PR : des actions GitHub visant Node.js 20, forcées en Node.js 24.
+
+Aucun contrôle n'a été contourné, relancé ou modifié.
 
 ---
 
 ## 10. État final de la PR
 
-*Complété après la CI.*
+Relevé après la CI de `80f55efd`, avant le commit qui porte cette version du rapport.
+
+| | Valeur |
+|---|---|
+| PR | 262, ouverte, **en brouillon**, `net/resource-guard-phase1-observe` → `dev`, non fusionnée |
+| Tête sur GitHub | `80f55efd`, identique au local |
+| Commits | `dfec0307`, `6376cf6a`, `22d9734f`, `80f55efd` |
+| Conflit avec `dev` | aucun ; `dev` est toujours `232becb7` |
+| Revue | aucune ; je n'en ai déposé aucune |
+| Arbre principal | inchangé : branche `docs/general-purpose-compute-proposal`, HEAD `6fae9fc1`, mêmes documents non suivis |
+| `origin/dev`, `origin/main` | inchangés ; aucun push vers eux |
+| Autres worktrees, stash | inchangés |
+
+**Revue finale (étape H de la mission), sur `80f55efd` :**
+
+| Condition | État |
+|---|---|
+| Aucun conflit avec `dev` | vérifié |
+| PR limitée au mode `OBSERVE_ONLY` | vérifié : `GuardMode` a toujours une seule valeur, et le diff de production du renommage ne contient que des noms et des commentaires |
+| Documentation et backlog présents | vérifié : six documents sous `docs/architecture/`, deux lignes dans l'index |
+| Changement de métrique testé | vérifié : deux tests, réussis en local et en CI |
+| Aucune politique de refus introduite | vérifié : aucun chemin n'abandonne un flux, aucun paramètre, aucune limite modifiée |
+
+Ces conditions étant réunies, la PR sera sortie du mode brouillon **une fois la CI verte sur le commit qui porte cette version du rapport**, et pas avant. Ce passage, s'il a lieu, est consigné dans la description de la PR.
 
 ---
 
@@ -199,6 +268,7 @@ Les empreintes des deux derniers figurent en section 8.
 |---|---|
 | Début de la mission | 29,5 Go |
 | Après la validation locale | 28,8 Go |
+| Après la CI du premier push | 28,8 Go |
 
 Au-dessus du plancher de 20 Go pendant toute la mission. Aucune compilation Linux n'a été lancée et rien n'a été supprimé.
 
@@ -220,4 +290,19 @@ Au-dessus du plancher de 20 Go pendant toute la mission. Aucune compilation Linu
 
 ## 13. Décision recommandée
 
-*Complété après la CI.*
+**READY FOR MERGE REVIEW**, pour `80f55efd`.
+
+- **Les exigences de la mission sont satisfaites** : métrique renommée et testée, documents et backlog intégrés, périmètre respecté.
+- **La CI est verte sur ce SHA** : les six contrôles requis, et les quatre autres qui ont tourné.
+- **La PR reste en observation seule.**
+
+**Portée exacte de ce verdict.** Il vaut pour `80f55efd`. Le commit qui porte cette version du rapport ne modifie que ce fichier ; sa CI ne peut pas être décrite ici. Si elle n'était pas verte, ce verdict ne vaudrait pas pour le SHA final, et la description de la PR le dirait.
+
+**Ce qu'une décision de fusion doit avoir en tête :**
+
+1. **`P2P-SEC-001` est ouvert.** L'écart de comptage sous inondation est borné, pas expliqué.
+2. **Devnet Convergence n'a tourné en CI sur aucun SHA de cette PR.** La CI de push après fusion sera une preuve distincte, à lire.
+3. **Les mesures de performance précèdent le renommage** et n'ont pas été refaites.
+4. **Les preuves brutes sont hors dépôt**, sur la machine du mainteneur.
+
+**Ce verdict n'autorise rien.** Aucune fusion, aucun déploiement, aucun début d'implémentation de la Phase 2, aucune activation de refus de flux. La décision de fusion revient à une personne.
