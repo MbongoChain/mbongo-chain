@@ -32,6 +32,8 @@ pub mod proc_memory;
 pub mod rate_limit;
 /// Rate limits on decoded inbound requests (S3 A2.3-b-1).
 pub mod request_rate;
+/// Observation of inbound streams before protocol negotiation; no policy.
+pub mod resource_guard;
 /// JSON-RPC 2.0 request/response types and backend trait.
 pub mod rpc;
 /// HTTP server wiring (Axum router + serve).
@@ -47,6 +49,7 @@ pub use crate::p2p_protocol::{
     Announcement, BlockNotifyAck, BlockNotifyCodec, SyncCodec, SyncNotification, SyncRequest,
     SyncResponse, BLOCK_NOTIFY_PROTOCOL, MAX_RANGE, SYNC_PROTOCOL,
 };
+pub use crate::resource_guard::{GuardMode, GuardSnapshot, P2pResourceGuard};
 pub use crate::rpc::{
     BackendError, JsonRpcRequest, JsonRpcResponse, RpcBackend, RpcError, RpcErrorCode,
 };

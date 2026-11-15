@@ -19,7 +19,9 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use libp2p::{
-    connection_limits, identify, mdns, noise, ping,
+    connection_limits,
+    core::{upgrade::Version, Transport},
+    identify, mdns, noise, ping,
     request_response::{self, ProtocolSupport, ResponseChannel},
     swarm::{
         behaviour::toggle::Toggle, dial_opts::DialOpts, ConnectionError, DialError, ListenError,
@@ -45,6 +47,7 @@ use crate::rate_limit::{ip_of, InboundRateLimit, RateRefusal};
 use crate::request_rate::{
     announcement_cost, sync_request_cost, Cost, RequestLimiter, RequestRateConfig, RequestRefusal,
 };
+use crate::resource_guard::{GuardSnapshot, P2pResourceGuard};
 
 /// How often the counters are summarised in the log, when they changed.
 const SUMMARY_INTERVAL: Duration = Duration::from_secs(60);
@@ -285,6 +288,11 @@ pub struct P2PNode {
     last_summary: P2PCountersSnapshot,
     /// The capacity-warning count as last logged.
     last_dropped: Option<u64>,
+    /// What the node observes of inbound streams, before negotiation. It
+    /// observes only: see [`crate::resource_guard`].
+    resource_guard: Arc<P2pResourceGuard>,
+    /// The guard's counts as last logged.
+    last_guard: GuardSnapshot,
     /// Events pushed to the sync orchestrator (peer connected, sync responses).
     sync_event_tx: mpsc::UnboundedSender<SyncEvent>,
     /// Receive-half for sync events; taken via [`P2PNode::take_sync_event_rx`].
@@ -329,6 +337,8 @@ impl P2PNode {
     /// # Errors
     ///
     /// Returns an error if the swarm cannot be built.
+    // One builder chain: the transport, then the behaviours.
+    #[allow(clippy::too_many_lines)]
     pub fn with_identity(
         mdns: bool,
         keypair: Option<libp2p::identity::Keypair>,
@@ -338,13 +348,26 @@ impl P2PNode {
         // libp2p makes of them (S3 A2.2b-lite).
         let frame_budget = Arc::new(FrameBudget::default());
         let codec_budget = Arc::clone(&frame_budget);
+        // Every connection's muxer goes through the guard, which observes
+        // inbound streams and decides nothing (see `resource_guard`).
+        let resource_guard = P2pResourceGuard::new();
+        let transport_guard = Arc::clone(&resource_guard);
         let swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
             .with_tokio()
-            .with_tcp(
-                tcp::Config::default(),
-                noise::Config::new,
-                yamux::Config::default,
-            )?
+            // The transport `with_tcp` builds in libp2p 0.53.2
+            // (`builder/phase/tcp.rs`), spelled out because `with_tcp` boxes
+            // the muxer before anything can wrap it. Same TCP, Noise and
+            // yamux configuration, same upgrade version.
+            .with_other_transport(move |key| {
+                let transport = tcp::tokio::Transport::new(tcp::Config::default())
+                    .upgrade(Version::V1Lazy)
+                    .authenticate(noise::Config::new(key)?)
+                    .multiplex(yamux::Config::default())
+                    .map(move |(peer, muxer), endpoint| {
+                        (peer, transport_guard.observe(muxer, &endpoint))
+                    });
+                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(transport)
+            })?
             .with_behaviour(|key| {
                 let identify = identify::Behaviour::new(
                     identify::Config::new(IDENTIFY_PROTOCOL_VERSION.to_string(), key.public())
@@ -432,6 +455,8 @@ impl P2PNode {
             ),
             last_summary: P2PCountersSnapshot::default(),
             last_dropped: None,
+            last_guard: resource_guard.snapshot(),
+            resource_guard,
             sync_event_tx,
             sync_event_rx: Some(sync_event_rx),
             sync_cmd_rx,
@@ -465,6 +490,12 @@ impl P2PNode {
     /// The counters of what this node admitted, refused and dropped.
     pub fn counters(&self) -> Arc<P2PCounters> {
         Arc::clone(&self.counters)
+    }
+
+    /// What this node has observed of inbound streams (see
+    /// [`crate::resource_guard`]). A read handle: the guard has no control.
+    pub fn resource_guard(&self) -> Arc<P2pResourceGuard> {
+        Arc::clone(&self.resource_guard)
     }
 
     /// Takes ownership of the sync event receiver.
@@ -668,7 +699,8 @@ impl P2PNode {
         let now = self.counters.snapshot();
         // Process-wide, and present only when the capacity logger is installed.
         let dropped = crate::capacity_log::dropped_at_capacity();
-        if now != self.last_summary || dropped != self.last_dropped {
+        let guard = self.resource_guard.snapshot();
+        if now != self.last_summary || dropped != self.last_dropped || guard != self.last_guard {
             match dropped {
                 Some(n) if n > 0 => info!(
                     "P2P counters since start: {now} \
@@ -677,8 +709,10 @@ impl P2PNode {
                 _ => info!("P2P counters since start: {now}"),
             }
             info!("P2P resources: {}", self.resources());
+            info!("P2P guard: {guard}");
             self.last_summary = now;
             self.last_dropped = dropped;
+            self.last_guard = guard;
         }
     }
 
