@@ -1,14 +1,21 @@
 //! Deterministic replay harness.
 //!
 //! Proves that chain state is deterministically reproducible by:
-//! 1. Running a producer node to create a chain of blocks.
-//! 2. Exporting all blocks via RPC (`get_block_by_height`).
-//! 3. Replaying them on a fresh in-memory backend using `apply_block()`.
-//! 4. Asserting that the replayed chain has identical height and tip hash.
+//! 1. Running a producer node to create a chain of blocks holding a
+//!    Transfer, a ComputeTask and an AnchorReceipt.
+//! 2. Exporting all blocks via RPC (`get_block_by_height`), and the
+//!    producer's account state via REST.
+//! 3. Replaying them through the node's own `apply_block`, starting from
+//!    the node's own `ensure_genesis`.
+//! 4. Asserting that every block hash, the watched accounts, the task and the
+//!    receipt equal the producer's; that a second replay is identical; that a
+//!    RocksDB replay survives a reopen; that an altered block is refused; and
+//!    that a diverged starting state is detected.
 //!
-//! This is an **external orchestration tool** — it does NOT embed any
-//! consensus logic. Block production happens via a real node process;
-//! replay uses the same `apply_block` code path as follower sync.
+//! Block production happens in a real node process. The replay runs the
+//! node's block-application code, compiled into this harness from the same
+//! source files (see `mod backend` below).
+#![cfg_attr(test, allow(dead_code))]
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -16,12 +23,309 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use mbongo_storage::Storage;
 use reqwest::Client;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::{Child, Command};
 use tokio::time::sleep;
+
+// ── The node's block-application path ───────────────────────────────────
+//
+// `backend.rs` and `mempool.rs` are compiled into this harness from the same
+// source files as the node binary. The replay below therefore runs the code
+// that applies blocks in the node, with no copy and with nothing exported
+// from `mbongo-node` for it. The harness's own unit tests leave these
+// modules out, so the node's unit tests still run once, in the node.
+#[cfg(not(test))]
+#[allow(dead_code)]
+#[path = "../backend.rs"]
+mod backend;
+#[cfg(not(test))]
+#[allow(dead_code)]
+#[path = "../mempool.rs"]
+mod mempool;
+
+#[cfg(not(test))]
+mod replay {
+    use super::backend::{compute_block_hash as node_block_hash, NodeBackend};
+    use super::mempool::MempoolConfig;
+    use mbongo_core::{Address, Block, Hash};
+    use mbongo_storage::{InMemoryStorage, RocksDbStorage, Storage};
+
+    /// What a chain holds, for comparison: every block hash by height, the
+    /// watched accounts, and the watched task and receipt bytes.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct ChainState {
+        pub block_hashes: Vec<Hash>,
+        pub accounts: Vec<(Address, Option<(u128, u64)>)>,
+        pub task: Option<Vec<u8>>,
+        pub receipt: Option<Vec<u8>>,
+    }
+
+    /// The state the comparison reads.
+    pub struct Watched {
+        pub accounts: Vec<Address>,
+        pub task_id: [u8; 32],
+        pub receipt_task_id: [u8; 32],
+    }
+
+    /// What the replay proved, for the report.
+    pub struct Summary {
+        pub blocks: usize,
+        pub transactions: usize,
+        pub runs: usize,
+    }
+
+    fn fresh<S: Storage>(storage: S) -> NodeBackend<S> {
+        NodeBackend::with_mempool_config(storage, false, MempoolConfig::default())
+    }
+
+    /// Writes genesis as the node does, and checks it is the exported one.
+    fn genesis<S: Storage>(backend: &NodeBackend<S>, blocks: &[Block]) -> Result<(), String> {
+        backend.ensure_genesis().map_err(|e| format!("ensure_genesis: {e}"))?;
+        let local = backend
+            .storage
+            .get_block_by_height(0)
+            .map_err(|e| format!("storage error: {e}"))?
+            .ok_or("no local genesis block")?;
+        if node_block_hash(&local) != node_block_hash(&blocks[0]) {
+            return Err("the local genesis differs from the exported genesis".to_string());
+        }
+        Ok(())
+    }
+
+    /// Applies `blocks` in order through `apply_block`.
+    fn apply_all<S: Storage>(backend: &NodeBackend<S>, blocks: &[Block]) -> Result<(), String> {
+        for block in blocks {
+            backend.apply_block(block).map_err(|e| {
+                format!(
+                    "apply_block refused the block at height {}: {e}",
+                    block.header.height
+                )
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Replays the exported chain onto a backend: genesis, then every block.
+    fn replay<S: Storage>(backend: &NodeBackend<S>, blocks: &[Block]) -> Result<(), String> {
+        genesis(backend, blocks)?;
+        apply_all(backend, &blocks[1..])
+    }
+
+    pub fn state<S: Storage>(backend: &NodeBackend<S>, w: &Watched) -> Result<ChainState, String> {
+        let err = |e: mbongo_storage::StorageError| format!("storage error: {e}");
+        let tip = backend.latest_height().map_err(|e| e.to_string())?;
+        let mut block_hashes = Vec::new();
+        for h in 0..=tip {
+            let block = backend
+                .storage
+                .get_block_by_height(h)
+                .map_err(err)?
+                .ok_or_else(|| format!("no block at height {h}"))?;
+            block_hashes.push(node_block_hash(&block));
+        }
+        let mut accounts = Vec::new();
+        for a in &w.accounts {
+            let held = backend.storage.get_account(a).map_err(err)?;
+            accounts.push((*a, held.map(|acc| (acc.balance, acc.nonce))));
+        }
+        Ok(ChainState {
+            block_hashes,
+            accounts,
+            task: backend.storage.get_task(&w.task_id).map_err(err)?,
+            receipt: backend.storage.get_receipt(&w.receipt_task_id).map_err(err)?,
+        })
+    }
+
+    /// Names the first difference between two states, if any.
+    pub fn compare(replayed: &ChainState, reference: &ChainState) -> Result<(), String> {
+        let (r, s) = (&replayed.block_hashes, &reference.block_hashes);
+        if let Some(h) = r.iter().zip(s.iter()).position(|(a, b)| a != b) {
+            return Err(format!("block hashes differ first at height {h}"));
+        }
+        if r.len() != s.len() {
+            return Err(format!(
+                "heights differ: replay {}, reference {}",
+                r.len() - 1,
+                s.len() - 1
+            ));
+        }
+        for ((addr, got), (_, want)) in replayed.accounts.iter().zip(reference.accounts.iter()) {
+            if got != want {
+                return Err(format!(
+                    "account {addr} differs: replay {got:?}, reference {want:?}"
+                ));
+            }
+        }
+        if replayed.task != reference.task {
+            return Err("the committed task differs".to_string());
+        }
+        if replayed.receipt != reference.receipt {
+            return Err("the anchored receipt differs".to_string());
+        }
+        Ok(())
+    }
+
+    /// Runs every replay check against the producer's reference state.
+    pub fn run(
+        blocks: &[Block],
+        reference: &ChainState,
+        watched: &Watched,
+        rocks_dir: &std::path::Path,
+        harness_hash: fn(&Block) -> Hash,
+    ) -> Result<Summary, String> {
+        // The harness's own hash function must be the node's.
+        for b in blocks {
+            if harness_hash(b) != node_block_hash(b) {
+                return Err(format!(
+                    "hash functions disagree at height {}",
+                    b.header.height
+                ));
+            }
+        }
+        let transactions: usize = blocks.iter().map(|b| b.body.transactions.len()).sum();
+
+        // 1. Replay through apply_block, then compare with the producer.
+        let first = fresh(InMemoryStorage::new());
+        replay(&first, blocks)?;
+        let replayed = state(&first, watched)?;
+        compare(&replayed, reference)?;
+        println!("  Replay 1 (in memory): every block applied; state equals the producer's");
+
+        // 2. Reproducibility: a second replay from nothing gives the same state.
+        let second = fresh(InMemoryStorage::new());
+        replay(&second, blocks)?;
+        if state(&second, watched)? != replayed {
+            return Err("two replays of the same blocks gave different states".to_string());
+        }
+        println!("  Replay 2 (in memory): identical to replay 1");
+
+        // 3. Persistence: replay into RocksDB, close, reopen.
+        {
+            let rocks =
+                fresh(RocksDbStorage::open(rocks_dir).map_err(|e| format!("rocksdb: {e}"))?);
+            replay(&rocks, blocks)?;
+            if state(&rocks, watched)? != replayed {
+                return Err("the RocksDB replay differs from the in-memory replay".to_string());
+            }
+        }
+        let reopened =
+            fresh(RocksDbStorage::open(rocks_dir).map_err(|e| format!("rocksdb reopen: {e}"))?);
+        genesis(&reopened, blocks)?;
+        if state(&reopened, watched)? != replayed {
+            return Err("the reopened RocksDB state differs from the replay".to_string());
+        }
+        let tip = blocks.last().ok_or("no blocks")?;
+        if reopened.apply_block(tip).is_ok() {
+            return Err("a stored block was applied a second time after reopening".to_string());
+        }
+        if state(&reopened, watched)? != replayed {
+            return Err("refusing a stored block changed the reopened state".to_string());
+        }
+        drop(reopened);
+        println!(
+            "  Replay 3 (RocksDB): persisted, reopened, state unchanged; a stored block is refused"
+        );
+
+        // 4. An altered block is refused, and leaves no trace.
+        let i = blocks
+            .iter()
+            .position(|b| !b.body.transactions.is_empty())
+            .ok_or("no exported block holds a transaction")?;
+        let partial = fresh(InMemoryStorage::new());
+        genesis(&partial, blocks)?;
+        apply_all(&partial, &blocks[1..i])?;
+        let before = state(&partial, watched)?;
+        let mut altered = blocks[i].clone();
+        altered.body.transactions[0].amount ^= 1;
+        if partial.apply_block(&altered).is_ok() {
+            return Err(format!("an altered block at height {i} was applied"));
+        }
+        altered.header.transactions_root =
+            mbongo_core::compute_transactions_root(&altered.body.transactions);
+        if partial.apply_block(&altered).is_ok() {
+            return Err(format!(
+                "an altered block with a matching transactions_root was applied at height {i}"
+            ));
+        }
+        if state(&partial, watched)? != before {
+            return Err("a refused block changed state".to_string());
+        }
+        apply_all(&partial, &blocks[i..])?;
+        if state(&partial, watched)? != replayed {
+            return Err("after the refusals, the original blocks gave another state".to_string());
+        }
+        println!("  Altered block at height {i}: refused twice (content, then signature); no state written");
+
+        // 5. Divergence is detected: replay onto a different starting state.
+        let diverged = fresh(InMemoryStorage::new());
+        genesis(&diverged, blocks)?;
+        let dev = watched.accounts[0];
+        let mut acc = diverged
+            .storage
+            .get_account(&dev)
+            .map_err(|e| format!("storage error: {e}"))?
+            .ok_or("the dev account is missing from genesis")?;
+        acc.balance -= 1;
+        diverged
+            .storage
+            .put_account(&dev, &acc)
+            .map_err(|e| format!("storage error: {e}"))?;
+        let detected = match apply_all(&diverged, &blocks[1..]) {
+            Err(_) => true,
+            Ok(()) => compare(&state(&diverged, watched)?, reference).is_err(),
+        };
+        if !detected {
+            return Err("a diverged starting state was not detected".to_string());
+        }
+        println!("  Divergence: a starting state one unit lower is detected");
+
+        Ok(Summary {
+            blocks: blocks.len(),
+            transactions,
+            runs: 3,
+        })
+    }
+}
+
+/// Builds a valid `Transfer` from the dev account, as RPC JSON.
+fn build_transfer_tx(nonce: u64, receiver: mbongo_core::Address, amount: u128) -> Value {
+    use ed25519_dalek::{Signer, SigningKey};
+    use mbongo_core::{Address, Transaction, TransactionPayload, TransactionType};
+
+    let sk = SigningKey::from_bytes(&[0xAAu8; 32]);
+    let mut tx = Transaction {
+        tx_type: TransactionType::Transfer,
+        sender: Address(sk.verifying_key().to_bytes()),
+        receiver,
+        amount,
+        nonce,
+        payload: TransactionPayload::None,
+        signature: [0u8; 64],
+    };
+    tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+    serde_json::to_value(&tx).expect("transaction serializes")
+}
+
+/// The producer's view of an account, over REST: `None` when absent.
+async fn producer_account(
+    client: &Client,
+    addr: mbongo_core::Address,
+) -> Result<Option<(u128, u64)>, String> {
+    let url = format!("http://127.0.0.1:{REST_PORT}/accounts/{addr}");
+    let resp = client.get(&url).send().await.map_err(|e| format!("REST request failed: {e}"))?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let body: Value = resp.json().await.map_err(|e| format!("REST body: {e}"))?;
+    let balance = body["balance"]
+        .as_str()
+        .and_then(|b| b.parse::<u128>().ok())
+        .ok_or_else(|| format!("REST account {addr}: no balance in {body}"))?;
+    let nonce = body["nonce"].as_u64().ok_or_else(|| format!("REST account {addr}: no nonce"))?;
+    Ok(Some((balance, nonce)))
+}
 
 // ── Configuration ───────────────────────────────────────────────────────
 
@@ -199,6 +503,7 @@ fn cleanup(dir: &std::path::Path) {
 
 // ── Main ────────────────────────────────────────────────────────────────
 
+#[cfg(not(test))]
 #[tokio::main]
 async fn main() {
     let client = Client::new();
@@ -313,6 +618,7 @@ fn build_task_tx(nonce: u64, salt: [u8; 32]) -> (Value, [u8; 32], Vec<u8>) {
     (tx_json, task_id, task_bytes)
 }
 
+#[cfg(not(test))]
 async fn run_replay(client: &Client, producer_dir: &std::path::Path) -> Result<(), String> {
     // ── Phase A: Produce chain ──────────────────────────────────────────
 
@@ -341,6 +647,21 @@ async fn run_replay(client: &Client, producer_dir: &std::path::Path) -> Result<(
         .await
         .map_err(|e| format!("anchor submission failed: {e}"))?;
     println!("  AnchorReceipt submitted (bound to the committed task)");
+
+    // A Transfer from the dev account (nonce 2) to a fresh address, so the
+    // replayed state includes moved balances and a created account.
+    let dev_addr = mbongo_core::Address(
+        ed25519_dalek::SigningKey::from_bytes(&[0xAAu8; 32]).verifying_key().to_bytes(),
+    );
+    let transfer_receiver = mbongo_core::Address([0x7Eu8; 32]);
+    rpc_call(
+        client,
+        "submit_transaction",
+        Some(build_transfer_tx(2, transfer_receiver, 12_345)),
+    )
+    .await
+    .map_err(|e| format!("transfer submission failed: {e}"))?;
+    println!("  Transfer submitted (12345 to a fresh address)");
 
     // Bounded height polling: succeed once the chain reaches MIN_HEIGHT.
     println!(
@@ -416,220 +737,73 @@ async fn run_replay(client: &Client, producer_dir: &std::path::Path) -> Result<(
         ));
     }
 
+    // The producer's state, read after the export. Every block it made after
+    // the snapshot must be empty, so this is also its state at the snapshot.
+    let watched = replay::Watched {
+        accounts: vec![dev_addr, transfer_receiver],
+        task_id: compute_task_id,
+        receipt_task_id: anchor_task_id,
+    };
+    let mut accounts = Vec::new();
+    for a in &watched.accounts {
+        accounts.push((*a, producer_account(client, *a).await?));
+    }
+    let later = rpc_call(client, "get_block_height", None)
+        .await?
+        .as_u64()
+        .ok_or("height is not u64")?;
+    for h in snapshot_height + 1..=later {
+        let value = rpc_call(client, "get_block_by_height", Some(json!({"height": h}))).await?;
+        let block: Block = serde_json::from_value(value)
+            .map_err(|e| format!("failed to deserialize block {h}: {e}"))?;
+        if !block.body.transactions.is_empty() {
+            return Err(format!("block {h}, after the snapshot, holds transactions"));
+        }
+    }
+    let reference = replay::ChainState {
+        block_hashes: exported_blocks.iter().map(compute_block_hash).collect(),
+        accounts,
+        task: Some(compute_task_bytes.clone()),
+        receipt: Some(anchor_receipt_bytes.clone()),
+    };
+    println!(
+        "  Producer state read: {} accounts; no block after the snapshot holds a transaction (checked to height {later})",
+        reference.accounts.len()
+    );
+
     // Kill producer — we're done with it.
     let _ = producer.kill().await;
     println!("  Producer stopped");
     println!("  Phase A: DONE\n");
 
-    // ── Phase B + C: Replay on fresh in-memory backend ──────────────────
+    // ── Phase B: Replay through the node's apply_block ──────────────────
 
-    println!("Phase B: Creating fresh backend...");
-    println!("Phase C: Replaying {} blocks...", exported_blocks.len());
-
-    use mbongo_storage::InMemoryStorage;
-
-    let replay_storage = InMemoryStorage::new();
-
-    // Apply genesis first (block 0).
-    let genesis_block: &Block = &exported_blocks[0];
-    let genesis_hash = compute_block_hash(genesis_block);
-
-    replay_storage
-        .put_block(&genesis_hash, genesis_block)
-        .map_err(|e| format!("storage error: {e}"))?;
-    replay_storage
-        .put_block_height_index(0, genesis_hash)
-        .map_err(|e| format!("storage error: {e}"))?;
-
-    // Pre-fund dev account (same as ensure_genesis in backend.rs).
-    use ed25519_dalek::SigningKey;
-    use mbongo_core::{Account, Address};
-    let signing_key = SigningKey::from_bytes(&[0xAAu8; 32]);
-    let verifying_key = signing_key.verifying_key();
-    let dev_addr = Address(verifying_key.to_bytes());
-    let mut dev_account = Account::new(dev_addr);
-    dev_account.balance = 1_000_000_000;
-    replay_storage
-        .put_account(&dev_addr, &dev_account)
-        .map_err(|e| format!("storage error: {e}"))?;
-
-    println!("  Genesis block applied (height 0)");
-
-    // Now use NodeBackend for apply_block on blocks 1..N.
-    // Since we're in a separate binary, we need to construct a NodeBackend.
-    // But NodeBackend is defined in the main binary's backend module which
-    // is not accessible from here.
-    //
-    // Better approach: construct NodeBackend with the InMemoryStorage.
-    // To do this, we need `backend` to be accessible. Since it's a private
-    // module in main.rs, we cannot import it from a bin target.
-    //
-    // SOLUTION: We replicate the exact same validation logic that apply_block
-    // uses, but using just the storage primitives. OR, we use the storage
-    // write_batch approach directly. The key insight: for an empty-tx chain
-    // (no transactions), apply_block just validates parent linkage, height,
-    // tx root, and stores the block.
-    //
-    // Actually the best approach is simpler: we know apply_block in NodeBackend
-    // computes the block hash as blake3(SCALE-encoded block), validates parent
-    // linkage, and writes atomically. For the replay, we can:
-    // 1. Store each block at its height index.
-    // 2. After all blocks, compute the tip hash.
-    // 3. Compare with the original.
-    //
-    // This is valid because the blocks were already validated by the producer.
-    // We're testing that the exported data, when stored, produces the same tip.
-
-    let mut replayed_receipts: u64 = 0;
-    let mut replayed_tasks: u64 = 0;
-    for (i, block) in exported_blocks.iter().enumerate().skip(1) {
-        let block_hash = compute_block_hash(block);
-
-        // Validate parent linkage against stored chain.
-        let parent_height = block.header.height - 1;
-        let parent = replay_storage
-            .get_block_by_height(parent_height)
-            .map_err(|e| format!("storage error: {e}"))?
-            .ok_or_else(|| format!("parent block at height {parent_height} not found"))?;
-        let expected_parent_hash = compute_block_hash(&parent);
-        if block.header.parent_hash != expected_parent_hash {
-            return Err(format!(
-                "parent hash mismatch at height {}: expected {expected_parent_hash}, got {}",
-                block.header.height, block.header.parent_hash
-            ));
-        }
-
-        // Validate transactions root.
-        let recomputed_root = mbongo_core::compute_transactions_root(&block.body.transactions);
-        if block.header.transactions_root != recomputed_root {
-            return Err(format!(
-                "transactions_root mismatch at height {}",
-                block.header.height
-            ));
-        }
-
-        // Reconstruct derived state: the receipts index (RFC 0002 §5) and
-        // the tasks index (RFC 0005 §4) are fully derived from chain
-        // blocks, so replaying a block stores the canonical SCALE bytes
-        // of every embedded receipt and task under its task_id.
-        {
-            use mbongo_core::TransactionPayload;
-            use mbongo_storage::BatchOp;
-            use parity_scale_codec::Encode;
-            let mut derived_ops = Vec::new();
-            for tx in &block.body.transactions {
-                match &tx.payload {
-                    TransactionPayload::AnchorReceipt(receipt) => {
-                        derived_ops.push(BatchOp::PutReceipt(receipt.task_id, receipt.encode()));
-                        replayed_receipts += 1;
-                    }
-                    TransactionPayload::ComputeTask(task) => {
-                        derived_ops.push(BatchOp::PutTask(task.task_id(), task.encode()));
-                        replayed_tasks += 1;
-                    }
-                    TransactionPayload::None => {}
-                }
-            }
-            if !derived_ops.is_empty() {
-                replay_storage
-                    .write_batch(derived_ops)
-                    .map_err(|e| format!("storage error: {e}"))?;
-            }
-        }
-
-        // Store the block.
-        replay_storage
-            .put_block(&block_hash, block)
-            .map_err(|e| format!("storage error: {e}"))?;
-        replay_storage
-            .put_block_height_index(block.header.height, block_hash)
-            .map_err(|e| format!("storage error: {e}"))?;
-
-        if i % 5 == 0 || i == exported_blocks.len() - 1 {
-            println!("  Replayed block {i}/{}", exported_blocks.len() - 1);
-        }
-    }
-    println!("  Replayed {replayed_receipts} anchored receipt(s)");
-    println!("  Replayed {replayed_tasks} committed task(s)");
-
-    println!("  Phase C: DONE\n");
-
-    // ── Phase D: Assert ─────────────────────────────────────────────────
-
-    println!("Phase D: Validating...");
-    let replay_height =
-        replay_storage.get_latest_height().map_err(|e| format!("storage error: {e}"))?;
-
-    let replay_tip_block = replay_storage
-        .get_block_by_height(replay_height)
-        .map_err(|e| format!("storage error: {e}"))?
-        .ok_or("replay tip block not found")?;
-    let replay_tip_hash = compute_block_hash(&replay_tip_block);
-
-    println!("  Replay height:     {replay_height}");
-    println!("  Snapshot height:   {snapshot_height}");
-    println!("  Replay tip hash:   {replay_tip_hash}");
-    println!("  Snapshot tip hash: {original_tip_hash}");
-
-    if replay_height != snapshot_height {
+    println!(
+        "Phase B: Replaying {} blocks through apply_block...",
+        exported_blocks.len()
+    );
+    let rocks_dir = producer_dir.with_file_name("replay-rocksdb");
+    cleanup(&rocks_dir);
+    let outcome = replay::run(
+        &exported_blocks,
+        &reference,
+        &watched,
+        &rocks_dir,
+        compute_block_hash,
+    );
+    cleanup(&rocks_dir);
+    let summary = outcome?;
+    if summary.transactions < 3 {
         return Err(format!(
-            "height mismatch: replay={replay_height}, snapshot={snapshot_height}"
+            "expected the 3 submitted transactions in the exported chain, found {}",
+            summary.transactions
         ));
     }
-
-    if replay_tip_hash != original_tip_hash {
-        let final_exported = exported_blocks.last().map_or(0, |b| b.header.height);
-        return Err(format!(
-            "tip hash mismatch at snapshot height {snapshot_height} \
-             (final exported block height {final_exported}):\n  \
-             replay:   {replay_tip_hash}\n  \
-             snapshot: {original_tip_hash}"
-        ));
-    }
-
-    // Receipt state comparison (RFC 0002 Phase 3): the submitted anchor
-    // must have been included by the producer, and the replayed receipt
-    // bytes must equal the canonical SCALE encoding submitted.
-    if replayed_receipts == 0 {
-        return Err("submitted AnchorReceipt was not included in any exported block".to_string());
-    }
-    if !replay_storage
-        .has_receipt(&anchor_task_id)
-        .map_err(|e| format!("storage error: {e}"))?
-    {
-        return Err("replayed chain is missing the anchored receipt".to_string());
-    }
-    let replayed_bytes = replay_storage
-        .get_receipt(&anchor_task_id)
-        .map_err(|e| format!("storage error: {e}"))?
-        .ok_or("anchored receipt bytes missing after replay")?;
-    if replayed_bytes != anchor_receipt_bytes {
-        return Err("replayed receipt bytes differ from canonical encoding".to_string());
-    }
-    println!("  Receipt state: anchored receipt reproduced byte-for-byte");
-
-    // Task state comparison (RFC 0005 §4): the submitted task must have
-    // been included by the producer, and the replayed task bytes must
-    // equal the canonical SCALE encoding submitted.
-    if replayed_tasks == 0 {
-        return Err("submitted ComputeTask was not included in any exported block".to_string());
-    }
-    if !replay_storage
-        .has_task(&compute_task_id)
-        .map_err(|e| format!("storage error: {e}"))?
-    {
-        return Err("replayed chain is missing the committed task".to_string());
-    }
-    let replayed_task = replay_storage
-        .get_task(&compute_task_id)
-        .map_err(|e| format!("storage error: {e}"))?
-        .ok_or("committed task bytes missing after replay")?;
-    if replayed_task != compute_task_bytes {
-        return Err("replayed task bytes differ from canonical encoding".to_string());
-    }
-    println!("  Task state: committed task reproduced byte-for-byte");
-
-    println!("  Phase D: PASS");
+    println!(
+        "  {} blocks, {} transactions, {} full replays",
+        summary.blocks, summary.transactions, summary.runs
+    );
+    println!("  Phase B: PASS");
     Ok(())
 }
 
