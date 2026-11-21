@@ -8,3 +8,7 @@ scripts/dev-binaries/*.sh text eol=lf
 
 # Mounted into Linux containers by the A2.0 harness: keep LF on Windows checkouts.
 scripts/stress/* text eol=lf
+
+# Byte-exact: a genesis file is its bytes, and its chain_id hashes them (RFC 0006 section 1).
+crates/mbongo-core/genesis/** -text
+test-vectors/genesis/** -text
