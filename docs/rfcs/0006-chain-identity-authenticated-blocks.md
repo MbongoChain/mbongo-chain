@@ -1,6 +1,10 @@
 # RFC 0006 — Chain Identity, Authenticated Blocks and State Commitment
 
-**Status:** Draft
+**Status:** Accepted — sole-maintainer
+**Governance mode:** SINGLE_MAINTAINER
+**Accepted:** 2026-11-21
+**Accepted by:** @gkalombo21 (author)
+**Independent Core Maintainer review:** unavailable — `E(R) = 0` at acceptance
 **Tracking:** #205, under #209
 **Author:** Gilbert Kalombo
 **Created:** 2026-11-05
