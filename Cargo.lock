@@ -2733,6 +2733,7 @@ dependencies = [
  "ed25519-dalek",
  "env_logger",
  "hex",
+ "libc",
  "libp2p",
  "log",
  "mbongo-api",
@@ -2774,6 +2775,21 @@ dependencies = [
  "rocksdb",
  "tempfile",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "mbongo-stress"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "clap",
+ "futures",
+ "libp2p",
+ "mbongo-core",
+ "mbongo-network",
+ "parity-scale-codec",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

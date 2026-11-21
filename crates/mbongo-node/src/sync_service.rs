@@ -22,20 +22,23 @@ use crate::backend::compute_block_hash;
 /// This function runs forever; spawn it on a tokio task.
 pub async fn run_sync_service<S: Storage + Send + Sync + 'static>(
     storage: Arc<S>,
-    mut rx: mpsc::UnboundedReceiver<InboundSyncRequest>,
+    mut rx: mpsc::Receiver<InboundSyncRequest>,
     cmd_tx: mpsc::UnboundedSender<SyncCommand>,
 ) {
     while let Some(inbound) = rx.recv().await {
+        // A requester that timed out or left is not answered; dropping the
+        // request releases its queue slot (S3 A1).
+        if inbound.is_canceled() {
+            inbound.discard_canceled();
+            continue;
+        }
         let response = handle_request(storage.as_ref(), &inbound.request);
         debug!(
             "Sync response to {}: {:?}",
             inbound.peer,
             response_summary(&response)
         );
-        let cmd = SyncCommand::SendResponse {
-            channel: inbound.channel,
-            response,
-        };
+        let cmd = inbound.respond(response);
         if cmd_tx.send(cmd).is_err() {
             warn!("Sync command channel closed; stopping sync service");
             break;

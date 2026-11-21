@@ -242,7 +242,8 @@ async fn block_notify_mismatched_versions_fail_cleanly() {
         BLOCK_NOTIFY_PROTOCOL,
         SyncNotification::NewBlock {
             block: empty_block(),
-        },
+        }
+        .into(),
     )
     .await;
     assert!(
@@ -261,7 +262,21 @@ async fn block_notify_matching_versions_negotiate() {
         BLOCK_NOTIFY_PROTOCOL,
         SyncNotification::NewBlock {
             block: empty_block(),
-        },
+        }
+        .into(),
+        BlockNotifyAck,
+    )
+    .await;
+}
+
+/// S3 A2.2d-1: a broadcast's shared, encoded-once announcement crosses a real
+/// libp2p exchange and is acknowledged like a decoded one.
+#[tokio::test]
+async fn block_notify_shared_encoded_announcement_negotiates() {
+    use mbongo_network::{Announcement, BlockNotifyAck};
+    let _ack: BlockNotifyAck = roundtrip::<BlockNotifyCodec>(
+        BLOCK_NOTIFY_PROTOCOL,
+        Announcement::new_block(&empty_block()),
         BlockNotifyAck,
     )
     .await;

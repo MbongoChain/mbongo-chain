@@ -1,0 +1,26 @@
+[package]
+name = "mbongo-stress"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Local resource-exhaustion traffic for measuring one mbongo-node (S3 A2.0). Test tooling only."
+publish = false
+
+[[bin]]
+name = "p2p_stress"
+path = "src/main.rs"
+
+[dependencies]
+mbongo-core = { path = "../mbongo-core" }
+mbongo-network = { path = "../mbongo-network" }
+libp2p = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+clap = { workspace = true }
+parity-scale-codec = { workspace = true }
+serde_json = { workspace = true }
+async-trait = "0.1"

@@ -14,27 +14,46 @@ use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
 use std::hash::BuildHasher;
 use std::iter;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures::StreamExt;
 use libp2p::{
+    connection_limits,
+    core::{upgrade::Version, Transport},
     identify, mdns, noise, ping,
     request_response::{self, ProtocolSupport, ResponseChannel},
     swarm::{
-        behaviour::toggle::Toggle, dial_opts::DialOpts, ConnectionError, DialError,
+        behaviour::toggle::Toggle, dial_opts::DialOpts, ConnectionError, DialError, ListenError,
         NetworkBehaviour, SwarmEvent,
     },
     tcp, yamux, Multiaddr, PeerId, Swarm,
 };
 use log::{debug, info, warn};
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{self, error::TrySendError};
 
 use mbongo_core::Block;
 
 use crate::bootnodes::BootnodeSet;
+use crate::frame_budget::FrameBudget;
+use crate::limits::{
+    Admission, IpLimits, P2PCounters, P2PCountersSnapshot, Permit, Refusal, BLOCK_QUEUE_CAPACITY,
+    BLOCK_QUOTA_PER_PEER, BROADCAST_QUEUE_CAPACITY, MAX_ESTABLISHED_INCOMING,
+    MAX_ESTABLISHED_OUTGOING, MAX_ESTABLISHED_PER_PEER, MAX_NEGOTIATING_INBOUND_STREAMS,
+    MAX_PENDING_INCOMING, MAX_PENDING_OUTGOING, MDNS_DIAL_BUDGET, NOTIFY_STREAMS_PER_CONNECTION,
+    SYNC_QUEUE_CAPACITY, SYNC_QUOTA_PER_PEER, SYNC_STREAMS_PER_CONNECTION,
+};
+use crate::rate_limit::{ip_of, InboundRateLimit, RateRefusal};
+use crate::request_rate::{
+    announcement_cost, sync_request_cost, Cost, RequestLimiter, RequestRateConfig, RequestRefusal,
+};
+use crate::resource_guard::{GuardSnapshot, P2pResourceGuard};
+
+/// How often the counters are summarised in the log, when they changed.
+const SUMMARY_INTERVAL: Duration = Duration::from_secs(60);
 use crate::p2p_protocol::{
-    BlockNotifyAck, BlockNotifyCodec, SyncCodec, SyncNotification, SyncRequest, SyncResponse,
-    BLOCK_NOTIFY_PROTOCOL, SYNC_PROTOCOL,
+    Announcement, BlockNotifyAck, BlockNotifyCodec, SyncCodec, SyncNotification, SyncRequest,
+    SyncResponse, BLOCK_NOTIFY_PROTOCOL, SYNC_PROTOCOL,
 };
 
 // ── Sync event / command types ─────────────────────────────────────────
@@ -119,13 +138,17 @@ pub enum SyncCommand {
         /// End height (exclusive).
         end_height: u64,
     },
-    /// Send a sync response on a previously received inbound request channel.
-    SendResponse {
-        /// The response channel from the inbound request.
-        channel: ResponseChannel<SyncResponse>,
-        /// The response payload to send.
-        response: SyncResponse,
-    },
+    /// Answer an inbound sync request; built by [`InboundSyncRequest::respond`].
+    SendResponse(SyncReply),
+}
+
+/// The answer to an inbound sync request, on its way to the swarm. It keeps
+/// the request's queue slot until the swarm hands it to libp2p, so an answer
+/// waiting here is counted like a request waiting to be answered.
+pub struct SyncReply {
+    channel: ResponseChannel<SyncResponse>,
+    response: SyncResponse,
+    _permit: Permit,
 }
 
 /// Trait for broadcasting blocks to connected peers.
@@ -154,6 +177,13 @@ const AGENT_VERSION: &str = "mbongo-node/0.1.0";
 /// Composite libp2p behaviour for the Mbongo devnet.
 #[derive(NetworkBehaviour)]
 struct Behaviour {
+    /// Inbound connection attempts per source and in all, decided before the
+    /// handshake (S3 A2.3-a). First, so every attempt is charged.
+    rate_limit: InboundRateLimit,
+    /// Connection counts: pending, established, per direction and per peer.
+    limits: connection_limits::Behaviour,
+    /// Inbound connections per IP address.
+    ip_limits: IpLimits,
     ping: ping::Behaviour,
     identify: identify::Behaviour,
     /// Disabled: no mDNS socket, no advertisement, no discovery event, so
@@ -163,14 +193,64 @@ struct Behaviour {
     block_notify: request_response::Behaviour<BlockNotifyCodec>,
 }
 
-/// An inbound sync request delivered to the node for processing.
+/// An inbound sync request delivered to the node for processing. It holds one
+/// slot of the bounded sync queue until it is answered or dropped.
 pub struct InboundSyncRequest {
     /// The request payload.
     pub request: SyncRequest,
-    /// The response channel; send exactly one [`SyncResponse`] back.
-    pub channel: ResponseChannel<SyncResponse>,
     /// The peer that sent the request.
     pub peer: PeerId,
+    channel: ResponseChannel<SyncResponse>,
+    permit: Permit,
+    counters: Arc<P2PCounters>,
+}
+
+impl InboundSyncRequest {
+    /// Whether the requester is gone: timed out, disconnected or reset. A
+    /// canceled request is not worth answering.
+    #[must_use]
+    pub fn is_canceled(&self) -> bool {
+        !self.channel.is_open()
+    }
+
+    /// Drops a canceled request, unanswered, and counts it.
+    pub fn discard_canceled(self) {
+        P2PCounters::add(&self.counters.sync_requests_canceled);
+    }
+
+    /// The command that sends `response` back to the requester.
+    #[must_use]
+    pub fn respond(self, response: SyncResponse) -> SyncCommand {
+        SyncCommand::SendResponse(SyncReply {
+            channel: self.channel,
+            response,
+            _permit: self.permit,
+        })
+    }
+}
+
+/// An inbound block announcement delivered to the node for processing. It
+/// holds one slot of the bounded announcement queue until it is dropped, which
+/// is after the node has handled the block.
+pub struct InboundBlock {
+    /// The peer that announced the block.
+    pub peer: PeerId,
+    /// The announced block, not yet validated.
+    pub block: Block,
+    _permit: Option<Permit>,
+}
+
+impl InboundBlock {
+    /// An announcement that holds no queue slot: for in-process sources and
+    /// tests, never for anything a peer sent.
+    #[must_use]
+    pub fn without_permit(peer: PeerId, block: Block) -> Self {
+        Self {
+            peer,
+            block,
+            _permit: None,
+        }
+    }
 }
 
 /// Minimal libp2p node with block-sync and block-announce support.
@@ -182,17 +262,37 @@ pub struct P2PNode {
     pub peer_id: PeerId,
     swarm: Swarm<Behaviour>,
     /// Send-half kept inside the node; receives are handed out via [`P2PNode::take_sync_rx`].
-    sync_tx: mpsc::UnboundedSender<InboundSyncRequest>,
+    sync_tx: mpsc::Sender<InboundSyncRequest>,
     /// Receive-half; taken by the caller before `run()`.
-    sync_rx: Option<mpsc::UnboundedReceiver<InboundSyncRequest>>,
+    sync_rx: Option<mpsc::Receiver<InboundSyncRequest>>,
+    /// Slots of the sync queue, per peer and in all.
+    sync_admission: Admission,
     /// Send-half for forwarding inbound block announcements to the node.
-    block_tx: mpsc::UnboundedSender<(PeerId, Block)>,
+    block_tx: mpsc::Sender<InboundBlock>,
     /// Receive-half for inbound block announcements; taken via [`P2PNode::take_block_rx`].
-    block_rx: Option<mpsc::UnboundedReceiver<(PeerId, Block)>>,
+    block_rx: Option<mpsc::Receiver<InboundBlock>>,
+    /// Slots of the announcement queue, per peer and in all.
+    block_admission: Admission,
     /// Receive-half for outbound broadcast requests from the node backend.
-    broadcast_rx: mpsc::UnboundedReceiver<Block>,
+    broadcast_rx: mpsc::Receiver<Block>,
     /// Cloneable sender for [`BlockBroadcaster`] implementation.
-    broadcast_tx: mpsc::UnboundedSender<Block>,
+    broadcast_tx: mpsc::Sender<Block>,
+    /// What was admitted, refused and dropped.
+    counters: Arc<P2PCounters>,
+    /// The inbound frame budget the codecs reserve from.
+    frame_budget: Arc<FrameBudget>,
+    /// Rate limits on decoded inbound requests, per peer, per source and in
+    /// all (S3 A2.3-b-1).
+    request_limiter: RequestLimiter,
+    /// The counters as last logged.
+    last_summary: P2PCountersSnapshot,
+    /// The capacity-warning count as last logged.
+    last_dropped: Option<u64>,
+    /// What the node observes of inbound streams, before negotiation. It
+    /// observes only: see [`crate::resource_guard`].
+    resource_guard: Arc<P2pResourceGuard>,
+    /// The guard's counts as last logged.
+    last_guard: GuardSnapshot,
     /// Events pushed to the sync orchestrator (peer connected, sync responses).
     sync_event_tx: mpsc::UnboundedSender<SyncEvent>,
     /// Receive-half for sync events; taken via [`P2PNode::take_sync_event_rx`].
@@ -237,18 +337,37 @@ impl P2PNode {
     /// # Errors
     ///
     /// Returns an error if the swarm cannot be built.
+    // One builder chain: the transport, then the behaviours.
+    #[allow(clippy::too_many_lines)]
     pub fn with_identity(
         mdns: bool,
         keypair: Option<libp2p::identity::Keypair>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let keypair = keypair.unwrap_or_else(libp2p::identity::Keypair::generate_ed25519);
+        // One inbound frame budget, shared by both codecs and every clone
+        // libp2p makes of them (S3 A2.2b-lite).
+        let frame_budget = Arc::new(FrameBudget::default());
+        let codec_budget = Arc::clone(&frame_budget);
+        // Every connection's muxer goes through the guard, which observes
+        // inbound streams and decides nothing (see `resource_guard`).
+        let resource_guard = P2pResourceGuard::new();
+        let transport_guard = Arc::clone(&resource_guard);
         let swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
             .with_tokio()
-            .with_tcp(
-                tcp::Config::default(),
-                noise::Config::new,
-                yamux::Config::default,
-            )?
+            // The transport `with_tcp` builds in libp2p 0.53.2
+            // (`builder/phase/tcp.rs`), spelled out because `with_tcp` boxes
+            // the muxer before anything can wrap it. Same TCP, Noise and
+            // yamux configuration, same upgrade version.
+            .with_other_transport(move |key| {
+                let transport = tcp::tokio::Transport::new(tcp::Config::default())
+                    .upgrade(Version::V1Lazy)
+                    .authenticate(noise::Config::new(key)?)
+                    .multiplex(yamux::Config::default())
+                    .map(move |(peer, muxer), endpoint| {
+                        (peer, transport_guard.observe(muxer, &endpoint))
+                    });
+                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(transport)
+            })?
             .with_behaviour(|key| {
                 let identify = identify::Behaviour::new(
                     identify::Config::new(IDENTIFY_PROTOCOL_VERSION.to_string(), key.public())
@@ -264,19 +383,37 @@ impl P2PNode {
                 };
                 let ping = ping::Behaviour::default();
 
-                // Block-sync request/response behaviour.
-                let sync = request_response::Behaviour::new(
+                // Block-sync request/response behaviour. The stream cap is per
+                // connection, inbound and outbound together; a stream past it
+                // is dropped (inbound) or fails (outbound), never queued.
+                let sync = request_response::Behaviour::with_codec(
+                    SyncCodec::with_budget(Arc::clone(&codec_budget)),
                     iter::once((SYNC_PROTOCOL, ProtocolSupport::Full)),
-                    request_response::Config::default(),
+                    request_response::Config::default()
+                        .with_max_concurrent_streams(SYNC_STREAMS_PER_CONNECTION),
                 );
 
                 // Block notification push behaviour.
-                let block_notify = request_response::Behaviour::new(
+                let block_notify = request_response::Behaviour::with_codec(
+                    BlockNotifyCodec::with_budget(Arc::clone(&codec_budget)),
                     iter::once((BLOCK_NOTIFY_PROTOCOL, ProtocolSupport::Full)),
-                    request_response::Config::default(),
+                    request_response::Config::default()
+                        .with_max_concurrent_streams(NOTIFY_STREAMS_PER_CONNECTION),
+                );
+
+                let limits = connection_limits::Behaviour::new(
+                    connection_limits::ConnectionLimits::default()
+                        .with_max_pending_incoming(Some(MAX_PENDING_INCOMING))
+                        .with_max_pending_outgoing(Some(MAX_PENDING_OUTGOING))
+                        .with_max_established_incoming(Some(MAX_ESTABLISHED_INCOMING))
+                        .with_max_established_outgoing(Some(MAX_ESTABLISHED_OUTGOING))
+                        .with_max_established_per_peer(Some(MAX_ESTABLISHED_PER_PEER)),
                 );
 
                 Ok(Behaviour {
+                    rate_limit: InboundRateLimit::default(),
+                    limits,
+                    ip_limits: IpLimits::default(),
                     ping,
                     identify,
                     mdns: Toggle::from(mdns),
@@ -284,13 +421,18 @@ impl P2PNode {
                     block_notify,
                 })
             })?
-            .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(60)))
+            .with_swarm_config(|cfg| {
+                cfg.with_idle_connection_timeout(Duration::from_secs(60))
+                    .with_max_negotiating_inbound_streams(MAX_NEGOTIATING_INBOUND_STREAMS)
+            })
             .build();
 
         let peer_id = *swarm.local_peer_id();
-        let (sync_tx, sync_rx) = mpsc::unbounded_channel();
-        let (block_tx, block_rx) = mpsc::unbounded_channel();
-        let (broadcast_tx, broadcast_rx) = mpsc::unbounded_channel();
+        // The admission slots, not the channel, decide what is accepted: a
+        // message is sent only with a permit, so these never fill first.
+        let (sync_tx, sync_rx) = mpsc::channel(SYNC_QUEUE_CAPACITY);
+        let (block_tx, block_rx) = mpsc::channel(BLOCK_QUEUE_CAPACITY);
+        let (broadcast_tx, broadcast_rx) = mpsc::channel(BROADCAST_QUEUE_CAPACITY);
         let (sync_event_tx, sync_event_rx) = mpsc::unbounded_channel();
         let (sync_cmd_tx, sync_cmd_rx) = mpsc::unbounded_channel();
 
@@ -299,10 +441,22 @@ impl P2PNode {
             swarm,
             sync_tx,
             sync_rx: Some(sync_rx),
+            sync_admission: Admission::new(SYNC_QUOTA_PER_PEER, SYNC_QUEUE_CAPACITY),
             block_tx,
             block_rx: Some(block_rx),
+            block_admission: Admission::new(BLOCK_QUOTA_PER_PEER, BLOCK_QUEUE_CAPACITY),
             broadcast_rx,
             broadcast_tx,
+            counters: Arc::new(P2PCounters::default()),
+            frame_budget,
+            request_limiter: RequestLimiter::new(
+                RequestRateConfig::default(),
+                std::time::Instant::now(),
+            ),
+            last_summary: P2PCountersSnapshot::default(),
+            last_dropped: None,
+            last_guard: resource_guard.snapshot(),
+            resource_guard,
             sync_event_tx,
             sync_event_rx: Some(sync_event_rx),
             sync_cmd_rx,
@@ -321,7 +475,7 @@ impl P2PNode {
     ///
     /// Must be called exactly once before [`P2PNode::run`]. Returns `None`
     /// on subsequent calls.
-    pub fn take_sync_rx(&mut self) -> Option<mpsc::UnboundedReceiver<InboundSyncRequest>> {
+    pub fn take_sync_rx(&mut self) -> Option<mpsc::Receiver<InboundSyncRequest>> {
         self.sync_rx.take()
     }
 
@@ -329,8 +483,19 @@ impl P2PNode {
     ///
     /// Must be called exactly once before [`P2PNode::run`]. Returns `None`
     /// on subsequent calls.
-    pub fn take_block_rx(&mut self) -> Option<mpsc::UnboundedReceiver<(PeerId, Block)>> {
+    pub fn take_block_rx(&mut self) -> Option<mpsc::Receiver<InboundBlock>> {
         self.block_rx.take()
+    }
+
+    /// The counters of what this node admitted, refused and dropped.
+    pub fn counters(&self) -> Arc<P2PCounters> {
+        Arc::clone(&self.counters)
+    }
+
+    /// What this node has observed of inbound streams (see
+    /// [`crate::resource_guard`]). A read handle: the guard has no control.
+    pub fn resource_guard(&self) -> Arc<P2pResourceGuard> {
+        Arc::clone(&self.resource_guard)
     }
 
     /// Takes ownership of the sync event receiver.
@@ -355,6 +520,7 @@ impl P2PNode {
     pub fn broadcaster(&self) -> ChannelBroadcaster {
         ChannelBroadcaster {
             tx: self.broadcast_tx.clone(),
+            counters: Arc::clone(&self.counters),
         }
     }
 
@@ -362,6 +528,9 @@ impl P2PNode {
     ///
     /// Iterates over all connected peers and sends a [`SyncNotification::NewBlock`]
     /// to each. Peers that fail to receive are logged and skipped.
+    ///
+    /// The announcement is encoded once and its bytes shared by every peer's
+    /// request (S3 A2.2d-1); each peer holds a pointer, not a copy.
     fn broadcast_block(&mut self, block: &Block) {
         let peers: Vec<PeerId> = self.swarm.connected_peers().copied().collect();
         if peers.is_empty() {
@@ -373,13 +542,12 @@ impl P2PNode {
             block.header.height,
             peers.len()
         );
+        let announcement = Announcement::new_block(block);
         for peer in peers {
-            self.swarm.behaviour_mut().block_notify.send_request(
-                &peer,
-                SyncNotification::NewBlock {
-                    block: block.clone(),
-                },
-            );
+            self.swarm
+                .behaviour_mut()
+                .block_notify
+                .send_request(&peer, announcement.clone());
         }
     }
 
@@ -497,6 +665,8 @@ impl P2PNode {
     /// 2. Sync commands from the orchestrator (`GetHeight`, `GetBlocks`, `SendResponse`).
     /// 3. Swarm events (connections, sync messages, block announcements).
     pub async fn run(mut self) {
+        let mut summary = tokio::time::interval(SUMMARY_INTERVAL);
+        summary.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             // One reading of the clock: a retry is either dialed now or waited
             // for, and cannot fall between the two.
@@ -519,7 +689,193 @@ impl P2PNode {
                 // A bootnode's backoff ended, with nothing else to wake us.
                 () = tokio::time::sleep_until(wake.unwrap_or_else(tokio::time::Instant::now)),
                     if wake.is_some() => {}
+                _ = summary.tick() => self.log_summary(),
             }
+        }
+    }
+
+    /// Logs the counters in one line, if they changed since the last line.
+    fn log_summary(&mut self) {
+        let now = self.counters.snapshot();
+        // Process-wide, and present only when the capacity logger is installed.
+        let dropped = crate::capacity_log::dropped_at_capacity();
+        let guard = self.resource_guard.snapshot();
+        if now != self.last_summary || dropped != self.last_dropped || guard != self.last_guard {
+            match dropped {
+                Some(n) if n > 0 => info!(
+                    "P2P counters since start: {now} \
+                     inbound_streams_dropped_at_capacity_warnings={n}"
+                ),
+                _ => info!("P2P counters since start: {now}"),
+            }
+            info!("P2P resources: {}", self.resources());
+            info!("P2P guard: {guard}");
+            self.last_summary = now;
+            self.last_dropped = dropped;
+            self.last_guard = guard;
+        }
+    }
+
+    /// Process memory, bounded-queue occupancy and connection counts, read
+    /// from supported APIs only (S3 A2.2a). Streams per connection are not
+    /// exposed by libp2p 0.53 and are not reported.
+    fn resources(&self) -> String {
+        let memory = crate::proc_memory::ProcessMemory::read().unwrap_or_default();
+        let (sync_held, sync_peak) = self.sync_admission.occupancy();
+        let (blocks_held, blocks_peak) = self.block_admission.occupancy();
+        let info = self.swarm.network_info();
+        let c = info.connection_counters();
+        format!(
+            "{memory} sync_queue={sync_held} sync_queue_peak={sync_peak} \
+             block_queue={blocks_held} block_queue_peak={blocks_peak} \
+             connections_in={} connections_out={} pending_in={} pending_out={} {} {} {}",
+            c.num_established_incoming(),
+            c.num_established_outgoing(),
+            c.num_pending_incoming(),
+            c.num_pending_outgoing(),
+            self.frame_budget,
+            self.swarm.behaviour().rate_limit.stats(),
+            self.request_limiter.stats()
+        )
+    }
+
+    /// Whether a decoded request from `peer` costing `cost` is within the
+    /// request rates. A refusal is logged at DEBUG only; it is counted by the
+    /// caller and in the limiter's own statistics.
+    fn within_request_rate(&mut self, peer: PeerId, cost: Cost) -> bool {
+        match self.request_limiter.try_admit(peer, cost, std::time::Instant::now()) {
+            Ok(()) => true,
+            Err(
+                refusal @ (RequestRefusal::Peer | RequestRefusal::Source | RequestRefusal::Global),
+            ) => {
+                debug!(
+                    "{:?} from {peer} refused by the {refusal:?} rate",
+                    cost.kind
+                );
+                false
+            }
+        }
+    }
+
+    /// Admits an inbound sync request into the bounded queue, or refuses it.
+    /// A refused request is dropped unanswered: the requester sees its
+    /// request fail, never a reply that was not computed.
+    fn admit_sync_request(
+        &mut self,
+        peer: PeerId,
+        request: SyncRequest,
+        channel: ResponseChannel<SyncResponse>,
+    ) {
+        // Rate first, before any queue slot or storage read (S3 A2.3-b-1).
+        if !self.within_request_rate(peer, sync_request_cost(&request)) {
+            P2PCounters::add(&self.counters.sync_requests_refused_rate);
+            return;
+        }
+        let permit = match self.sync_admission.try_admit(peer) {
+            Ok(permit) => permit,
+            Err(refusal) => {
+                debug!("Sync request from {peer} refused: {refusal:?}");
+                P2PCounters::add(match refusal {
+                    Refusal::PeerQuota => &self.counters.sync_requests_refused_peer_quota,
+                    Refusal::Full => &self.counters.sync_requests_refused_full,
+                });
+                return;
+            }
+        };
+        let inbound = InboundSyncRequest {
+            request,
+            peer,
+            channel,
+            permit,
+            counters: Arc::clone(&self.counters),
+        };
+        match self.sync_tx.try_send(inbound) {
+            Ok(()) => P2PCounters::add(&self.counters.sync_requests_admitted),
+            Err(TrySendError::Full(_)) => {
+                P2PCounters::add(&self.counters.sync_requests_refused_full);
+            }
+            Err(TrySendError::Closed(_)) => {
+                warn!("Sync receiver dropped; cannot forward inbound request");
+            }
+        }
+    }
+
+    /// Admits an inbound block announcement into the bounded queue and only
+    /// then acknowledges it. A refused announcement gets no acknowledgement:
+    /// the announcer sees a failure.
+    fn admit_announcement(
+        &mut self,
+        peer: PeerId,
+        block: Block,
+        channel: ResponseChannel<BlockNotifyAck>,
+    ) {
+        debug!(
+            "Block announcement from {peer}: height {}",
+            block.header.height
+        );
+        // Rate first, before any queue slot (S3 A2.3-b-1). Unacknowledged, as
+        // for the other refusals.
+        if !self.within_request_rate(
+            peer,
+            announcement_cost(parity_scale_codec::Encode::encoded_size(&block)),
+        ) {
+            P2PCounters::add(&self.counters.announcements_refused_rate);
+            return;
+        }
+        let permit = match self.block_admission.try_admit(peer) {
+            Ok(permit) => permit,
+            Err(refusal) => {
+                debug!("Block announcement from {peer} refused: {refusal:?}");
+                P2PCounters::add(match refusal {
+                    Refusal::PeerQuota => &self.counters.announcements_refused_peer_quota,
+                    Refusal::Full => &self.counters.announcements_refused_full,
+                });
+                return;
+            }
+        };
+        let inbound = InboundBlock {
+            peer,
+            block,
+            _permit: Some(permit),
+        };
+        match self.block_tx.try_send(inbound) {
+            Ok(()) => {
+                P2PCounters::add(&self.counters.announcements_admitted);
+                if self
+                    .swarm
+                    .behaviour_mut()
+                    .block_notify
+                    .send_response(channel, BlockNotifyAck)
+                    .is_err()
+                {
+                    debug!("Failed to send block notify ACK to {peer}");
+                }
+            }
+            Err(TrySendError::Full(_)) => {
+                P2PCounters::add(&self.counters.announcements_refused_full);
+            }
+            Err(TrySendError::Closed(_)) => {
+                warn!("Block receiver dropped; cannot forward announcement");
+            }
+        }
+    }
+
+    /// Dials an mDNS discovery, unless it is already connected or the
+    /// outbound budget is spent: bootnodes keep the outbound room they need.
+    fn dial_mdns_discovery(&mut self, peer_id: PeerId, addr: Multiaddr) {
+        if self.swarm.is_connected(&peer_id) {
+            return;
+        }
+        let info = self.swarm.network_info();
+        let outbound = info.connection_counters().num_established_outgoing()
+            + info.connection_counters().num_pending_outgoing();
+        if outbound >= MDNS_DIAL_BUDGET {
+            P2PCounters::add(&self.counters.mdns_dials_skipped);
+            return;
+        }
+        info!("mDNS discovered: {peer_id} at {addr}");
+        if self.swarm.dial(addr).is_err() {
+            debug!("Failed to dial mDNS peer {peer_id}");
         }
     }
 
@@ -538,9 +894,15 @@ impl P2PNode {
                 debug!("Sending GetBlocks [{start_height}..{end_height}) to {peer_id}");
                 self.send_get_blocks(peer_id, start_height, end_height);
             }
-            SyncCommand::SendResponse { channel, response } => {
+            SyncCommand::SendResponse(reply) => {
+                // The permit is released once the answer is handed to libp2p.
+                let SyncReply {
+                    channel,
+                    response,
+                    _permit,
+                } = reply;
                 if self.send_response(channel, response).is_err() {
-                    warn!("Failed to send sync response (channel closed)");
+                    debug!("Failed to send sync response (channel closed)");
                 }
             }
         }
@@ -560,16 +922,23 @@ impl P2PNode {
                 ..
             } => {
                 info!("Peer connected: {peer_id} via {endpoint:?}");
+                self.request_limiter.connection_established(
+                    connection_id,
+                    peer_id,
+                    ip_of(endpoint.get_remote_address()),
+                );
                 self.bootnodes.connected(connection_id, peer_id, tokio::time::Instant::now());
                 // Notify the sync orchestrator so it can trigger an initial sync.
                 let _ = self.sync_event_tx.send(SyncEvent::PeerConnected { peer_id });
             }
             SwarmEvent::ConnectionClosed {
                 peer_id,
+                connection_id,
                 cause,
                 num_established,
                 ..
             } => {
+                self.request_limiter.connection_closed(connection_id);
                 info!("Peer disconnected: {peer_id} (cause: {cause:?})");
                 if num_established == 0 {
                     self.bootnodes.disconnected(peer_id, tokio::time::Instant::now(), jitter());
@@ -591,13 +960,28 @@ impl P2PNode {
                 }
                 self.bootnodes.dial_failed(connection_id, tokio::time::Instant::now(), jitter());
             }
+            SwarmEvent::IncomingConnectionError {
+                send_back_addr,
+                error,
+                ..
+            } => {
+                if let ListenError::Denied { cause } = &error {
+                    P2PCounters::add(&self.counters.connections_denied);
+                    match cause.downcast_ref::<RateRefusal>() {
+                        Some(RateRefusal::Source) => {
+                            P2PCounters::add(&self.counters.inbound_rate_refused_source);
+                        }
+                        Some(RateRefusal::Global) => {
+                            P2PCounters::add(&self.counters.inbound_rate_refused_global);
+                        }
+                        None => {}
+                    }
+                }
+                debug!("Incoming connection from {send_back_addr} failed: {error}");
+            }
             SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
                 for (peer_id, addr) in list {
-                    info!("mDNS discovered: {peer_id} at {addr}");
-                    // Auto-dial discovered peers.
-                    if self.swarm.dial(addr.clone()).is_err() {
-                        warn!("Failed to dial mDNS peer {peer_id}");
-                    }
+                    self.dial_mdns_discovery(peer_id, addr);
                 }
             }
             SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
@@ -627,14 +1011,7 @@ impl P2PNode {
                     },
             })) => {
                 debug!("Sync request from {peer}: {request:?}");
-                let inbound = InboundSyncRequest {
-                    request,
-                    channel,
-                    peer,
-                };
-                if self.sync_tx.send(inbound).is_err() {
-                    warn!("Sync receiver dropped; cannot forward inbound request");
-                }
+                self.admit_sync_request(peer, request, channel);
             }
             SwarmEvent::Behaviour(BehaviourEvent::Sync(request_response::Event::Message {
                 peer,
@@ -670,7 +1047,8 @@ impl P2PNode {
                     error,
                 },
             )) => {
-                warn!("Sync outbound failure to {peer}: {error}");
+                debug!("Sync outbound failure to {peer}: {error}");
+                P2PCounters::add(&self.counters.outbound_failures);
                 if let Some(kind) = self.outbound_sync_requests.remove(&request_id) {
                     let _ = self.sync_event_tx.send(SyncEvent::RequestFailed {
                         peer_id: peer,
@@ -681,7 +1059,8 @@ impl P2PNode {
             SwarmEvent::Behaviour(BehaviourEvent::Sync(
                 request_response::Event::InboundFailure { peer, error, .. },
             )) => {
-                warn!("Sync inbound failure from {peer}: {error}");
+                debug!("Sync inbound failure from {peer}: {error}");
+                P2PCounters::add(&self.counters.inbound_failures);
             }
             SwarmEvent::Behaviour(BehaviourEvent::Sync(
                 request_response::Event::ResponseSent { peer, .. },
@@ -699,25 +1078,15 @@ impl P2PNode {
                 },
             )) => {
                 match request {
-                    SyncNotification::NewBlock { block } => {
-                        info!(
-                            "Block announcement from {peer}: height {}",
-                            block.header.height
-                        );
-                        if self.block_tx.send((peer, block)).is_err() {
-                            warn!("Block receiver dropped; cannot forward announcement");
-                        }
+                    // Acknowledged only once admitted to the bounded queue.
+                    Announcement::Decoded(SyncNotification::NewBlock { block }) => {
+                        self.admit_announcement(peer, block, channel);
                     }
-                }
-                // Send empty ACK back.
-                if self
-                    .swarm
-                    .behaviour_mut()
-                    .block_notify
-                    .send_response(channel, BlockNotifyAck)
-                    .is_err()
-                {
-                    debug!("Failed to send block notify ACK to {peer}");
+                    // The codec decodes everything it reads; an encoded form
+                    // only ever leaves this node. Not acknowledged.
+                    Announcement::Encoded(_) => {
+                        debug!("Ignoring an undecoded announcement from {peer}");
+                    }
                 }
             }
             SwarmEvent::Behaviour(BehaviourEvent::BlockNotify(
@@ -727,16 +1096,19 @@ impl P2PNode {
                 },
             )) => {
                 debug!("Block notify ACK from {peer}");
+                P2PCounters::add(&self.counters.announcements_acknowledged);
             }
             SwarmEvent::Behaviour(BehaviourEvent::BlockNotify(
                 request_response::Event::OutboundFailure { peer, error, .. },
             )) => {
-                warn!("Block notify outbound failure to {peer}: {error}");
+                debug!("Block notify outbound failure to {peer}: {error}");
+                P2PCounters::add(&self.counters.outbound_failures);
             }
             SwarmEvent::Behaviour(BehaviourEvent::BlockNotify(
                 request_response::Event::InboundFailure { peer, error, .. },
             )) => {
-                warn!("Block notify inbound failure from {peer}: {error}");
+                debug!("Block notify inbound failure from {peer}: {error}");
+                P2PCounters::add(&self.counters.inbound_failures);
             }
             SwarmEvent::Behaviour(BehaviourEvent::BlockNotify(
                 request_response::Event::ResponseSent { peer, .. },
@@ -755,13 +1127,24 @@ impl P2PNode {
 /// Created via [`P2PNode::broadcaster`]. Cheaply cloneable.
 #[derive(Clone)]
 pub struct ChannelBroadcaster {
-    tx: mpsc::UnboundedSender<Block>,
+    tx: mpsc::Sender<Block>,
+    counters: Arc<P2PCounters>,
 }
 
 impl BlockBroadcaster for ChannelBroadcaster {
+    /// Queues the block for announcement. When the queue is full the
+    /// announcement is dropped and counted; peers still learn the block from
+    /// their periodic height request.
     fn broadcast(&self, block: Block) {
-        if self.tx.send(block).is_err() {
-            warn!("P2P broadcast channel closed; block not broadcast");
+        match self.tx.try_send(block) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
+                debug!("P2P broadcast queue full; block not announced");
+                P2PCounters::add(&self.counters.broadcasts_dropped);
+            }
+            Err(TrySendError::Closed(_)) => {
+                warn!("P2P broadcast channel closed; block not broadcast");
+            }
         }
     }
 }

@@ -12,6 +12,7 @@ members = [
     "crates/mbongo-api",
     "crates/mbongo-wallet",
     "crates/mbongo-node",
+    "crates/mbongo-stress",
 ]
 
 [workspace.package]

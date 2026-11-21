@@ -14,26 +14,42 @@
 
 /// Keeping configured bootnodes connected.
 pub mod bootnodes;
+/// Counts libp2p's per-stream capacity warning instead of writing it (S3 A2.5).
+pub mod capacity_log;
+/// A global budget for inbound frame bytes (S3 A2.2b-lite).
+pub mod frame_budget;
+/// Admission limits, quotas and counters for inbound P2P work (S3 A1).
+pub mod limits;
 /// A stable P2P identity read from a file.
 pub mod node_key;
 /// Minimal libp2p networking node (ping, identify, mDNS, block-sync).
 pub mod p2p;
 /// Block sync protocol messages and SCALE codec.
 pub mod p2p_protocol;
+/// This process's memory as the kernel accounts it, for diagnostics (S3 A2.2a).
+pub mod proc_memory;
+/// Rate limits on inbound connection attempts, before the handshake (S3 A2.3-a).
+pub mod rate_limit;
+/// Rate limits on decoded inbound requests (S3 A2.3-b-1).
+pub mod request_rate;
+/// Observation of inbound streams before protocol negotiation; no policy.
+pub mod resource_guard;
 /// JSON-RPC 2.0 request/response types and backend trait.
 pub mod rpc;
 /// HTTP server wiring (Axum router + serve).
 pub mod server;
 
+pub use crate::limits::{P2PCounters, P2PCountersSnapshot};
 pub use crate::node_key::load_node_key;
 pub use crate::p2p::{
-    BlockBroadcaster, ChannelBroadcaster, InboundSyncRequest, P2PNode, SyncCommand, SyncEvent,
-    SyncRequestKind,
+    BlockBroadcaster, ChannelBroadcaster, InboundBlock, InboundSyncRequest, P2PNode, SyncCommand,
+    SyncEvent, SyncReply, SyncRequestKind,
 };
 pub use crate::p2p_protocol::{
-    BlockNotifyAck, BlockNotifyCodec, SyncCodec, SyncNotification, SyncRequest, SyncResponse,
-    BLOCK_NOTIFY_PROTOCOL, MAX_RANGE, SYNC_PROTOCOL,
+    Announcement, BlockNotifyAck, BlockNotifyCodec, SyncCodec, SyncNotification, SyncRequest,
+    SyncResponse, BLOCK_NOTIFY_PROTOCOL, MAX_RANGE, SYNC_PROTOCOL,
 };
+pub use crate::resource_guard::{GuardMode, GuardSnapshot, P2pResourceGuard};
 pub use crate::rpc::{
     BackendError, JsonRpcRequest, JsonRpcResponse, RpcBackend, RpcError, RpcErrorCode,
 };
