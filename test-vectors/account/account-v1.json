@@ -1,0 +1,108 @@
+{
+  "fixture_version": 1,
+  "purpose": "Neutral cross-language vectors for SCALE(Account). RFC 0006 section 4 makes this encoding a consensus input (state_root, kind 0) and locks it in v0.5; these vectors pin it now, unchanged.",
+  "authority": {
+    "structure": "crates/mbongo-core/src/account.rs: Account { address, balance, nonce }",
+    "consensus_use": "docs/rfcs/0006-chain-identity-authenticated-blocks.md, section 4 (from S1-6)"
+  },
+  "conventions": {
+    "hex": "lowercase, no 0x prefix",
+    "integers": "decimal strings",
+    "byte_order": "fixed-width little-endian, never compact",
+    "test_key": "<test_key> means the key of test-vectors/receipt/receipt-v1.json test_key"
+  },
+  "derivation": {
+    "method": "Laid out by hand as address[32] || balance_u128_le[16] || nonce_u64_le[8]. No production encoder was used."
+  },
+  "layout": {
+    "formula": "address[32] || balance_u128_le[16] || nonce_u64_le[8]",
+    "length": 56,
+    "offsets": {
+      "address": 0,
+      "balance": 32,
+      "nonce": 48
+    }
+  },
+  "valid": [
+    {
+      "name": "new-account",
+      "note": "Account::new: zero balance, zero nonce.",
+      "account": {
+        "address": "<test_key>",
+        "balance": "0",
+        "nonce": "0"
+      },
+      "expected": {
+        "balance_u128_le": "00000000000000000000000000000000",
+        "nonce_u64_le": "0000000000000000",
+        "encoding_length": 56,
+        "encoding": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "name": "diagnostic",
+      "note": "Non-palindromic balance and nonce.",
+      "account": {
+        "address": "<test_key>",
+        "balance": "1339673755198158349044581307228491536",
+        "nonce": "1108152157446"
+      },
+      "expected": {
+        "balance_u128_le": "100f0e0d0c0b0a090807060504030201",
+        "nonce_u64_le": "0605040302010000",
+        "encoding_length": 56,
+        "encoding": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61100f0e0d0c0b0a0908070605040302010605040302010000"
+      }
+    },
+    {
+      "name": "at-the-nonce-bound",
+      "note": "The state after the last applicable transaction: nonce u64::MAX.",
+      "account": {
+        "address": "<test_key>",
+        "balance": "9",
+        "nonce": "18446744073709551615"
+      },
+      "expected": {
+        "balance_u128_le": "09000000000000000000000000000000",
+        "nonce_u64_le": "ffffffffffffffff",
+        "encoding_length": 56,
+        "encoding": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d6109000000000000000000000000000000ffffffffffffffff"
+      }
+    },
+    {
+      "name": "maxima",
+      "note": "u128::MAX and u64::MAX.",
+      "account": {
+        "address": "<test_key>",
+        "balance": "340282366920938463463374607431768211455",
+        "nonce": "18446744073709551615"
+      },
+      "expected": {
+        "balance_u128_le": "ffffffffffffffffffffffffffffffff",
+        "nonce_u64_le": "ffffffffffffffff",
+        "encoding_length": 56,
+        "encoding": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61ffffffffffffffffffffffffffffffffffffffffffffffff"
+      }
+    }
+  ],
+  "malformed_encodings": [
+    {
+      "name": "empty",
+      "reason": "no bytes",
+      "hex": "",
+      "hex_length": 0
+    },
+    {
+      "name": "short-by-one",
+      "reason": "55 bytes: the last nonce byte is missing",
+      "hex": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61100f0e0d0c0b0a09080706050403020106050403020100",
+      "hex_length": 55
+    },
+    {
+      "name": "trailing-byte",
+      "reason": "57 bytes: decoding must consume all input",
+      "hex": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61100f0e0d0c0b0a090807060504030201060504030201000000",
+      "hex_length": 57
+    }
+  ]
+}
