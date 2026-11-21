@@ -626,18 +626,28 @@ impl<S: Storage> NodeBackend<S> {
                     .validate_and_increment_nonce(tx.nonce)
                     .map_err(|_| ApplyBlockError::InvalidNonce(i))?;
 
-                // Load receiver (from cache or storage).
+                // Sender and receiver may be one account. It then has one
+                // view of its state: nothing moves, and the same balance
+                // check applies.
                 let receiver_addr = tx.receiver;
-                let mut receiver = match account_cache.get(&receiver_addr) {
-                    Some(acc) => acc.clone(),
-                    None => storage
-                        .get_account(&receiver_addr)
-                        .map_err(|e| ApplyBlockError::Storage(e.to_string()))?
-                        .unwrap_or_else(|| Account::new(receiver_addr)),
-                };
+                if receiver_addr == sender_addr {
+                    if sender.balance < tx.amount {
+                        return Err(ApplyBlockError::InsufficientBalance(i));
+                    }
+                } else {
+                    // Load receiver (from cache or storage).
+                    let mut receiver = match account_cache.get(&receiver_addr) {
+                        Some(acc) => acc.clone(),
+                        None => storage
+                            .get_account(&receiver_addr)
+                            .map_err(|e| ApplyBlockError::Storage(e.to_string()))?
+                            .unwrap_or_else(|| Account::new(receiver_addr)),
+                    };
 
-                Account::transfer(&mut sender, &mut receiver, tx.amount)
-                    .map_err(|_| ApplyBlockError::InsufficientBalance(i))?;
+                    Account::transfer(&mut sender, &mut receiver, tx.amount)
+                        .map_err(|_| ApplyBlockError::InsufficientBalance(i))?;
+                    account_cache.insert(receiver_addr, receiver);
+                }
 
                 // Allocate the sequence number from the local counter —
                 // no persistent mutation during validation.
@@ -647,7 +657,6 @@ impl<S: Storage> NodeBackend<S> {
                 ops.push(BatchOp::PutTxSeqIndex(last_seq, tx_hash));
 
                 account_cache.insert(sender_addr, sender);
-                account_cache.insert(receiver_addr, receiver);
             }
         }
 
@@ -3386,6 +3395,369 @@ mod tests {
         acc.nonce = nonce;
         backend.storage.put_account(&addr, &acc).unwrap();
         addr
+    }
+
+    // ── Monetary conservation ───────────────────────────────────────────
+
+    fn total_supply(backend: &NodeBackend<InMemoryStorage>, accounts: &[Address]) -> u128 {
+        accounts
+            .iter()
+            .map(|a| backend.storage.get_account(a).unwrap().map_or(0, |acc| acc.balance))
+            .sum()
+    }
+
+    #[test]
+    fn a_transfer_within_one_account_conserves_and_advances_the_nonce() {
+        for (balance, amount) in [
+            (1000, 300),
+            (1000, 0),
+            (1000, 1000),
+            (1, 1),
+            (u128::MAX, u128::MAX),
+        ] {
+            let backend = make_backend();
+            backend.ensure_genesis().unwrap();
+            let sk = SigningKey::from_bytes(&[71u8; 32]);
+            let addr = fund_with_nonce(&backend, &sk, balance, 0);
+            let block = build_valid_block(&backend, vec![signed_transfer(&sk, addr, amount, 0)]);
+            backend.apply_block(&block).unwrap();
+            let after = account(&backend, addr);
+            assert_eq!(after.balance, balance, "balance {balance}, amount {amount}");
+            assert_eq!(after.nonce, 1, "balance {balance}, amount {amount}");
+        }
+    }
+
+    #[test]
+    fn a_transfer_within_one_account_above_the_balance_is_refused() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[72u8; 32]);
+        let addr = fund_with_nonce(&backend, &sk, 50, 0);
+        let block = build_valid_block(&backend, vec![signed_transfer(&sk, addr, 51, 0)]);
+        let err = backend.apply_block(&block).unwrap_err();
+        assert!(
+            matches!(err, ApplyBlockError::InsufficientBalance(0)),
+            "{err}"
+        );
+        let after = account(&backend, addr);
+        assert_eq!((after.balance, after.nonce), (50, 0));
+    }
+
+    #[test]
+    fn a_transaction_included_again_changes_nothing() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[73u8; 32]);
+        let addr = fund_with_nonce(&backend, &sk, 1000, 0);
+        let tx = signed_transfer(&sk, addr, 300, 0);
+        backend.apply_block(&build_valid_block(&backend, vec![tx.clone()])).unwrap();
+        // The v0.2 idempotent skip: accepted, and without effect.
+        backend.apply_block(&build_valid_block(&backend, vec![tx])).unwrap();
+        let after = account(&backend, addr);
+        assert_eq!((after.balance, after.nonce), (1000, 1));
+    }
+
+    #[test]
+    fn a_stale_nonce_is_refused_after_a_transfer_within_one_account() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[77u8; 32]);
+        let addr = fund_with_nonce(&backend, &sk, 1000, 0);
+        let first = signed_transfer(&sk, addr, 300, 0);
+        backend.apply_block(&build_valid_block(&backend, vec![first])).unwrap();
+        let stale = signed_transfer(&sk, addr, 301, 0);
+        let err = backend.apply_block(&build_valid_block(&backend, vec![stale])).unwrap_err();
+        assert!(matches!(err, ApplyBlockError::InvalidNonce(0)), "{err}");
+        assert_eq!(account(&backend, addr).balance, 1000);
+    }
+
+    #[test]
+    fn the_same_transfer_within_one_account_twice_in_a_block_is_refused() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[78u8; 32]);
+        let addr = fund_with_nonce(&backend, &sk, 1000, 0);
+        let tx = signed_transfer(&sk, addr, 500, 0);
+        let block = build_valid_block(&backend, vec![tx.clone(), tx]);
+        let err = backend.apply_block(&block).unwrap_err();
+        assert!(matches!(err, ApplyBlockError::InvalidNonce(1)), "{err}");
+        assert_eq!(account(&backend, addr).balance, 1000);
+        assert_eq!(account(&backend, addr).nonce, 0);
+    }
+
+    #[test]
+    fn a_second_transfer_at_the_same_nonce_in_a_block_is_refused() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[79u8; 32]);
+        let addr = fund_with_nonce(&backend, &sk, 1000, 0);
+        let other = Address([80u8; 32]);
+        let block = build_valid_block(
+            &backend,
+            vec![
+                signed_transfer(&sk, addr, 100, 0),
+                signed_transfer(&sk, other, 100, 0),
+            ],
+        );
+        let err = backend.apply_block(&block).unwrap_err();
+        assert!(matches!(err, ApplyBlockError::InvalidNonce(1)), "{err}");
+        assert_eq!(account(&backend, addr).balance, 1000);
+        assert_eq!(account(&backend, addr).nonce, 0);
+    }
+
+    #[test]
+    fn a_mixed_block_conserves_the_total_supply() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let (a, b) = (
+            SigningKey::from_bytes(&[74u8; 32]),
+            SigningKey::from_bytes(&[75u8; 32]),
+        );
+        let addr_a = fund_with_nonce(&backend, &a, 1000, 0);
+        let addr_b = fund_with_nonce(&backend, &b, 500, 0);
+        let addr_c = Address([76u8; 32]);
+        let accounts = [addr_a, addr_b, addr_c];
+        let before = total_supply(&backend, &accounts);
+        let block = build_valid_block(
+            &backend,
+            vec![
+                signed_transfer(&a, addr_a, 200, 0),
+                signed_transfer(&a, addr_b, 100, 1),
+                signed_transfer(&b, addr_a, 50, 0),
+                signed_transfer(&b, addr_b, 400, 1),
+                signed_transfer(&b, addr_c, 25, 2),
+                signed_transfer(&a, addr_a, 1, 2),
+            ],
+        );
+        backend.apply_block(&block).unwrap();
+        assert_eq!(total_supply(&backend, &accounts), before);
+        assert_eq!(account(&backend, addr_a).nonce, 3);
+        assert_eq!(account(&backend, addr_b).nonce, 3);
+        assert_eq!(account(&backend, addr_a).balance, 950);
+        assert_eq!(account(&backend, addr_b).balance, 525);
+    }
+
+    /// Every combination of sender and receiver, deterministically generated.
+    #[test]
+    fn generated_blocks_conserve_the_total_supply() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let keys: Vec<SigningKey> =
+            (0u8..4).map(|i| SigningKey::from_bytes(&[80 + i; 32])).collect();
+        let accounts: Vec<Address> =
+            keys.iter().map(|k| fund_with_nonce(&backend, k, 10_000, 0)).collect();
+        let supply = total_supply(&backend, &accounts);
+        let mut nonces = [0u64; 4];
+        let mut seed = 0x9E37_79B9_7F4A_7C15_u64;
+        let mut next = |bound: u64| {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            (seed >> 33) % bound
+        };
+        for round in 0..64 {
+            let mut txs = Vec::new();
+            let mut spent = [0u128; 4];
+            for _ in 0..8 {
+                let from = usize::try_from(next(4)).unwrap();
+                let to = usize::try_from(next(4)).unwrap();
+                let amount = u128::from(next(50));
+                let held = account(&backend, accounts[from]).balance;
+                if spent[from] + amount > held {
+                    continue;
+                }
+                spent[from] += amount;
+                txs.push(signed_transfer(
+                    &keys[from],
+                    accounts[to],
+                    amount,
+                    nonces[from],
+                ));
+                nonces[from] += 1;
+            }
+            backend.apply_block(&build_valid_block(&backend, txs)).unwrap();
+            assert_eq!(total_supply(&backend, &accounts), supply, "round {round}");
+            for (i, address) in accounts.iter().enumerate() {
+                assert_eq!(
+                    account(&backend, *address).nonce,
+                    nonces[i],
+                    "round {round}"
+                );
+            }
+        }
+    }
+
+    /// A signed transaction of the given plain type (`Transfer` or `Stake`).
+    fn signed_plain(
+        sender_sk: &SigningKey,
+        tx_type: TransactionType,
+        receiver_addr: Address,
+        amount: u128,
+        nonce: u64,
+    ) -> Transaction {
+        let mut tx = signed_transfer(sender_sk, receiver_addr, amount, nonce);
+        tx.tx_type = tx_type;
+        tx.signature = sender_sk.sign(&tx.signing_payload()).to_bytes();
+        tx
+    }
+
+    #[test]
+    fn a_stake_within_one_account_conserves_and_advances_the_nonce() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[90u8; 32]);
+        let addr = fund_with_nonce(&backend, &sk, 1000, 0);
+        let tx = signed_plain(&sk, TransactionType::Stake, addr, 400, 0);
+        backend.apply_block(&build_valid_block(&backend, vec![tx])).unwrap();
+        let after = account(&backend, addr);
+        assert_eq!((after.balance, after.nonce), (1000, 1));
+    }
+
+    #[test]
+    fn a_transfer_within_an_absent_account_is_refused_and_creates_nothing() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[91u8; 32]);
+        let addr = Address(sk.verifying_key().to_bytes());
+        let height = backend.storage.get_latest_height().unwrap();
+        for amount in [0, 1] {
+            let block = build_valid_block(&backend, vec![signed_transfer(&sk, addr, amount, 0)]);
+            let err = backend.apply_block(&block).unwrap_err();
+            assert!(
+                matches!(err, ApplyBlockError::InsufficientBalance(0)),
+                "{err}"
+            );
+        }
+        assert!(backend.storage.get_account(&addr).unwrap().is_none());
+        assert_eq!(backend.storage.get_latest_height().unwrap(), height);
+    }
+
+    #[test]
+    fn an_overflowing_credit_after_a_transfer_within_one_account_rejects_the_block() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let (a, b) = (
+            SigningKey::from_bytes(&[92u8; 32]),
+            SigningKey::from_bytes(&[93u8; 32]),
+        );
+        let addr_a = fund_with_nonce(&backend, &a, u128::MAX, 0);
+        let addr_b = fund_with_nonce(&backend, &b, 1, 0);
+        let height = backend.storage.get_latest_height().unwrap();
+        let block = build_valid_block(
+            &backend,
+            vec![
+                signed_transfer(&a, addr_a, u128::MAX, 0),
+                signed_transfer(&b, addr_a, 1, 0),
+            ],
+        );
+        let err = backend.apply_block(&block).unwrap_err();
+        assert!(
+            matches!(err, ApplyBlockError::InsufficientBalance(1)),
+            "{err}"
+        );
+        assert_eq!(backend.storage.get_latest_height().unwrap(), height);
+        let (after_a, after_b) = (account(&backend, addr_a), account(&backend, addr_b));
+        assert_eq!((after_a.balance, after_a.nonce), (u128::MAX, 0));
+        assert_eq!((after_b.balance, after_b.nonce), (1, 0));
+    }
+
+    /// The produced block, applied by a second node from the same state,
+    /// gives the same accounts on both, and the total is unchanged.
+    #[tokio::test]
+    async fn a_produced_block_with_a_transfer_within_one_account_applies_identically_on_a_follower()
+    {
+        let producer = make_backend();
+        let follower = NodeBackend::new(InMemoryStorage::new(), false);
+        let (a, b) = (
+            SigningKey::from_bytes(&[94u8; 32]),
+            SigningKey::from_bytes(&[95u8; 32]),
+        );
+        let mut addrs = Vec::new();
+        for node in [&producer, &follower] {
+            node.ensure_genesis().unwrap();
+            addrs = vec![
+                fund_with_nonce(node, &a, 1000, 0),
+                fund_with_nonce(node, &b, 500, 0),
+            ];
+        }
+        let (addr_a, addr_b) = (addrs[0], addrs[1]);
+        let supply = total_supply(&producer, &addrs);
+        for tx in [
+            signed_transfer(&a, addr_a, 600, 0),
+            signed_transfer(&a, addr_b, 100, 1),
+            signed_transfer(&b, addr_b, 400, 0),
+            signed_plain(&b, TransactionType::Stake, addr_b, 50, 1),
+        ] {
+            producer.submit_transaction(tx).await.unwrap();
+        }
+        producer.produce_block().await.unwrap();
+        let block = producer.storage.get_block_by_height(1).unwrap().unwrap();
+        assert_eq!(block.body.transactions.len(), 4);
+        follower.apply_block(&block).unwrap();
+        for addr in [addr_a, addr_b] {
+            assert_eq!(account(&producer, addr), account(&follower, addr));
+        }
+        assert_eq!(total_supply(&producer, &addrs), supply);
+        assert_eq!(total_supply(&follower, &addrs), supply);
+        assert_eq!(
+            (
+                account(&producer, addr_a).balance,
+                account(&producer, addr_a).nonce
+            ),
+            (900, 2)
+        );
+        assert_eq!(
+            (
+                account(&producer, addr_b).balance,
+                account(&producer, addr_b).nonce
+            ),
+            (600, 2)
+        );
+    }
+
+    /// A real store, closed and reopened after a block holding a transfer
+    /// within one account: the committed state survives, and including the
+    /// same transaction again after the restart changes nothing.
+    #[tokio::test]
+    async fn a_transfer_within_one_account_persists_across_a_restart() {
+        use mbongo_storage::RocksDbStorage;
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "mbongo-account-invariants-{}-{unique}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let sk = SigningKey::from_bytes(&[96u8; 32]);
+        let addr = Address(sk.verifying_key().to_bytes());
+        let other = Address([97u8; 32]);
+        let within = signed_transfer(&sk, addr, 700, 0);
+        {
+            let backend = NodeBackend::new(RocksDbStorage::open(&dir).unwrap(), true);
+            backend.ensure_genesis().unwrap();
+            let mut funded = Account::new(addr);
+            funded.balance = 1000;
+            backend.storage.put_account(&addr, &funded).unwrap();
+            backend.submit_transaction(within.clone()).await.unwrap();
+            backend.submit_transaction(signed_transfer(&sk, other, 10, 1)).await.unwrap();
+            backend.produce_block().await.unwrap();
+        }
+        let restarted = NodeBackend::new(RocksDbStorage::open(&dir).unwrap(), true);
+        restarted.ensure_genesis().unwrap();
+        assert_eq!(restarted.latest_height().unwrap(), 1);
+        let held = |node: &NodeBackend<RocksDbStorage>| {
+            let a = node.storage.get_account(&addr).unwrap().unwrap();
+            let o = node.storage.get_account(&other).unwrap().unwrap();
+            (a.balance, a.nonce, o.balance)
+        };
+        assert_eq!(held(&restarted), (990, 2, 10));
+        // The stored copy, included again after the restart, is skipped.
+        let again = build_valid_block(&restarted, vec![within]);
+        restarted.apply_block(&again).unwrap();
+        assert_eq!(restarted.latest_height().unwrap(), 2);
+        assert_eq!(held(&restarted), (990, 2, 10));
+        drop(restarted);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // Case 1: committed C, pending empty, submit C → ACCEPT.
