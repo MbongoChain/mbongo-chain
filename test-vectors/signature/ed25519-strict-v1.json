@@ -1,0 +1,364 @@
+{
+  "fixture_version": 1,
+  "purpose": "Neutral cross-language vectors for the strict Ed25519 definition of RFC 0006 section 3, which section 2 applies to transaction signatures and receipt signatures (rule (h)). Each case gives the exact signed message, the public key, the signature, and the verdict the definition requires.",
+  "authority": {
+    "definition": "docs/rfcs/0006-chain-identity-authenticated-blocks.md, section 3: s is below the group order, R and the public key are canonical and not of small order, and the equation is checked without the cofactor (RFC 8032)",
+    "applies_to": "section 2: transaction signatures and receipt signatures (rule (h)). Block signatures follow in S1-7.",
+    "transaction_message": "the transaction signing payload, as in test-vectors/transaction/nonce-boundary-v1.json signing_formula",
+    "receipt_message": "the raw 32-byte receipt hash, as in test-vectors/receipt/receipt-v1.json"
+  },
+  "conventions": {
+    "hex": "lowercase, no 0x prefix",
+    "expected": "valid or invalid under the strict definition, nothing else",
+    "rule": "the first requirement of the definition that the case does not meet, or valid",
+    "keys": "every seed used is TEST ONLY and public: the receipt fixture's test_key (0x2a repeated) and 0x5b repeated"
+  },
+  "derivation": {
+    "method": "Derived with an Ed25519 implementation written independently of ed25519-dalek and @noble (BigInt arithmetic from RFC 8032, SHA-512 from node:crypto) and a BLAKE3 written from its specification. The implementation was first checked against RFC 8032 tests 1 to 3, against OpenSSL on random keys and messages, and against the eight small-order encodings published in libsodium's blocklist. Every expected verdict was then computed by that implementation's reading of the strict definition."
+  },
+  "rules": [
+    "valid",
+    "s-not-below-group-order",
+    "key-small-order",
+    "key-non-canonical",
+    "key-not-a-point",
+    "r-small-order",
+    "r-non-canonical",
+    "r-not-a-point",
+    "cofactored-equation-only",
+    "wrong-message"
+  ],
+  "cases": [
+    {
+      "name": "tx-valid-test-key",
+      "kind": "transaction",
+      "rule": "valid",
+      "expected": "valid",
+      "note": "An honest signature by the TEST ONLY key.",
+      "transaction": {
+        "tx_type": "Transfer",
+        "sender": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "1000",
+        "nonce": "0"
+      },
+      "public_key": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+      "message": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000000",
+      "signature": "111bd8b7e3c74158a1272354b01203474732a19368a78cf73902a51a6a219b56b2c2669c36c07b5597e483acc73a2ff99725918be7aa39dd566e83fd5bce8b09"
+    },
+    {
+      "name": "tx-valid-second-key",
+      "kind": "transaction",
+      "rule": "valid",
+      "expected": "valid",
+      "note": "An honest signature by a second TEST ONLY key.",
+      "transaction": {
+        "tx_type": "Transfer",
+        "sender": "6b734a8eff246fe734b38d4046c148eee5f04fe87b3a0a423955a77956de066b",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "1000",
+        "nonce": "7"
+      },
+      "public_key": "6b734a8eff246fe734b38d4046c148eee5f04fe87b3a0a423955a77956de066b",
+      "message": "006b734a8eff246fe734b38d4046c148eee5f04fe87b3a0a423955a77956de066ba1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000070000000000000000",
+      "signature": "190e9b74e543dd210509c7070f1d13f51217ce5002e82e81ce9386300f2dcab68befa26ea2bb4d1cacc296a40e857a18ecb282c9204e4cc0149eb323be376a08"
+    },
+    {
+      "name": "tx-s-plus-group-order",
+      "kind": "transaction",
+      "rule": "s-not-below-group-order",
+      "expected": "invalid",
+      "note": "s replaced by s + L: the same value modulo L, not canonical.",
+      "transaction": {
+        "tx_type": "Transfer",
+        "sender": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "1000",
+        "nonce": "0"
+      },
+      "public_key": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+      "message": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000000",
+      "signature": "111bd8b7e3c74158a1272354b01203474732a19368a78cf73902a51a6a219b569f965cf950238ead6d817b4fa6340e0e9825918be7aa39dd566e83fd5bce8b19"
+    },
+    {
+      "name": "tx-s-high-bit",
+      "kind": "transaction",
+      "rule": "s-not-below-group-order",
+      "expected": "invalid",
+      "note": "s with bit 255 set.",
+      "transaction": {
+        "tx_type": "Transfer",
+        "sender": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "1000",
+        "nonce": "0"
+      },
+      "public_key": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+      "message": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000000",
+      "signature": "111bd8b7e3c74158a1272354b01203474732a19368a78cf73902a51a6a219b56b2c2669c36c07b5597e483acc73a2ff99725918be7aa39dd566e83fd5bce8b89"
+    },
+    {
+      "name": "tx-key-identity",
+      "kind": "transaction",
+      "rule": "key-small-order",
+      "expected": "invalid",
+      "note": "Public key of order 1.",
+      "transaction": {
+        "tx_type": "Transfer",
+        "sender": "0100000000000000000000000000000000000000000000000000000000000000",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "1000",
+        "nonce": "0"
+      },
+      "public_key": "0100000000000000000000000000000000000000000000000000000000000000",
+      "message": "000100000000000000000000000000000000000000000000000000000000000000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000000",
+      "signature": "8f608d27d523bcd5988e3131e83356ec254fabe0a5a3069a0f8cfdef326954b7a16ac49c6e9daf3be1e7dfda3dbcf28f616a9892632557fe2aaf294913b2690f"
+    },
+    {
+      "name": "tx-key-order-eight",
+      "kind": "transaction",
+      "rule": "key-small-order",
+      "expected": "invalid",
+      "note": "Public key of order 8.",
+      "transaction": {
+        "tx_type": "Transfer",
+        "sender": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "1000",
+        "nonce": "0"
+      },
+      "public_key": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+      "message": "00c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037aa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000000",
+      "signature": "b8521b9d9bca91f2411cf95172afad1fec928dfda81665fcd7a9b92dad08918ca16ac49c6e9daf3be1e7dfda3dbcf28f616a9892632557fe2aaf294913b2690f"
+    },
+    {
+      "name": "tx-key-non-canonical",
+      "kind": "transaction",
+      "rule": "key-non-canonical",
+      "expected": "invalid",
+      "note": "Public key encoding with y >= p.",
+      "transaction": {
+        "tx_type": "Transfer",
+        "sender": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "1000",
+        "nonce": "0"
+      },
+      "public_key": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "message": "00eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7fa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000000",
+      "signature": "8f608d27d523bcd5988e3131e83356ec254fabe0a5a3069a0f8cfdef326954b7a16ac49c6e9daf3be1e7dfda3dbcf28f616a9892632557fe2aaf294913b2690f"
+    },
+    {
+      "name": "tx-key-not-a-point",
+      "kind": "transaction",
+      "rule": "key-not-a-point",
+      "expected": "invalid",
+      "note": "Public key bytes that decode to no curve point.",
+      "transaction": {
+        "tx_type": "Transfer",
+        "sender": "0200000000000000000000000000000000000000000000000000000000000000",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "1000",
+        "nonce": "0"
+      },
+      "public_key": "0200000000000000000000000000000000000000000000000000000000000000",
+      "message": "000200000000000000000000000000000000000000000000000000000000000000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000000",
+      "signature": "111bd8b7e3c74158a1272354b01203474732a19368a78cf73902a51a6a219b56b2c2669c36c07b5597e483acc73a2ff99725918be7aa39dd566e83fd5bce8b09"
+    },
+    {
+      "name": "tx-r-identity",
+      "kind": "transaction",
+      "rule": "r-small-order",
+      "expected": "invalid",
+      "note": "R of order 1.",
+      "transaction": {
+        "tx_type": "Transfer",
+        "sender": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "1000",
+        "nonce": "0"
+      },
+      "public_key": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+      "message": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000000",
+      "signature": "01000000000000000000000000000000000000000000000000000000000000001f2e6dae570d5eadac13066b381d0b30ea4dc5aa15bed515298080169abf560d"
+    },
+    {
+      "name": "tx-r-non-canonical",
+      "kind": "transaction",
+      "rule": "r-non-canonical",
+      "expected": "invalid",
+      "note": "R encoding with y >= p.",
+      "transaction": {
+        "tx_type": "Transfer",
+        "sender": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "1000",
+        "nonce": "0"
+      },
+      "public_key": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+      "message": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000000",
+      "signature": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f2c89a48f5f2a7111a9e9d3b4dec1e155a0a5983d9f9fe7f8232aef90ceacfd06"
+    },
+    {
+      "name": "tx-r-not-a-point",
+      "kind": "transaction",
+      "rule": "r-not-a-point",
+      "expected": "invalid",
+      "note": "R bytes that decode to no curve point.",
+      "transaction": {
+        "tx_type": "Transfer",
+        "sender": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "1000",
+        "nonce": "0"
+      },
+      "public_key": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+      "message": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000000",
+      "signature": "0200000000000000000000000000000000000000000000000000000000000000b2c2669c36c07b5597e483acc73a2ff99725918be7aa39dd566e83fd5bce8b09"
+    },
+    {
+      "name": "tx-cofactored-equation-only",
+      "kind": "transaction",
+      "rule": "cofactored-equation-only",
+      "expected": "invalid",
+      "note": "Satisfies the cofactored equation only: R carries a torsion component.",
+      "transaction": {
+        "tx_type": "Transfer",
+        "sender": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "1000",
+        "nonce": "0"
+      },
+      "public_key": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+      "message": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000000",
+      "signature": "1a970bc989b74ae252251f15619d6f19297fa761528b243ed6114659cab4533a0c62a1c97fb2798d8b0afa2851ffcd8efd002c9d53944993fe4d9f10d91c9a05"
+    },
+    {
+      "name": "tx-wrong-message",
+      "kind": "transaction",
+      "rule": "wrong-message",
+      "expected": "invalid",
+      "note": "An honest signature over the same transaction at another nonce.",
+      "transaction": {
+        "tx_type": "Transfer",
+        "sender": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "1000",
+        "nonce": "0"
+      },
+      "public_key": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+      "message": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000000",
+      "signature": "a42be54cfbc581bd68e749ff8b2832e7aa808943ef960a785a03742b0503a11a5f76f0ca576fadf00ea3e2be637ed715a74fc96c36f63f4225687d217a8d710a"
+    },
+    {
+      "name": "tx-key-mixed-order-accepted",
+      "kind": "transaction",
+      "rule": "valid",
+      "expected": "valid",
+      "note": "A canonical key that is not of small order but has a torsion component, with a challenge divisible by 8. The strict definition accepts it; both implementations must agree.",
+      "transaction": {
+        "tx_type": "Transfer",
+        "sender": "cf459ac9b3ed7252bb4900533cda880f6145773cd6160c2f0deec05c06651ab3",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "1000",
+        "nonce": "1"
+      },
+      "public_key": "cf459ac9b3ed7252bb4900533cda880f6145773cd6160c2f0deec05c06651ab3",
+      "message": "00cf459ac9b3ed7252bb4900533cda880f6145773cd6160c2f0deec05c06651ab3a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000010000000000000000",
+      "signature": "4ad78527eb0661f061280c0cd93643e11cf4ca6997fe4942f401f6fa01b750dc1678f9a11e71c0a9bf242136951819635b7cad449f91efcedda15bcef3689802"
+    },
+    {
+      "name": "receipt-valid-test-key",
+      "kind": "receipt",
+      "rule": "valid",
+      "expected": "valid",
+      "note": "Equals the executor signature of receipt-v1 empty-metadata.",
+      "receipt": {
+        "receipt_vector": "empty-metadata",
+        "executor": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61"
+      },
+      "public_key": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+      "message": "575f4e4b248eba0fcb28accc072fab685e14567c957fd9fcda4d4efff0ad4b9f",
+      "signature": "1b654790b317c65123e0b40692b4727e1ba5133a078e15b4e9960a47fb0524ff19a4b146197ee5fa542a9c08809dfe40db899327a8fba87cbdd23baeff32e602"
+    },
+    {
+      "name": "receipt-s-plus-group-order",
+      "kind": "receipt",
+      "rule": "s-not-below-group-order",
+      "expected": "invalid",
+      "note": "s replaced by s + L.",
+      "receipt": {
+        "receipt_vector": "empty-metadata",
+        "executor": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61"
+      },
+      "public_key": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+      "message": "575f4e4b248eba0fcb28accc072fab685e14567c957fd9fcda4d4efff0ad4b9f",
+      "signature": "1b654790b317c65123e0b40692b4727e1ba5133a078e15b4e9960a47fb0524ff0678a7a333e1f7522bc793ab5e97dd55db899327a8fba87cbdd23baeff32e612"
+    },
+    {
+      "name": "receipt-key-identity",
+      "kind": "receipt",
+      "rule": "key-small-order",
+      "expected": "invalid",
+      "note": "Executor key of order 1.",
+      "receipt": {
+        "receipt_vector": "empty-metadata",
+        "executor": "0100000000000000000000000000000000000000000000000000000000000000"
+      },
+      "public_key": "0100000000000000000000000000000000000000000000000000000000000000",
+      "message": "c66250ccce60da2cb63a8c4433e6f74f4ab265a5d16d7913bf0a11cd8a9f9305",
+      "signature": "8f608d27d523bcd5988e3131e83356ec254fabe0a5a3069a0f8cfdef326954b7a16ac49c6e9daf3be1e7dfda3dbcf28f616a9892632557fe2aaf294913b2690f"
+    },
+    {
+      "name": "receipt-r-identity",
+      "kind": "receipt",
+      "rule": "r-small-order",
+      "expected": "invalid",
+      "note": "R of order 1.",
+      "receipt": {
+        "receipt_vector": "empty-metadata",
+        "executor": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61"
+      },
+      "public_key": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+      "message": "575f4e4b248eba0fcb28accc072fab685e14567c957fd9fcda4d4efff0ad4b9f",
+      "signature": "0100000000000000000000000000000000000000000000000000000000000000fc5a0e50b4c3ecf0e654e04f830ad6c8403761f5754c1538900b0e8c7944cd05"
+    },
+    {
+      "name": "receipt-cofactored-equation-only",
+      "kind": "receipt",
+      "rule": "cofactored-equation-only",
+      "expected": "invalid",
+      "note": "Satisfies the cofactored equation only.",
+      "receipt": {
+        "receipt_vector": "empty-metadata",
+        "executor": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61"
+      },
+      "public_key": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+      "message": "575f4e4b248eba0fcb28accc072fab685e14567c957fd9fcda4d4efff0ad4b9f",
+      "signature": "1a970bc989b74ae252251f15619d6f19297fa761528b243ed6114659cab4533afe8d6772406e1a608d055e5c83a2323343fcbc32f6e6c4b2051f4b05cc278a04"
+    }
+  ],
+  "malformed_lengths": [
+    {
+      "name": "signature-63-bytes",
+      "public_key": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+      "message": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000000",
+      "signature": "111bd8b7e3c74158a1272354b01203474732a19368a78cf73902a51a6a219b56b2c2669c36c07b5597e483acc73a2ff99725918be7aa39dd566e83fd5bce8b",
+      "expected": "invalid"
+    },
+    {
+      "name": "signature-65-bytes",
+      "public_key": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+      "message": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000000",
+      "signature": "111bd8b7e3c74158a1272354b01203474732a19368a78cf73902a51a6a219b56b2c2669c36c07b5597e483acc73a2ff99725918be7aa39dd566e83fd5bce8b0900",
+      "expected": "invalid"
+    },
+    {
+      "name": "public-key-31-bytes",
+      "public_key": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d",
+      "message": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000000",
+      "signature": "111bd8b7e3c74158a1272354b01203474732a19368a78cf73902a51a6a219b56b2c2669c36c07b5597e483acc73a2ff99725918be7aa39dd566e83fd5bce8b09",
+      "expected": "invalid"
+    }
+  ]
+}

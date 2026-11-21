@@ -20,18 +20,18 @@ use parity_scale_codec::Decode;
 pub const RECEIPT_VERSION: u8 = 1;
 
 /// Verifies that `receipt.signature` is a valid Ed25519 signature over
-/// the raw 32-byte receipt hash by `receipt.executor`.
+/// the raw 32-byte receipt hash by `receipt.executor`, under the strict
+/// definition of RFC 0006 §3 (rule (h), section 2).
 ///
 /// Signature verification is validation, owned by this crate — it does
 /// not travel with the data type (RFC 0002 §6.1).
 #[must_use]
 pub fn verify_receipt_signature(receipt: &Receipt) -> bool {
-    use ed25519_dalek::{Signature, Verifier};
-    let Ok(pk) = ed25519_dalek::VerifyingKey::from_bytes(&receipt.executor.0) else {
-        return false;
-    };
-    let sig = Signature::from_bytes(&receipt.signature);
-    pk.verify(&receipt.receipt_hash().0, &sig).is_ok()
+    mbongo_core::crypto::verify_ed25519_strict(
+        &receipt.executor.0,
+        &receipt.receipt_hash().0,
+        &receipt.signature,
+    )
 }
 
 /// Validates a receipt against the v1 minimal rules

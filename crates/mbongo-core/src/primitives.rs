@@ -193,15 +193,15 @@ impl Transaction {
         .encode()
     }
 
-    /// Verifies signature using ed25519 and sender's public key.
+    /// Verifies the signature by the sender's public key, under the strict
+    /// definition of RFC 0006 §3 ([`crate::crypto::verify_ed25519_strict`]).
     #[must_use]
     pub fn verify_signature(&self) -> bool {
-        use ed25519_dalek::{Signature, Verifier};
-        let Ok(pk) = ed25519_dalek::VerifyingKey::from_bytes(&self.sender.0) else {
-            return false;
-        };
-        let sig = Signature::from_bytes(&self.signature);
-        pk.verify(&self.signing_payload(), &sig).is_ok()
+        crate::crypto::verify_ed25519_strict(
+            &self.sender.0,
+            &self.signing_payload(),
+            &self.signature,
+        )
     }
 }
 

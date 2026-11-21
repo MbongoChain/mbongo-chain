@@ -18,7 +18,7 @@
  */
 
 import { blake3 } from "@noble/hashes/blake3.js";
-import { ed25519 } from "@noble/curves/ed25519.js";
+import { verifyEd25519Strict } from "./ed25519-strict.js";
 
 import { MbongoReceiptError } from "./errors.js";
 
@@ -231,11 +231,8 @@ export function receiptHash(receipt: Receipt): Uint8Array {
  */
 export function verifyReceiptSignature(receipt: Receipt): boolean {
   const hash = receiptHash(receipt);
-  try {
-    return ed25519.verify(receipt.signature, hash, receipt.executor);
-  } catch {
-    // A malformed key or signature point is a verification failure, not a
-    // structural error: the widths were already checked above.
-    return false;
-  }
+  // The strict definition of RFC 0006 §3, the one the node applies under
+  // rule (h). A malformed key or signature point is a verification failure,
+  // not a structural error: the widths were already checked above.
+  return verifyEd25519Strict(receipt.signature, hash, receipt.executor);
 }
