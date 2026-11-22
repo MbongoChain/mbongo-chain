@@ -11,7 +11,7 @@ use std::io::Write;
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use mbongo_core::{Address, ComputeTask, Receipt};
+use mbongo_core::{Address, ChainId, ComputeTask, Receipt};
 use serde_json::json;
 
 use crate::chain::{ChainClient, ChainError};
@@ -57,6 +57,8 @@ pub struct Context<'a, C> {
     pub front: &'a FrontClient,
     /// The client's chain key: signs the `ComputeTask` and every request.
     pub key: &'a LocalKey,
+    /// The network the `ComputeTask` is signed for (RFC 0006 §2).
+    pub chain_id: ChainId,
     /// The configured MVP executor.
     pub executor: Option<Address>,
     /// Hourly infrastructure rate for the displayed reference cost.
@@ -446,7 +448,7 @@ pub async fn submit<C: ChainClient>(
             return chain_exit(&e);
         }
     };
-    match submit_task(ctx.chain, ctx.key, &task).await {
+    match submit_task(ctx.chain, ctx.key, &ctx.chain_id, &task).await {
         Ok(hash) => {
             let _ = writeln!(err, "ComputeTask submitted: tx {hash}");
         }

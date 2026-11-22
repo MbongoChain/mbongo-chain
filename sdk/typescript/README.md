@@ -153,6 +153,12 @@ alone may answer (`executor`), a commitment to the input, and an opaque
 specification. The input, the work and the result stay off-chain. Consensus
 rules are RFC 0005; the wire form is `rpc_v0.3` §4.4.
 
+**Every transaction signature names its network** (RFC 0006 section 2): the signers take a
+`chainId`, the 32-byte `chain_id` of the genesis of the network you sign for. Take it from your
+own configuration, never from a node or an endpoint: a signature for one network does not verify
+on another, and a signature made by this SDK before this change verifies on none.
+`TX_SIGNING_DOMAIN` and `transactionSigningPayload(fields, chainId)` expose the rule itself.
+
 ```typescript
 import {
   computeTaskId,
@@ -172,7 +178,7 @@ const task = {
 };
 
 const taskId = computeTaskId(task);                              // Uint8Array(32)
-const tx = signComputeTaskTransaction(task, nonce, submitterSecretKey);
+const tx = signComputeTaskTransaction(task, nonce, submitterSecretKey, chainId);
 const txHash = await submitComputeTask(client, tx);
 
 // Later, once the transaction is in a block you know the height of:
@@ -185,8 +191,9 @@ const committed = computeTasksInBlock(block);                    // ComputeTask[
 | `encodeComputeTask(task)` | the canonical SCALE bytes of the six fields |
 | `computeTaskIdPreimage(task)` | the raw 22-byte domain tag followed by those bytes |
 | `computeTaskId(task)` | `BLAKE3` of the preimage, 32 bytes |
-| `computeTaskSigningPayload(task, nonce)` | the bytes that get signed |
-| `signComputeTaskTransaction(task, nonce, secretKey)` | a signed transaction |
+| `computeTaskTransactionFields(task, nonce)` | the transaction fields, as the encoding holds them |
+| `computeTaskSigningPayload(task, nonce, chainId)` | the bytes that get signed: `"mbongo-tx:v2" || chainId || fields` |
+| `signComputeTaskTransaction(task, nonce, secretKey, chainId)` | a signed transaction, for the network `chainId` |
 | `computeTaskTransactionHash(tx)` | `BLAKE3` of the full signed encoding |
 | `computeTaskToWire(task)`, `computeTaskTransactionToWire(tx)` | the JSON objects the node expects |
 | `wireComputeTaskToComputeTask(wire)` | the canonical task from its wire form |
@@ -475,7 +482,7 @@ const receipt = signBoundReceipt(
   { outputCommitment, metadata },   // outputCommitment: Uint8Array(32), yours to assert
   executorSecretKey,                // must derive task.executor
 );
-const tx = signAnchorReceiptTransaction(receipt, nonce, executorSecretKey);
+const tx = signAnchorReceiptTransaction(receipt, nonce, executorSecretKey, chainId);
 
 try {
   const txHash = await submitAnchorReceipt(client, tx);
@@ -499,8 +506,9 @@ checks on a receipt built any other way; it throws a
 |---|---|
 | `signBoundReceipt(task, { outputCommitment, metadata? }, executorSecretKey)` | a signed receipt bound to the task |
 | `assertReceiptBoundToTask(receipt, task)` | nothing; throws if any binding fails |
-| `anchorReceiptSigningPayload(receipt, nonce)` | the bytes that get signed |
-| `signAnchorReceiptTransaction(receipt, nonce, secretKey)` | a signed transaction |
+| `anchorReceiptTransactionFields(receipt, nonce)` | the transaction fields, as the encoding holds them |
+| `anchorReceiptSigningPayload(receipt, nonce, chainId)` | the bytes that get signed: `"mbongo-tx:v2" || chainId || fields` |
+| `signAnchorReceiptTransaction(receipt, nonce, secretKey, chainId)` | a signed transaction, for the network `chainId` |
 | `anchorReceiptTransactionHash(tx)` | `BLAKE3` of the full signed encoding |
 | `anchorReceiptTransactionToWire(tx)` | the JSON object the node expects |
 | `submitAnchorReceipt(client, tx)` | the transaction hash the node reports |

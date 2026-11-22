@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mbongo_core::{
-    Address, ComputeTask, Hash, Receipt, Transaction, TransactionPayload, TransactionType,
+    Address, ChainId, ComputeTask, Hash, Receipt, Transaction, TransactionPayload, TransactionType,
     COMPUTE_TASK_VERSION,
 };
 use reqwest::{Method, StatusCode};
@@ -292,8 +292,14 @@ pub fn build_task(
     }
 }
 
-/// The signed `ComputeTask` transaction.
-pub fn task_transaction(key: &LocalKey, task: &ComputeTask, nonce: u64) -> Transaction {
+/// The `ComputeTask` transaction, signed for the network `chain_id`
+/// (RFC 0006 §2).
+pub fn task_transaction(
+    key: &LocalKey,
+    chain_id: &ChainId,
+    task: &ComputeTask,
+    nonce: u64,
+) -> Transaction {
     let mut tx = Transaction {
         tx_type: TransactionType::ComputeTask,
         sender: key.address(),
@@ -303,18 +309,20 @@ pub fn task_transaction(key: &LocalKey, task: &ComputeTask, nonce: u64) -> Trans
         payload: TransactionPayload::ComputeTask(Box::new(task.clone())),
         signature: [0u8; 64],
     };
-    tx.signature = key.sign(&tx.signing_payload());
+    tx.signature = key.sign(&tx.signing_payload(chain_id));
     tx
 }
 
-/// Submits `task` signed by `key` at the account's next nonce.
+/// Submits `task` signed by `key` for the network `chain_id`, at the
+/// account's next nonce.
 pub async fn submit_task<C: ChainClient>(
     chain: &C,
     key: &LocalKey,
+    chain_id: &ChainId,
     task: &ComputeTask,
 ) -> Result<Hash, ChainError> {
     let nonce = chain.account_nonce(&key.address()).await?;
-    chain.submit_transaction(&task_transaction(key, task, nonce)).await
+    chain.submit_transaction(&task_transaction(key, chain_id, task, nonce)).await
 }
 
 /// The committed task with this id, scanning blocks `from..=latest`.

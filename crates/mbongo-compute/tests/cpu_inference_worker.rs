@@ -210,7 +210,7 @@ impl World {
             payload: TransactionPayload::ComputeTask(Box::new(self.task.clone())),
             signature: [0u8; 64],
         };
-        tx.signature = self.client.sign(&tx.signing_payload());
+        tx.signature = self.client.sign(&tx.signing_payload(&mbongo_core::Genesis::dev().chain_id));
         tx
     }
 
@@ -232,7 +232,12 @@ impl World {
             Box::new(ReverseBytesProfile),
             Box::new(self.profile()),
         ]);
-        Worker::new(&mut self.ids, self.executor.clone(), Box::new(dispatch))
+        Worker::new(
+            &mut self.ids,
+            self.executor.clone(),
+            mbongo_core::Genesis::dev().chain_id,
+            Box::new(dispatch),
+        )
     }
 
     /// A worker that can only run the reference profile.
@@ -240,6 +245,7 @@ impl World {
         Worker::new(
             &mut self.ids,
             self.executor.clone(),
+            mbongo_core::Genesis::dev().chain_id,
             Box::new(ReverseBytesProfile),
         )
     }

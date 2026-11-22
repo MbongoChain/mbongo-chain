@@ -127,7 +127,9 @@ fn main() -> Result<(), String> {
         payload: TransactionPayload::AnchorReceipt(Box::new(receipt)),
         signature: [0u8; 64],
     };
-    tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+    // For the dev chain, the network of a node started with --dev
+    // (RFC 0006 §2): this example is a devnet tool with the public dev key.
+    tx.signature = sk.sign(&tx.signing_payload(&mbongo_core::Genesis::dev().chain_id)).to_bytes();
 
     let output = json!({
         "rpc_request": {

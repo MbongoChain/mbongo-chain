@@ -236,7 +236,7 @@ impl ReferenceSubject {
             signature: [0u8; 64],
         };
         self.client_nonce += 1;
-        tx.signature = self.client.sign(&tx.signing_payload());
+        tx.signature = self.client.sign(&tx.signing_payload(&super::conformance_chain_id()));
         tx
     }
 
@@ -402,7 +402,12 @@ impl Subject for ReferenceSubject {
 
     fn new_instance(&mut self, actor: Actor) -> Worker {
         let key = self.key(actor).clone();
-        let w = Worker::new(&mut self.ids, key, Box::new(ReverseBytesProfile));
+        let w = Worker::new(
+            &mut self.ids,
+            key,
+            super::conformance_chain_id(),
+            Box::new(ReverseBytesProfile),
+        );
         self.render(&format!("{w:?}"));
         w
     }
@@ -735,7 +740,7 @@ impl Subject for ReferenceSubject {
             payload: TransactionPayload::AnchorReceipt(Box::new(receipt)),
             signature: [0u8; 64],
         };
-        tx.signature = self.issuer.sign(&tx.signing_payload());
+        tx.signature = self.issuer.sign(&tx.signing_payload(&super::conformance_chain_id()));
         tx
     }
 
@@ -746,6 +751,7 @@ impl Subject for ReferenceSubject {
         let w = Worker::new(
             &mut self.ids,
             self.executor.clone(),
+            super::conformance_chain_id(),
             Box::new(ReverseBytesProfile),
         );
         let receipt = w.bound_receipt(&self.task, output_commitment);

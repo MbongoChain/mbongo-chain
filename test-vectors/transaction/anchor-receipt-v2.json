@@ -1,0 +1,297 @@
+{
+  "fixture_version": 2,
+  "purpose": "Neutral cross-language golden vectors for AnchorReceipt transactions. Pins the SCALE signing bytes, the transaction signature, the full encoding, the transaction hash, and the serialised Transaction JSON object. Version 2 (RFC 0006 section 2, S1-5): every transaction signature is over \"mbongo-tx:v2\" || chain_id || the transaction fields, for the dev chain below. The fields, encodings of tasks and receipts, and receipt signatures are those of version 1.",
+  "supersedes": "test-vectors/transaction/anchor-receipt-v1.json",
+  "chain": {
+    "chain_id": "2fd700acc09b3d1752ca6fe21e7d6f4844917c5a9fcd41a34fe1d13d7deed1a4",
+    "chain_id_source": "crates/mbongo-core/genesis/dev.json, the dev genesis: chain_id = BLAKE3(\"mbongo:chain-id:v1\" || file_bytes)",
+    "signing_domain": {
+      "ascii": "mbongo-tx:v2",
+      "hex": "6d626f6e676f2d74783a7632",
+      "length": 12
+    },
+    "other_chain_id": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+    "other_chain_id_use": "no signature in this file verifies for it: a signature for one network does not verify on another"
+  },
+  "authority": {
+    "transaction_structure": "crates/mbongo-core/src/primitives.rs — Transaction, TransactionType, TransactionPayload, Transaction::signing_payload",
+    "transaction_hash": "crates/mbongo-node/src/backend.rs — compute_tx_hash",
+    "anchoring_rules": "docs/rfcs/0002-receipt-anchoring-v0.3.md; PROTOCOL_LOCK_v0.3 (FROZEN)",
+    "receipt": "test-vectors/receipt/receipt-v1.json — the receipt source of truth, referenced and never duplicated"
+  },
+  "conventions": {
+    "hex": "lowercase, no 0x prefix, except inside serialized_transaction which reproduces the JSON wire form",
+    "byte_order": "fixed-width integers are little-endian and never compact",
+    "receipt_reference": "receipt_vector names a vector in test-vectors/receipt/receipt-v1.json; resolve it there",
+    "sender": "<receipt.executor> means: resolve the referenced receipt vector and use its executor, which consensus requires"
+  },
+  "derivation": {
+    "method": "Every expected value was constructed from the protocol rules, not by encoding with production Rust. SCALE laid out by hand as concatenated fields; integers by explicit fixed-width little-endian construction; signatures by an independent Ed25519; hashes by an independent BLAKE3. Rust is a consumer that must agree with values it did not produce.",
+    "upstream_truth": "test-vectors/receipt/receipt-v1.json is the only machine input.",
+    "version_2": "Derived from test-vectors/transaction/anchor-receipt-v1.json: for each signed transaction, the test seed was found by reproducing the v1 signature over the v1 signing bytes, then the transaction was signed again over \"mbongo-tx:v2\" || chain_id || fields with an Ed25519 written independently of ed25519-dalek and @noble, and its encoding and BLAKE3 hash recomputed. Of the invalid signatures, the one over the raw receipt hash is unchanged (that message has no transaction domain), and the one over BLAKE3 of the signing payload is over BLAKE3 of the v2 signing payload."
+  },
+  "signing_formula": {
+    "transaction_fields": "0x03 || sender[32] || receiver[32] || amount_u128_le[16] || nonce_u64_le[8] || 0x01 || <full canonical receipt bytes>",
+    "transaction_signing_payload": "\"mbongo-tx:v2\"[12] || chain_id[32] || transaction_fields",
+    "fixed_bytes_before_receipt": 90,
+    "full_transaction": "transaction_fields || transaction_signature[64]: the encoding holds no domain and no chain_id",
+    "transaction_hash": "BLAKE3(full transaction), so it covers the signature",
+    "prehash": "none — the transaction signature is over the raw signing payload, domain and chain_id included"
+  },
+  "discriminants": {
+    "TransactionType::AnchorReceipt": "03",
+    "TransactionPayload::AnchorReceipt": "01",
+    "note": "Both come from explicit #[codec(index = ...)] attributes, so neither depends on declaration order."
+  },
+  "anchoring_invariants": {
+    "sender": "must equal receipt.executor",
+    "receiver": "must be the zero address, 32 zero bytes, with no Option marker and no length prefix",
+    "amount": "must be 0"
+  },
+  "two_signature_domains": {
+    "note": "Because anchoring requires sender == receipt.executor, one key produces both signatures. They are still different signatures, because the messages differ.",
+    "receipt_signature": {
+      "key": "executor",
+      "message": "the raw 32 bytes of receipt_hash"
+    },
+    "transaction_signature": {
+      "key": "sender",
+      "message": "the raw transaction signing payload"
+    },
+    "interchangeable": false
+  },
+  "json_wire": {
+    "note": "The serialized_transaction block reproduces current runtime serde output. It is interoperability evidence, not a new protocol rule.",
+    "byte_representation": "Hex strings appear exactly where a custom serializer exists: Address has its own impl Serialize, and the 64-byte signatures use serde_arr64. Plain [u8; 32] and Vec<u8> carry no annotation and fall through to serde's default sequence handling, so they emit arrays of numbers.",
+    "hex_string_fields": [
+      "transaction.sender",
+      "transaction.receiver",
+      "transaction.signature",
+      "receipt.executor",
+      "receipt.signature"
+    ],
+    "number_array_fields": [
+      "receipt.task_id",
+      "receipt.input_commitment",
+      "receipt.output_commitment",
+      "receipt.metadata"
+    ],
+    "number_fields": [
+      "transaction.amount",
+      "transaction.nonce",
+      "receipt.version"
+    ],
+    "tx_type": "a plain string, the variant name",
+    "payload": "externally tagged: an object with the variant name as its single key"
+  },
+  "test_key": {
+    "warning": "TEST ONLY. NOT A PRODUCTION KEY. The seed is public.",
+    "source": "resolved from test-vectors/receipt/receipt-v1.json; not restated here"
+  },
+  "valid": [
+    {
+      "name": "canonical-diagnostic-nonce",
+      "note": "The reference vector. The nonce is deliberately non-palindromic so a big-endian or compact encoding cannot produce the same signature.",
+      "transaction": {
+        "receipt_vector": "empty-metadata",
+        "sender": "<receipt.executor>",
+        "receiver": "0000000000000000000000000000000000000000000000000000000000000000",
+        "amount": 0,
+        "nonce": 1108152157446
+      },
+      "expected": {
+        "receipt_offset": 90,
+        "nonce_u64_le": "0605040302010000",
+        "amount_u128_le": "00000000000000000000000000000000",
+        "transaction_fields_length": 284,
+        "signing_payload_length": 328,
+        "transaction_fields": "03197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d6100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006050403020100000101111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61001b654790b317c65123e0b40692b4727e1ba5133a078e15b4e9960a47fb0524ff19a4b146197ee5fa542a9c08809dfe40db899327a8fba87cbdd23baeff32e602",
+        "signing_payload": "6d626f6e676f2d74783a76322fd700acc09b3d1752ca6fe21e7d6f4844917c5a9fcd41a34fe1d13d7deed1a403197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d6100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006050403020100000101111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61001b654790b317c65123e0b40692b4727e1ba5133a078e15b4e9960a47fb0524ff19a4b146197ee5fa542a9c08809dfe40db899327a8fba87cbdd23baeff32e602",
+        "transaction_signature": "5ddc7a2061ce2c61a3f3dcba5617763fe7f0bc45f3e0048366ff5fa9d519fb8e3e7c96a2b7b0d2272bd4d461eac37bb1d39130cb8536d79bd853b9a1d6f85809",
+        "full_transaction_length": 348,
+        "full_transaction": "03197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d6100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006050403020100000101111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61001b654790b317c65123e0b40692b4727e1ba5133a078e15b4e9960a47fb0524ff19a4b146197ee5fa542a9c08809dfe40db899327a8fba87cbdd23baeff32e6025ddc7a2061ce2c61a3f3dcba5617763fe7f0bc45f3e0048366ff5fa9d519fb8e3e7c96a2b7b0d2272bd4d461eac37bb1d39130cb8536d79bd853b9a1d6f85809",
+        "transaction_hash": "ad9400c1bf7e9cc11e91898c048eb343c67ab2fe9b0b5568a73ce25f57546044"
+      }
+    },
+    {
+      "name": "nonce-zero",
+      "note": "The realistic first-anchor case. Its all-zero nonce bytes cannot prove byte order, which is why the canonical vector exists; it guards against a consumer hard-coding the diagnostic nonce.",
+      "transaction": {
+        "receipt_vector": "empty-metadata",
+        "sender": "<receipt.executor>",
+        "receiver": "0000000000000000000000000000000000000000000000000000000000000000",
+        "amount": 0,
+        "nonce": 0
+      },
+      "expected": {
+        "receipt_offset": 90,
+        "nonce_u64_le": "0000000000000000",
+        "amount_u128_le": "00000000000000000000000000000000",
+        "transaction_fields_length": 284,
+        "signing_payload_length": 328,
+        "transaction_fields": "03197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d6100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000101111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61001b654790b317c65123e0b40692b4727e1ba5133a078e15b4e9960a47fb0524ff19a4b146197ee5fa542a9c08809dfe40db899327a8fba87cbdd23baeff32e602",
+        "signing_payload": "6d626f6e676f2d74783a76322fd700acc09b3d1752ca6fe21e7d6f4844917c5a9fcd41a34fe1d13d7deed1a403197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d6100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000101111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61001b654790b317c65123e0b40692b4727e1ba5133a078e15b4e9960a47fb0524ff19a4b146197ee5fa542a9c08809dfe40db899327a8fba87cbdd23baeff32e602",
+        "transaction_signature": "991074dfec53c4f8649643df0e3f122a47b7c91786b5c98fdb84b8c7b6abe995cabcc952b712180287cf24286635330879bbe930424e9f33ac4a51f4400e1308",
+        "full_transaction_length": 348,
+        "full_transaction": "03197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d6100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000101111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61001b654790b317c65123e0b40692b4727e1ba5133a078e15b4e9960a47fb0524ff19a4b146197ee5fa542a9c08809dfe40db899327a8fba87cbdd23baeff32e602991074dfec53c4f8649643df0e3f122a47b7c91786b5c98fdb84b8c7b6abe995cabcc952b712180287cf24286635330879bbe930424e9f33ac4a51f4400e1308",
+        "transaction_hash": "47cab50810988c5b5a57af3d2b39d26f995f5501d165cc850e7891a510c98a63"
+      }
+    }
+  ],
+  "encoding_only": [
+    {
+      "name": "nonzero-amount-u128",
+      "note": "NOT a valid AnchorReceipt. amount must be 0 for anchoring, so this case exists only to pin the fixed-width little-endian u128 encoding that a valid vector can never exercise. Do not submit it.",
+      "warning": "ENCODING ONLY. This is not a consensus-valid AnchorReceipt transaction.",
+      "amount_decimal": "1339673755198158349044581307228491536",
+      "amount_note": "Written as a decimal string, not a JSON number: the value exceeds the JavaScript safe-integer range, so a number literal would be silently rounded when parsed.",
+      "expected": {
+        "amount_u128_le": "100f0e0d0c0b0a090807060504030201"
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "transaction-signature-over-receipt-hash",
+      "note": "The transaction signature was produced over the raw 32-byte receipt hash, which is the receipt's message, not the transaction's. Everything else matches the canonical vector.",
+      "base_vector": "canonical-diagnostic-nonce",
+      "transaction_signature": "1b654790b317c65123e0b40692b4727e1ba5133a078e15b4e9960a47fb0524ff19a4b146197ee5fa542a9c08809dfe40db899327a8fba87cbdd23baeff32e602",
+      "expected": {
+        "transaction_signature_verifies": false,
+        "equals_receipt_signature": true,
+        "why": "Ed25519 is deterministic, so signing the receipt hash reproduces the receipt's own signature exactly. Reusing it as the transaction signature is the same mistake either way."
+      }
+    },
+    {
+      "name": "transaction-signature-over-prehashed-payload",
+      "note": "The transaction signature was produced over BLAKE3 of the signing payload, applying the receipt's hash-then-sign pattern to a transaction. Transactions are signed over the raw payload with no prehash.",
+      "base_vector": "canonical-diagnostic-nonce",
+      "transaction_signature": "199680f56fd3ccb925887a224cf0bdf6226baa79920423fbbff1f956f3b022a153ca27776e4252369efd0af23e38ccd33c090e9616e3616006bc7a856ae1a90e",
+      "expected": {
+        "transaction_signature_verifies": false
+      }
+    }
+  ],
+  "serialized_transaction": {
+    "note": "The exact serde JSON object for the canonical vector. The JSON-RPC envelope (jsonrpc, id, method, params) is deliberately not pinned here — the SDK wire tests already own it.",
+    "vector": "canonical-diagnostic-nonce",
+    "object": {
+      "tx_type": "AnchorReceipt",
+      "sender": "0x197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+      "receiver": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "amount": 0,
+      "nonce": 1108152157446,
+      "payload": {
+        "AnchorReceipt": {
+          "version": 1,
+          "task_id": [
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17,
+            17
+          ],
+          "input_commitment": [
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34,
+            34
+          ],
+          "output_commitment": [
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51,
+            51
+          ],
+          "executor": "0x197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+          "metadata": [],
+          "signature": "0x1b654790b317c65123e0b40692b4727e1ba5133a078e15b4e9960a47fb0524ff19a4b146197ee5fa542a9c08809dfe40db899327a8fba87cbdd23baeff32e602"
+        }
+      },
+      "signature": "0x5ddc7a2061ce2c61a3f3dcba5617763fe7f0bc45f3e0048366ff5fa9d519fb8e3e7c96a2b7b0d2272bd4d461eac37bb1d39130cb8536d79bd853b9a1d6f85809"
+    }
+  }
+}

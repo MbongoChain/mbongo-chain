@@ -1,5 +1,5 @@
 //! Receipt cases of the shared strict Ed25519 vectors
-//! (`test-vectors/signature/ed25519-strict-v1.json`), through
+//! (`test-vectors/signature/ed25519-strict-v2.json`), through
 //! `verify_receipt_signature`, the rule (h) check. Every valid receipt of
 //! `test-vectors/receipt/receipt-v1.json` must also stay valid.
 
@@ -7,14 +7,15 @@ use mbongo_core::Address;
 use mbongo_verification::receipt::{verify_receipt_signature, Receipt};
 use serde_json::Value;
 
-const STRICT_FIXTURE: &str = include_str!("../../../test-vectors/signature/ed25519-strict-v1.json");
+const STRICT_FIXTURE: &str = include_str!("../../../test-vectors/signature/ed25519-strict-v2.json");
 const RECEIPT_FIXTURE: &str = include_str!("../../../test-vectors/receipt/receipt-v1.json");
 
 fn fixture(raw: &str) -> Value {
     let v: Value = serde_json::from_str(raw).expect("valid JSON");
     assert_eq!(
         v["fixture_version"].as_u64(),
-        Some(1),
+        // The strict file is version 2 (S1-5), the receipt file version 1.
+        Some(if v.get("supersedes").is_some() { 2 } else { 1 }),
         "unsupported fixture version"
     );
     v

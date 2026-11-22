@@ -289,14 +289,14 @@ env.devnet = { nodes: 3, converged_at_height: conv, profile: "native harness pro
 log(`devnet converged at height ${conv}`);
 
 // ── 4. fund the executor, start the one long-lived service ───────────────
-const fund = await run(BIN("mvp_service"), ["fund-executor", "--amount", "1000"], { env: CLI_ENV });
+const fund = await run(BIN("mvp_service"), ["--dev", "fund-executor", "--amount", "1000"], { env: CLI_ENV });
 fs.writeFileSync(path.join(RUN, "fund.out"), fund.stdout);
 fs.writeFileSync(path.join(RUN, "fund.err"), fund.stderr);
 if (fund.code !== 0) die("funding the executor failed");
 const serviceOut = path.join(RUN, "service.out");
 const serviceErr = path.join(RUN, "service.err");
 const svcStart = now();
-const service = spawn(BIN("mvp_service"), ["serve", "--bind", FRONT], {
+const service = spawn(BIN("mvp_service"), ["--dev", "serve", "--bind", FRONT], {
   cwd: ROOT,
   env: { ...process.env, ...CLI_ENV, RUST_LOG: "info", MBONGO_INFER_THREADS: String(env.cpu_threads) },
 });
@@ -340,7 +340,7 @@ function dirSize(d) {
 }
 
 // ── 6. the campaign ───────────────────────────────────────────────────────
-const cli = (args, extra = {}) => run(BIN("mbongo-mvp"), args, { env: CLI_ENV, ...extra });
+const cli = (args, extra = {}) => run(BIN("mbongo-mvp"), ["--dev", ...args], { env: CLI_ENV, ...extra });
 const jobs = [];
 const continuity = [];
 let previousTask = null;

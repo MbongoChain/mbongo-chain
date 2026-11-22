@@ -3,10 +3,14 @@
 //! loopback process (`docs/product/MVP_HTTP_CLI.md`).
 //!
 //! ```text
-//! mvp_service serve            [--bind 127.0.0.1:8740] [--rpc-url …] [--rest-url …]
-//! mvp_service executor-address
-//! mvp_service fund-executor    --amount <n>            (operator, devnet only)
+//! mvp_service <--dev | --genesis <file>> serve            [--bind 127.0.0.1:8740] [--rpc-url …] [--rest-url …]
+//! mvp_service <--dev | --genesis <file>> executor-address
+//! mvp_service <--dev | --genesis <file>> fund-executor    --amount <n>            (operator, devnet only)
 //! ```
+//!
+//! `--dev | --genesis <file>`, exactly one, names the network every
+//! transaction is signed for (RFC 0006 §2). It is this binary's own
+//! configuration: no endpoint chooses it.
 //!
 //! Keys are read from files named by environment variables, never from the
 //! command line: `MBONGO_MVP_EXECUTOR_KEY_FILE` (the worker's executor key)
@@ -32,8 +36,9 @@ use mbongo_compute::data_plane::LocalKey;
 use mbongo_compute::mvp::client::{load_key_file, random_bytes};
 use mbongo_compute::mvp::front::{Front, FrontConfig};
 use mbongo_compute::mvp::{DEFAULT_BIND, RUNTIME_PROFILE};
+use mbongo_compute::network::NetworkArgs;
 use mbongo_compute::profiles;
-use mbongo_core::{Address, Transaction, TransactionPayload, TransactionType};
+use mbongo_core::{Address, ChainId, Transaction, TransactionPayload, TransactionType};
 
 #[derive(Parser)]
 #[command(
@@ -58,6 +63,9 @@ struct Cli {
     /// File holding the executor key seed (64 hex characters).
     #[arg(long, env = "MBONGO_MVP_EXECUTOR_KEY_FILE", hide_env_values = true)]
     executor_key_file: PathBuf,
+    /// The network every transaction is signed for.
+    #[command(flatten)]
+    network: NetworkArgs,
     #[command(subcommand)]
     command: Command,
 }
@@ -91,6 +99,7 @@ fn load(path: &std::path::Path) -> Result<LocalKey, String> {
 async fn fund(
     chain: &RpcChainClient,
     funder: &LocalKey,
+    chain_id: &ChainId,
     to: Address,
     amount: u128,
 ) -> Result<(), String> {
@@ -107,7 +116,7 @@ async fn fund(
         payload: TransactionPayload::None,
         signature: [0u8; 64],
     };
-    tx.signature = funder.sign(&tx.signing_payload());
+    tx.signature = funder.sign(&tx.signing_payload(chain_id));
     let hash = chain
         .submit_transaction(&tx)
         .await
@@ -128,7 +137,12 @@ async fn fund(
     Err("timed out waiting for the transfer to be included".into())
 }
 
-async fn serve(chain: RpcChainClient, executor: LocalKey, bind: SocketAddr) -> Result<(), String> {
+async fn serve(
+    chain: RpcChainClient,
+    executor: LocalKey,
+    chain_id: ChainId,
+    bind: SocketAddr,
+) -> Result<(), String> {
     mbongo_compute::mvp::check_loopback_bind(bind)?;
     let spec = profiles::active_job_spec();
     let cfg = RuntimeConfig::from_env(&spec.model.artifact_name)?;
@@ -149,6 +163,7 @@ async fn serve(chain: RpcChainClient, executor: LocalKey, bind: SocketAddr) -> R
         Arc::new(SystemClock),
         random_bytes::<32>(),
         executor,
+        chain_id,
         Arc::new(profile),
         Some(observations),
         FrontConfig::default(),
@@ -200,6 +215,13 @@ async fn main() -> ExitCode {
             return ExitCode::from(3);
         }
     };
+    let chain_id = match cli.network.chain_id() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(3);
+        }
+    };
     let chain = RpcChainClient::new(cli.rpc_url, cli.rest_url);
     let result = match cli.command {
         Command::ExecutorAddress => {
@@ -210,10 +232,10 @@ async fn main() -> ExitCode {
             amount,
             funder_key_file,
         } => match load(&funder_key_file) {
-            Ok(funder) => fund(&chain, &funder, executor.address(), amount).await,
+            Ok(funder) => fund(&chain, &funder, &chain_id, executor.address(), amount).await,
             Err(e) => Err(e),
         },
-        Command::Serve { bind } => serve(chain, executor, bind).await,
+        Command::Serve { bind } => serve(chain, executor, chain_id, bind).await,
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

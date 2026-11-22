@@ -66,6 +66,7 @@ pub mod identity;
 pub mod inference;
 pub mod job;
 pub mod mvp;
+pub mod network;
 pub mod policy;
 pub mod profiles;
 pub mod provider;

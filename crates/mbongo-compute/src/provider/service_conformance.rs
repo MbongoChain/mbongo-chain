@@ -38,8 +38,8 @@ use crate::chain::ChainClient;
 use crate::clock::{Clock, ManualClock};
 use crate::conformance::reference::{captured_lines, install_log_capture, take_captured};
 use crate::conformance::{
-    catalog, run_all, Actor, Claims, FailureKind, FaultPoint, GrantOp, Outcome, Refusal, Retarget,
-    Status, Subject, SubjectInfo,
+    catalog, conformance_chain_id, run_all, Actor, Claims, FailureKind, FaultPoint, GrantOp,
+    Outcome, Refusal, Retarget, Status, Subject, SubjectInfo,
 };
 use crate::control_plane::{AttemptEvent, ControlPlaneConfig, FailureClass, Lease};
 use crate::data_plane::{
@@ -184,6 +184,7 @@ impl ProviderSubject {
             Arc::new(clock.clone()) as Arc<dyn Clock>,
             SEED_SERVICE,
             executor.clone(),
+            conformance_chain_id(),
             ProviderParts {
                 store,
                 runtimes: vec![Arc::new(runtime) as Arc<dyn RuntimeAdapter>],
@@ -271,7 +272,7 @@ impl ProviderSubject {
             signature: [0; 64],
         };
         self.client_nonce += 1;
-        tx.signature = self.client.sign(&tx.signing_payload());
+        tx.signature = self.client.sign(&tx.signing_payload(&conformance_chain_id()));
         self.chain.submit_transaction(&tx).await.expect("chain double accepts");
         self.chain.produce_block();
         self.chain.produce_block();
@@ -478,7 +479,12 @@ impl Subject for ProviderSubject {
     fn new_instance(&mut self, actor: Actor) -> Worker {
         let key = self.key(actor);
         let profile = Arc::clone(&self.service.inner.profile);
-        let worker = Worker::new(&mut self.ids, key, Box::new(SharedProfile(profile)));
+        let worker = Worker::new(
+            &mut self.ids,
+            key,
+            conformance_chain_id(),
+            Box::new(SharedProfile(profile)),
+        );
         self.render(&format!("{worker:?}"));
         worker
     }
@@ -825,7 +831,7 @@ impl Subject for ProviderSubject {
             payload: TransactionPayload::AnchorReceipt(Box::new(receipt)),
             signature: [0; 64],
         };
-        tx.signature = self.issuer().sign(&tx.signing_payload());
+        tx.signature = self.issuer().sign(&tx.signing_payload(&conformance_chain_id()));
         tx
     }
 

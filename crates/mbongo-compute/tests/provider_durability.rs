@@ -129,6 +129,7 @@ async fn start(dir: &Path, chain: FakeChain, fail: bool) -> Stack {
         Arc::new(SystemClock),
         mbongo_compute::mvp::client::random_bytes::<32>(),
         LocalKey::from_seed(&[0xE1; 32]),
+        mbongo_core::Genesis::dev().chain_id,
         ProviderParts {
             store: Arc::new(ProviderStore::new(dir.join("artifacts"))),
             runtimes: vec![Arc::clone(&runtime) as Arc<dyn RuntimeAdapter>],
@@ -189,7 +190,14 @@ impl Stack {
         };
         let task_id = task.task_id();
         let upload = c.upload(task_id, input).await.unwrap();
-        submit_task(&self.chain, &client_key(), &task).await.unwrap();
+        submit_task(
+            &self.chain,
+            &client_key(),
+            &mbongo_core::Genesis::dev().chain_id,
+            &task,
+        )
+        .await
+        .unwrap();
         self.chain.produce_block();
         self.chain.produce_block();
         (task_id, upload.object_ref)

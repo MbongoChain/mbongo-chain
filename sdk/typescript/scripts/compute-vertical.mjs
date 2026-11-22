@@ -85,7 +85,8 @@ async function submit(input) {
   const { ed25519 } = await import("@noble/curves/ed25519.js");
   task.submitter = ed25519.getPublicKey(secret);
   const taskId = computeTaskId(task);
-  const tx = signComputeTaskTransaction(task, BigInt(input.nonce), secret);
+  // The network to sign for is given by the caller, never read from the node.
+  const tx = signComputeTaskTransaction(task, BigInt(input.nonce), secret, unhex(input.chainIdHex));
   secret.fill(0);
   const txHash = await submitComputeTask(client, tx);
 

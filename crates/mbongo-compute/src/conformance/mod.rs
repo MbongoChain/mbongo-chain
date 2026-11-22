@@ -351,6 +351,13 @@ pub trait Subject {
     fn secrets(&self) -> Vec<Vec<u8>>;
 }
 
+/// The network every conformance suite signs for: the dev network. The
+/// suites run against an in-memory chain double, not a node, so they name
+/// the network here rather than take one from configuration (RFC 0006 §2).
+pub fn conformance_chain_id() -> mbongo_core::ChainId {
+    mbongo_core::Genesis::dev().chain_id
+}
+
 // ── results ──────────────────────────────────────────────────────────────
 
 /// Engineering grouping of the cases. Not a certification tier.
@@ -1682,7 +1689,7 @@ async fn c31<S: Subject>(s: &mut S) -> CaseOutcome {
         "the anchoring transaction does not name the executor as sender; nothing to test"
     );
     check!(
-        !tx.verify_signature(),
+        !tx.verify_signature(&conformance_chain_id()),
         "an anchoring transaction signed without the executor key verifies as the executor's"
     );
     Ok(())

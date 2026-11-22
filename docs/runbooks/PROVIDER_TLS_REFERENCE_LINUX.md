@@ -59,8 +59,13 @@ requirements below.
    ```
 
    ```bash
-   job_client --provider-endpoint provider.json --job-spec job.json --input input --key-file client.key
+   job_client --provider-endpoint provider.json --job-spec job.json --input input --key-file client.key \
+     --genesis genesis.json
    ```
+
+   `--genesis` (or `--dev`, for the built-in dev network) names the network the
+   task is signed for (RFC 0006 section 2). It is the client's own
+   configuration: neither the provider nor the node chooses it.
 
 The client's node is its own concern: it needs a node it trusts, and this does not
 protect that link.

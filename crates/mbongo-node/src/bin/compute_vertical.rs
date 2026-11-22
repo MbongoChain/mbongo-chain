@@ -331,7 +331,7 @@ fn signed_transfer(from: &LocalKey, to: Address, amount: u128, nonce: u64) -> Tr
         payload: TransactionPayload::None,
         signature: [0u8; 64],
     };
-    tx.signature = from.sign(&tx.signing_payload());
+    tx.signature = from.sign(&tx.signing_payload(&mbongo_core::Genesis::dev().chain_id));
     tx
 }
 
@@ -345,7 +345,7 @@ fn signed_anchor(key: &ExecutorKey, receipt: Receipt, nonce: u64) -> Transaction
         payload: TransactionPayload::AnchorReceipt(Box::new(receipt)),
         signature: [0u8; 64],
     };
-    tx.signature = key.sign(&tx.signing_payload());
+    tx.signature = key.sign(&tx.signing_payload(&mbongo_core::Genesis::dev().chain_id));
     tx
 }
 
@@ -568,6 +568,9 @@ async fn run(base: &Path, trace: &mut Trace) -> Result<(), String> {
             "inputCommitmentHex": hex::encode(input_commitment),
             "executionSpecHex": hex::encode(REVERSE_BYTES_SPEC),
             "nonce": nonce,
+            // The network the nodes of this run use: the dev chain. The
+            // signer is told; it never asks a node (RFC 0006 §7).
+            "chainIdHex": hex::encode(mbongo_core::Genesis::dev().chain_id.0),
             "timeoutSecs": WAIT_SECS,
         }),
     )
@@ -658,7 +661,12 @@ async fn run(base: &Path, trace: &mut Trace) -> Result<(), String> {
 
     // ── Phase 5: wrong executor ──────────────────────────────────────
     println!("Phase 5: the wrong executor is not offered the task and cannot anchor...");
-    let mut squat = Worker::new(&mut ids, squatter.clone(), Box::new(ReverseBytesProfile));
+    let mut squat = Worker::new(
+        &mut ids,
+        squatter.clone(),
+        mbongo_core::Genesis::dev().chain_id,
+        Box::new(ReverseBytesProfile),
+    );
     let o = squat.run_once(&mut cp, &mut dp, &chain).await.map_err(|e| e.to_string())?;
     if o != AttemptOutcome::Idle {
         return Err(format!(
@@ -692,7 +700,12 @@ async fn run(base: &Path, trace: &mut Trace) -> Result<(), String> {
 
     // ── Phase 6: corrupted input, then a result-store failure ────────
     println!("Phase 6: corrupted input and a result-store failure stop the attempt before any receipt...");
-    let mut w = Worker::new(&mut ids, executor.clone(), Box::new(ReverseBytesProfile));
+    let mut w = Worker::new(
+        &mut ids,
+        executor.clone(),
+        mbongo_core::Genesis::dev().chain_id,
+        Box::new(ReverseBytesProfile),
+    );
     w.inject(Fault::CorruptInput);
     let o = w.run_once(&mut cp, &mut dp, &chain).await.map_err(|e| e.to_string())?;
     if !matches!(
@@ -709,7 +722,12 @@ async fn run(base: &Path, trace: &mut Trace) -> Result<(), String> {
     if dp.result_ref(task_id, executor.address()).is_some() {
         return Err("a result exists after a commitment mismatch".to_string());
     }
-    let mut w = Worker::new(&mut ids, executor.clone(), Box::new(ReverseBytesProfile));
+    let mut w = Worker::new(
+        &mut ids,
+        executor.clone(),
+        mbongo_core::Genesis::dev().chain_id,
+        Box::new(ReverseBytesProfile),
+    );
     dp.inject(DataPlaneFault::PutResultFails);
     let o = w.run_once(&mut cp, &mut dp, &chain).await.map_err(|e| e.to_string())?;
     if !matches!(
@@ -744,7 +762,12 @@ async fn run(base: &Path, trace: &mut Trace) -> Result<(), String> {
     println!("Phase 7: a worker crashes after fetching; a new instance recovers with a fresh capability...");
     let caps_before = cp.task(task_id).map(|t| t.capabilities.len()).unwrap_or(0);
     let attempts_before = cp.task(task_id).map(|t| t.attempt_count).unwrap_or(0);
-    let mut w1 = Worker::new(&mut ids, executor.clone(), Box::new(ReverseBytesProfile));
+    let mut w1 = Worker::new(
+        &mut ids,
+        executor.clone(),
+        mbongo_core::Genesis::dev().chain_id,
+        Box::new(ReverseBytesProfile),
+    );
     w1.inject(Fault::CrashAfterFetch);
     let o = w1.run_once(&mut cp, &mut dp, &chain).await.map_err(|e| e.to_string())?;
     if !matches!(o, AttemptOutcome::Crashed { .. }) {
@@ -756,7 +779,12 @@ async fn run(base: &Path, trace: &mut Trace) -> Result<(), String> {
     drop(w1);
     println!("  crashed instance gone; its capability is spent; waiting {LEASE_SECS}s for its lease to lapse...");
     sleep(Duration::from_secs(LEASE_SECS + 1)).await;
-    let mut worker = Worker::new(&mut ids, executor.clone(), Box::new(ReverseBytesProfile));
+    let mut worker = Worker::new(
+        &mut ids,
+        executor.clone(),
+        mbongo_core::Genesis::dev().chain_id,
+        Box::new(ReverseBytesProfile),
+    );
     let o = worker.run_once(&mut cp, &mut dp, &chain).await.map_err(|e| e.to_string())?;
     let AttemptOutcome::Submitted {
         tx_hash: anchor_tx_hash,
@@ -965,7 +993,12 @@ async fn run(base: &Path, trace: &mut Trace) -> Result<(), String> {
             "restart changed the executor, the completion or the attempt count".to_string(),
         );
     }
-    let mut w3 = Worker::new(&mut ids, executor.clone(), Box::new(ReverseBytesProfile));
+    let mut w3 = Worker::new(
+        &mut ids,
+        executor.clone(),
+        mbongo_core::Genesis::dev().chain_id,
+        Box::new(ReverseBytesProfile),
+    );
     if w3.run_once(&mut cp2, &mut dp, &chain).await.map_err(|e| e.to_string())?
         != AttemptOutcome::Idle
     {

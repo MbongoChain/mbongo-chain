@@ -168,6 +168,7 @@ async fn rig_clocked(backend: FakeBackend, clock: Arc<dyn Clock>, delay: Duratio
         Arc::clone(&clock),
         [0x42u8; 32],
         executor.clone(),
+        mbongo_core::Genesis::dev().chain_id,
         Arc::new(profile),
         Some(observations),
         FrontConfig::default(),
@@ -216,7 +217,14 @@ async fn commit_job(r: &Rig, cv: &str, salt: u8) -> Job {
     );
     let task_id = task.task_id();
     let upload = r.client.upload(task_id, cv).await.unwrap();
-    submit_task(&r.chain, &r.client_key, &task).await.unwrap();
+    submit_task(
+        &r.chain,
+        &r.client_key,
+        &mbongo_core::Genesis::dev().chain_id,
+        &task,
+    )
+    .await
+    .unwrap();
     r.chain.produce_block();
     Job {
         task,
@@ -407,7 +415,14 @@ async fn c03_reject_oversized_input_before_storing() {
     .await;
     assert_eq!(status, 413);
     // Nothing was stored: the task cannot be registered.
-    submit_task(&r.chain, &r.client_key, &task).await.unwrap();
+    submit_task(
+        &r.chain,
+        &r.client_key,
+        &mbongo_core::Genesis::dev().chain_id,
+        &task,
+    )
+    .await
+    .unwrap();
     r.chain.produce_block();
     let e = r
         .client
@@ -507,7 +522,14 @@ async fn c05_task_register_valid_idempotent_and_bound_to_the_chain() {
     for (name, task, code) in cases {
         let task_id = task.task_id();
         let up = r.client.upload(task_id, &cv).await.unwrap();
-        submit_task(&r.chain, &r.client_key, &task).await.unwrap();
+        submit_task(
+            &r.chain,
+            &r.client_key,
+            &mbongo_core::Genesis::dev().chain_id,
+            &task,
+        )
+        .await
+        .unwrap();
         r.chain.produce_block();
         let e = r.client.register(task_id, &up.object_ref, task.executor).await.unwrap_err();
         assert_eq!(e.code(), Some(code), "{name}");
@@ -822,6 +844,7 @@ fn ctx(r: &Rig) -> Context<'_, FakeChain> {
         chain: &r.chain,
         front: &r.client,
         key: &r.client_key,
+        chain_id: mbongo_core::Genesis::dev().chain_id,
         executor: Some(r.executor.address()),
         reference_usd_per_hour: Some(0.09),
         poll: Duration::from_millis(10),
@@ -1409,7 +1432,12 @@ async fn c21_i01_schema_invalid_but_correctly_committed() {
     // The executor commits to bytes that are not a v2 profile: the receipt
     // and the commitment verify; the schema does not.
     let mut ids = IdSource::new([0x21u8; 32]);
-    let signer = Worker::new(&mut ids, r.executor.clone(), Box::new(ReverseBytesProfile));
+    let signer = Worker::new(
+        &mut ids,
+        r.executor.clone(),
+        mbongo_core::Genesis::dev().chain_id,
+        Box::new(ReverseBytesProfile),
+    );
     for (name, bytes) in [
         ("malformed JSON", b"{\"summary\":".to_vec()),
         ("wrong profile shape", b"{\"name\":\"x\"}".to_vec()),
@@ -1438,7 +1466,12 @@ async fn c21_i01_schema_invalid_but_correctly_committed() {
 async fn c21_i02_schema_valid_but_not_the_committed_bytes() {
     let (r, task, _, bytes) = artefacts().await;
     let mut ids = IdSource::new([0x22u8; 32]);
-    let signer = Worker::new(&mut ids, r.executor.clone(), Box::new(ReverseBytesProfile));
+    let signer = Worker::new(
+        &mut ids,
+        r.executor.clone(),
+        mbongo_core::Genesis::dev().chain_id,
+        Box::new(ReverseBytesProfile),
+    );
     // The receipt commits to other bytes; the retrieved bytes are a valid
     // canonical v2 profile.
     let receipt = signer.bound_receipt(&task, reference_output_commitment(b"other bytes"));

@@ -1,6 +1,6 @@
 //! Rust side of the shared nonce-boundary and account vectors.
 //!
-//! `test-vectors/transaction/nonce-boundary-v1.json` and
+//! `test-vectors/transaction/nonce-boundary-v2.json` and
 //! `test-vectors/account/account-v1.json` were **not** produced by this
 //! crate. Byte layouts were written by hand from the field rules, integers by
 //! explicit little-endian construction, signatures by an independent Ed25519
@@ -20,18 +20,36 @@ use parity_scale_codec::{DecodeAll, Encode};
 use serde_json::Value;
 
 const NONCE_FIXTURE: &str =
-    include_str!("../../../test-vectors/transaction/nonce-boundary-v1.json");
+    include_str!("../../../test-vectors/transaction/nonce-boundary-v2.json");
 const ACCOUNT_FIXTURE: &str = include_str!("../../../test-vectors/account/account-v1.json");
 const RECEIPT_FIXTURE: &str = include_str!("../../../test-vectors/receipt/receipt-v1.json");
 
-const SUPPORTED_FIXTURE_VERSION: u64 = 1;
+const SUPPORTED_FIXTURE_VERSION: u64 = 2;
 
 fn doc(name: &str, raw: &str) -> Value {
+    doc_at(name, raw, SUPPORTED_FIXTURE_VERSION)
+}
+
+/// The network a v2 fixture signs for: its `chain.chain_id`.
+fn chain_of(v: &Value) -> mbongo_core::ChainId {
+    let id: [u8; 32] = hex::decode(v["chain"]["chain_id"].as_str().expect("chain.chain_id"))
+        .expect("chain.chain_id: hex")
+        .try_into()
+        .expect("chain.chain_id: 32 bytes");
+    assert_eq!(
+        id,
+        mbongo_core::Genesis::dev().chain_id.0,
+        "the fixture signs for the dev chain"
+    );
+    mbongo_core::ChainId(id)
+}
+
+fn doc_at(name: &str, raw: &str, supported: u64) -> Value {
     let v: Value =
         serde_json::from_str(raw).unwrap_or_else(|e| panic!("{name}: invalid JSON: {e}"));
     assert_eq!(
         v["fixture_version"].as_u64(),
-        Some(SUPPORTED_FIXTURE_VERSION),
+        Some(supported),
         "{name}: unsupported fixture schema version"
     );
     v
@@ -68,7 +86,7 @@ fn dec<T: std::str::FromStr>(field: &str, v: &Value) -> T {
 
 /// The fixture's `<test_key>`: the receipt fixture's TEST ONLY key.
 fn test_key() -> SigningKey {
-    let rx = doc("receipt fixture", RECEIPT_FIXTURE);
+    let rx = doc_at("receipt fixture", RECEIPT_FIXTURE, 1);
     let sk = SigningKey::from_bytes(&arr32(
         "test_key.ed25519_seed",
         &rx["test_key"]["ed25519_seed"],
@@ -104,7 +122,13 @@ fn tx_hash(tx: &Transaction) -> [u8; 32] {
 
 /// Checks one signed transaction against its `expected` block.
 fn check_signed(name: &str, mut tx: Transaction, sk: &SigningKey, expected: &Value) {
-    let payload = tx.signing_payload();
+    let chain = chain_of(&doc("nonce fixture", NONCE_FIXTURE));
+    assert_eq!(
+        tx.signed_fields(),
+        hex_bytes("transaction_fields", &expected["transaction_fields"]),
+        "{name}: fields"
+    );
+    let payload = tx.signing_payload(&chain);
     assert_eq!(
         payload.len() as u64,
         expected["signing_payload_length"].as_u64().unwrap(),
@@ -122,7 +146,11 @@ fn check_signed(name: &str, mut tx: Transaction, sk: &SigningKey, expected: &Val
         "{name}: transaction signature"
     );
     tx.signature = sig;
-    assert!(tx.verify_signature(), "{name}: signature must verify");
+    assert!(tx.verify_signature(&chain), "{name}: signature must verify");
+    assert!(
+        !tx.verify_signature(&mbongo_core::ChainId([0x5a; 32])),
+        "{name}: must not verify on another chain"
+    );
     let full = tx.encode();
     assert_eq!(
         full.len() as u64,
@@ -160,7 +188,7 @@ fn constants_match_the_protocol_bound() {
 fn plain_transactions_encode_hash_and_sign_as_derived() {
     let v = doc("nonce fixture", NONCE_FIXTURE);
     let sk = test_key();
-    let offsets = &v["signing_formula"]["offsets"];
+    let offsets = &v["signing_formula"]["offsets_in_the_full_transaction"];
     let vectors = v["plain"].as_array().expect("plain");
     assert_eq!(vectors.len(), 9, "expected 9 plain vectors");
     let mut at_bound = 0;
@@ -177,7 +205,7 @@ fn plain_transactions_encode_hash_and_sign_as_derived() {
             signature: [0u8; 64],
         };
         // Field bytes at their fixed offsets.
-        let payload = tx.signing_payload();
+        let payload = tx.signed_fields();
         let off = |k: &str| usize::try_from(offsets[k].as_u64().unwrap()).unwrap();
         assert_eq!(
             hex::encode(&payload[off("tx_type")..off("sender")]),
@@ -210,7 +238,7 @@ fn plain_transactions_encode_hash_and_sign_as_derived() {
 #[test]
 fn anchor_transactions_at_the_bound_encode_as_derived() {
     let v = doc("nonce fixture", NONCE_FIXTURE);
-    let rx = doc("receipt fixture", RECEIPT_FIXTURE);
+    let rx = doc_at("receipt fixture", RECEIPT_FIXTURE, 1);
     let sk = test_key();
     let vectors = v["anchor"].as_array().expect("anchor");
     assert_eq!(vectors.len(), 2, "expected 2 anchor vectors");
@@ -270,7 +298,8 @@ fn malformed_encodings_do_not_decode() {
 fn signatures_over_the_wrong_message_do_not_verify() {
     let v = doc("nonce fixture", NONCE_FIXTURE);
     let cases = v["invalid_signatures"].as_array().expect("invalid_signatures");
-    assert_eq!(cases.len(), 2, "expected 2 invalid signatures");
+    assert_eq!(cases.len(), 4, "expected 4 invalid signatures");
+    let chain = chain_of(&v);
     for s in cases {
         let name = s["name"].as_str().unwrap();
         let base: Vec<&Value> = v["plain"]
@@ -282,10 +311,13 @@ fn signatures_over_the_wrong_message_do_not_verify() {
         assert_eq!(base.len(), 1, "{name}: exactly one base vector");
         let full = hex_bytes("full_transaction", &base[0]["expected"]["full_transaction"]);
         let mut tx = Transaction::decode_all(&mut &full[..]).unwrap();
-        assert!(tx.verify_signature(), "{name}: the base vector verifies");
+        assert!(
+            tx.verify_signature(&chain),
+            "{name}: the base vector verifies"
+        );
         tx.signature = arr64(name, &s["transaction_signature"]);
         assert!(
-            !tx.verify_signature(),
+            !tx.verify_signature(&chain),
             "{name}: must not verify ({})",
             s["reason"]
         );
@@ -305,7 +337,7 @@ fn nonces_outside_u64_are_not_representable() {
 
 #[test]
 fn accounts_encode_as_derived() {
-    let v = doc("account fixture", ACCOUNT_FIXTURE);
+    let v = doc_at("account fixture", ACCOUNT_FIXTURE, 1);
     let sk = test_key();
     assert_eq!(v["layout"]["length"].as_u64(), Some(56));
     let cases = v["valid"].as_array().expect("valid");

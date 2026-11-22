@@ -7,6 +7,10 @@
 //! mbongo-mvp verify <task_id> [--from-height <h>] [--input <cv.txt>] [--json] [--show-result]
 //! ```
 //!
+//! Every command takes `--dev` or `--genesis <file>` before it: the network
+//! the `ComputeTask` is signed for (RFC 0006 §2), from this client's own
+//! configuration, never from the front or the node.
+//!
 //! Configuration comes from the environment (or the matching flag):
 //! `MBONGO_MVP_FRONT`, `MBONGO_MVP_RPC_URL`, `MBONGO_MVP_REST_URL`,
 //! `MBONGO_MVP_EXECUTOR`, `MBONGO_MVP_KEY_FILE` (a file holding the client
@@ -25,6 +29,7 @@ use mbongo_compute::chain::RpcChainClient;
 use mbongo_compute::mvp::cli::{self, Context, SubmitOptions};
 use mbongo_compute::mvp::client::{load_key_file, parse_hex32, FrontClient};
 use mbongo_compute::mvp::exit;
+use mbongo_compute::network::NetworkArgs;
 use mbongo_core::Address;
 
 #[derive(Parser)]
@@ -64,6 +69,9 @@ struct Cli {
     /// Hourly infrastructure rate (USD) for the displayed reference cost.
     #[arg(long, env = "MBONGO_MVP_REFERENCE_USD_PER_HOUR")]
     reference_usd_per_hour: Option<f64>,
+    /// The network the ComputeTask is signed for.
+    #[command(flatten)]
+    network: NetworkArgs,
     #[command(subcommand)]
     command: Command,
 }
@@ -184,11 +192,19 @@ async fn main() -> ExitCode {
             return code(exit::CONFIG);
         }
     };
+    let chain_id = match cli.network.chain_id() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return code(exit::CONFIG);
+        }
+    };
     let chain = RpcChainClient::new(cli.rpc_url, cli.rest_url);
     let ctx = Context {
         chain: &chain,
         front: &front,
         key: &key,
+        chain_id,
         executor,
         reference_usd_per_hour: cli.reference_usd_per_hour,
         poll: Duration::from_secs(1),

@@ -82,3 +82,51 @@ Every seed is TEST ONLY and public:
 - `0x5b` repeated 32 times.
 
 **Never production keys.**
+
+## Version 2: the signing domain (RFC 0006 section 2, S1-5)
+
+The `-v2.json` files supersede the `-v1.json` files of this directory, which
+stay as the v0.4 record. In version 2 every transaction signature is over
+
+```text
+"mbongo-tx:v2"[12] || chain_id[32] || transaction_fields
+```
+
+`transaction_fields` is what version 1 called the signing payload: the SCALE
+fields before the signature, which is also what the transaction encoding holds.
+The encoding and the hash formula do not change; a hash changes only because
+the signature in it does.
+
+Each v2 file states the network it signs for in `chain`. That network is the dev
+chain, `chain_id = 2fd700ac…d1a4`, from `crates/mbongo-core/genesis/dev.json`.
+The file also gives an `other_chain_id`, for which no signature in it verifies.
+Expected entries carry both `transaction_fields` and `signing_payload`, with their
+lengths. Task encodings, receipts and receipt signatures are those of version 1.
+
+**Derivation.** No production code was used:
+
+- Each v2 file was derived from its v1 file by finding, for every signed
+  transaction, the test seed that reproduces the v1 signature over the bare fields.
+- The transaction was then signed again over the v2 bytes, with an Ed25519 that is
+  independent of `ed25519-dalek` and `@noble` (OpenSSL through `node:crypto`).
+- Its encoding and its BLAKE3 hash were recomputed with a BLAKE3 written from its
+  specification. Its tree mode was cross-checked on 10,050 inputs of up to 66,561
+  bytes.
+- Every new signature was checked to verify for `chain_id`, and not over the bare
+  fields or for `other_chain_id`.
+
+Invalid signatures keep their defect under the new domain:
+
+- one over the receipt hash is unchanged;
+- one over a prehashed payload is over BLAKE3 of the v2 bytes;
+- one from another transaction is that transaction's v2 signature.
+
+`nonce-boundary-v2.json` adds two cases: a v0.4 signature over the bare fields, and
+a signature for `other_chain_id`.
+
+**Consumers.**
+
+- Rust and the SDK read the v2 files.
+- `crates/mbongo-core/tests/transaction_vectors.rs` and
+  `sdk/typescript/test/signing-domain.test.mjs` also read
+  `anchor-receipt-v1.json`, to prove that every v0.4 signature in it is refused.

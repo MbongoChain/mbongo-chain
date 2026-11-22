@@ -16,7 +16,7 @@ use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
-use mbongo_core::Address;
+use mbongo_core::{Address, ChainId};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
@@ -421,6 +421,8 @@ struct Inner<C> {
     owner: LocalKey,
     issuer: LocalKey,
     executor: ExecutorKey,
+    /// The network every anchoring transaction is signed for.
+    chain_id: ChainId,
     store: Arc<ProviderStore>,
     durable: Arc<DurableStore>,
     identities: Vec<RuntimeIdentity>,
@@ -506,11 +508,14 @@ impl<C: ChainClient + Clone + 'static> ProviderService<C> {
     ///
     /// `seed` derives this run's owner key, the control plane's issuer key
     /// and every identifier; production passes 32 bytes from the OS RNG.
+    // The network is an argument of its own, never a defaulted config field.
+    #[allow(clippy::too_many_arguments)]
     pub async fn open(
         chain: C,
         clock: Arc<dyn Clock>,
         seed: [u8; 32],
         executor: ExecutorKey,
+        chain_id: ChainId,
         parts: ProviderParts,
         durable: Arc<DurableStore>,
         config: ProviderConfig,
@@ -550,6 +555,7 @@ impl<C: ChainClient + Clone + 'static> ProviderService<C> {
         let worker = Worker::new(
             &mut ids,
             executor.clone(),
+            chain_id,
             Box::new(SharedProfile(Arc::clone(&profile))),
         );
         let service = Self {
@@ -568,6 +574,7 @@ impl<C: ChainClient + Clone + 'static> ProviderService<C> {
                 owner,
                 issuer,
                 executor,
+                chain_id,
                 store,
                 durable,
                 identities,
@@ -912,6 +919,7 @@ impl<C: ChainClient + Clone + 'static> ProviderService<C> {
         Worker::new(
             ids,
             self.inner.executor.clone(),
+            self.inner.chain_id,
             Box::new(SharedProfile(Arc::clone(&self.inner.profile))),
         )
     }

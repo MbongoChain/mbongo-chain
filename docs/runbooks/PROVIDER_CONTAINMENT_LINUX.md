@@ -53,8 +53,12 @@ firewall, then prints the ids the configuration needs. Put the keys in `/srv/mbo
 ```
 
 ```bash
-sudo MBONGO_INBOUND_ALLOW=22 scripts/provider-containment-linux.sh run /srv/mbongo /srv/mbongo/bin/provider_service /srv/mbongo/provider.json
+sudo MBONGO_INBOUND_ALLOW=22 scripts/provider-containment-linux.sh run /srv/mbongo /srv/mbongo/bin/provider_service /srv/mbongo/provider.json --genesis /srv/mbongo/genesis.json
 ```
+
+The arguments after the configuration name the network the service signs its
+anchoring transactions for: `--genesis <file>`, or `--dev` for the built-in dev
+network (RFC 0006 section 2). The launcher passes them to the service unchanged.
 
 `isolation` and its `network` field have no default. `"network": "open"` leaves
 the runner's network unrestricted, and needs `MBONGO_RUNNER_NETWORK=open` for the

@@ -1,6 +1,7 @@
 //! Rust side of the shared cross-language `AnchorReceipt` transaction vectors.
 //!
-//! The expected values in `test-vectors/transaction/anchor-receipt-v1.json`
+//! The expected values in `test-vectors/transaction/anchor-receipt-v2.json`
+//! (and `-v1.json`, the v0.4 file it supersedes)
 //! were **not** produced by this crate. The signing payload was laid out by
 //! hand from the field rules — a SCALE struct is its fields concatenated in
 //! declaration order, an enum is one `codec(index)` byte, and fixed-width
@@ -18,26 +19,33 @@
 //! TypeScript consumer of this same file.
 
 use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
-use mbongo_core::{Address, Receipt, Transaction, TransactionPayload, TransactionType};
+use mbongo_core::{Address, ChainId, Receipt, Transaction, TransactionPayload, TransactionType};
 use parity_scale_codec::Encode;
 use serde_json::Value;
 
-const TX_FIXTURE: &str = include_str!("../../../test-vectors/transaction/anchor-receipt-v1.json");
+const TX_FIXTURE: &str = include_str!("../../../test-vectors/transaction/anchor-receipt-v2.json");
 const RECEIPT_FIXTURE: &str = include_str!("../../../test-vectors/receipt/receipt-v1.json");
+/// The v0.4 vectors: signatures over the bare fields, which must no longer
+/// verify (RFC 0006 §2).
+const V1_FIXTURE: &str = include_str!("../../../test-vectors/transaction/anchor-receipt-v1.json");
 
 /// The fixture schema this test understands. A bump must be a deliberate
 /// change here, not a silent divergence.
-const SUPPORTED_FIXTURE_VERSION: u64 = 1;
+const SUPPORTED_FIXTURE_VERSION: u64 = 2;
 
 fn doc(name: &str, raw: &str) -> Value {
+    doc_at(name, raw, SUPPORTED_FIXTURE_VERSION)
+}
+
+fn doc_at(name: &str, raw: &str, supported: u64) -> Value {
     let v: Value =
         serde_json::from_str(raw).unwrap_or_else(|e| panic!("{name}: invalid JSON: {e}"));
     let version = v["fixture_version"]
         .as_u64()
         .unwrap_or_else(|| panic!("{name}: fixture_version missing or not a number"));
     assert_eq!(
-        version, SUPPORTED_FIXTURE_VERSION,
-        "{name}: unsupported fixture schema version: this test understands {SUPPORTED_FIXTURE_VERSION}"
+        version, supported,
+        "{name}: unsupported fixture schema version: this test understands {supported}"
     );
     v
 }
@@ -47,7 +55,7 @@ fn transactions() -> Value {
 }
 
 fn receipts() -> Value {
-    doc("receipt fixture", RECEIPT_FIXTURE)
+    doc_at("receipt fixture", RECEIPT_FIXTURE, 1)
 }
 
 /// Decodes lowercase hex without a `0x` prefix, failing loudly.
@@ -195,6 +203,73 @@ fn transaction_hash(tx: &Transaction) -> [u8; 32] {
     *blake3::hash(&tx.encode()).as_bytes()
 }
 
+/// The network the fixture signs for: its `chain.chain_id` (the dev chain).
+fn chain() -> ChainId {
+    ChainId(fixed(
+        "chain.chain_id",
+        &transactions()["chain"]["chain_id"],
+    ))
+}
+
+fn other_chain() -> ChainId {
+    ChainId(fixed(
+        "chain.other_chain_id",
+        &transactions()["chain"]["other_chain_id"],
+    ))
+}
+
+#[test]
+fn the_fixture_signs_for_the_dev_chain() {
+    assert_eq!(chain(), mbongo_core::Genesis::dev().chain_id);
+    assert_ne!(other_chain(), chain());
+}
+
+#[test]
+fn the_fields_and_the_signed_bytes_are_pinned_apart() {
+    let (tdoc, rdoc) = (transactions(), receipts());
+    for entry in valid_vectors(&tdoc) {
+        let (tx, _, _) = transaction_from(&entry, &rdoc);
+        let name = entry["name"].as_str().unwrap_or("<unnamed>");
+        let fields = hex_bytes(
+            "expected.transaction_fields",
+            &entry["expected"]["transaction_fields"],
+        );
+        assert_eq!(tx.signed_fields(), fields, "{name}: fields");
+        assert_eq!(
+            tx.signing_payload(&chain()),
+            [&b"mbongo-tx:v2"[..], &chain().0, &fields].concat(),
+            "{name}: signed bytes"
+        );
+        assert!(
+            !tx.verify_signature(&other_chain()),
+            "{name}: verifies on another chain"
+        );
+    }
+}
+
+#[test]
+fn v0_4_signatures_no_longer_verify() {
+    let (v1, rdoc) = (doc_at("anchor-receipt-v1", V1_FIXTURE, 1), receipts());
+    let entries = valid_vectors(&v1);
+    assert_eq!(entries.len(), 2);
+    for entry in entries {
+        let (tx, _, _) = transaction_from(&entry, &rdoc);
+        let name = entry["name"].as_str().unwrap_or("<unnamed>");
+        // The v1 signature is over the bare fields: still a valid Ed25519
+        // signature of them, but not of the v2 signing bytes.
+        let vk = VerifyingKey::from_bytes(&tx.sender.0).unwrap();
+        let sig = ed25519_dalek::Signature::from_bytes(&tx.signature);
+        assert!(
+            vk.verify(&tx.signed_fields(), &sig).is_ok(),
+            "{name}: v1 bytes"
+        );
+        assert!(
+            !tx.verify_signature(&chain()),
+            "{name}: a v0.4 signature verifies"
+        );
+    }
+}
+
 #[test]
 fn transaction_fixture_parses() {
     let tdoc = transactions();
@@ -254,7 +329,7 @@ fn canonical_signing_payload_matches() {
         let name = entry["name"].as_str().unwrap_or("<unnamed>");
 
         assert_eq!(
-            tx.signing_payload(),
+            tx.signing_payload(&chain()),
             expected,
             "{name}: production signing payload differs from the independently derived bytes"
         );
@@ -267,7 +342,7 @@ fn canonical_signing_payload_matches() {
             "{name}: pinned signing payload length disagrees with the pinned bytes"
         );
         assert!(
-            tx.verify_signature(),
+            tx.verify_signature(&chain()),
             "{name}: the pinned transaction signature does not verify"
         );
     }
@@ -278,7 +353,7 @@ fn receipt_bytes_appear_at_expected_offset() {
     let (tdoc, rdoc) = (transactions(), receipts());
     for entry in valid_vectors(&tdoc) {
         let (tx, receipt_full, _) = transaction_from(&entry, &rdoc);
-        let payload = tx.signing_payload();
+        let payload = tx.signed_fields();
         let offset = u64_at(
             "expected.receipt_offset",
             &entry["expected"]["receipt_offset"],
@@ -317,7 +392,7 @@ fn diagnostic_nonce_is_little_endian() {
         // 1 + 32 + 32 + 16 bytes.
         let at = 1 + 32 + 32 + 16;
         assert_eq!(
-            &tx.signing_payload()[at..at + 8],
+            &tx.signed_fields()[at..at + 8],
             pinned.as_slice(),
             "{name}: the nonce is not encoded little-endian at its offset"
         );
@@ -420,7 +495,7 @@ fn full_transaction_encoding_and_hash_match() {
 
         // The signature is the final field, so the signing payload is a strict
         // prefix of the full encoding.
-        let payload = tx.signing_payload();
+        let payload = tx.signed_fields();
         assert_eq!(
             &expected[..payload.len()],
             payload.as_slice(),
@@ -455,7 +530,7 @@ fn transaction_signature_domain_is_distinct() {
         .find(|v| v["name"].as_str() == Some("canonical-diagnostic-nonce"))
         .expect("the canonical vector is missing");
     let (tx, _, receipt_hash) = transaction_from(&canonical, &rdoc);
-    let payload = tx.signing_payload();
+    let payload = tx.signing_payload(&chain());
 
     let TransactionPayload::AnchorReceipt(receipt) = &tx.payload else {
         panic!("the canonical vector must carry an AnchorReceipt payload");
@@ -548,7 +623,7 @@ fn invalid_vectors_fail_signature_verification() {
             "{name}: an invalid vector must expect verification to fail"
         );
         assert!(
-            !tx.verify_signature(),
+            !tx.verify_signature(&chain()),
             "{name}: a signature over the wrong message must not verify"
         );
 

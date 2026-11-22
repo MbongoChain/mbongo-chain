@@ -793,7 +793,8 @@ mod tests {
                 payload: TransactionPayload::None,
                 signature: [0u8; 64],
             };
-            tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+            tx.signature =
+                sk.sign(&tx.signing_payload(&mbongo_core::Genesis::dev().chain_id)).to_bytes();
             tx
         };
         let mut account = Account::new(sender);

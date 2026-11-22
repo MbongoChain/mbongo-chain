@@ -355,7 +355,8 @@ fn signed_transaction_params() -> Value {
         "amount": 100,
         "nonce": 0,
         "payload": "None",
-        "signature": "0x1c37e5d2236bba0eb9017ca49cf67ead73a8e30fa7a5afa982aeedb3c4b20485c9031e974dad586e9e4e9134d22ef003541018101c877867170fd568984cee0a"
+        // Signed by the public dev key for the dev chain (RFC 0006 §2).
+        "signature": "0x8239e4af58330f1622388a62f5cd1b1fdd8cd2b424b51cadb2e2391c2442f2b7d59cc9b9c9e9d52144bfcf8652b96b199b951269eeb6ea2750291c18f9d74b0f"
     })
 }
 
@@ -419,7 +420,7 @@ async fn submit_transaction_accepts_a_structured_transaction_object() {
     assert!(matches!(tx.tx_type, mbongo_core::TransactionType::Transfer));
     assert!(matches!(tx.payload, mbongo_core::TransactionPayload::None));
     assert!(
-        tx.verify_signature(),
+        tx.verify_signature(&mbongo_core::Genesis::dev().chain_id),
         "the fixture must be a genuinely signed transaction, not a placeholder"
     );
 }
@@ -488,16 +489,16 @@ async fn produce_block_takes_no_parameters_and_returns_a_hash_string() {
 // serves is a pure function of the serde types, so the payload union rpc_v0.2
 // §4.1 pinned as `None | AnchorReceipt(Receipt)` now carries a third variant.
 // That widening is what rpc_v0.3 documents. These tests pin it at the wire
-// boundary using the neutral fixture `test-vectors/rpc/compute-task-rpc-v1.json`,
+// boundary using the neutral fixture `test-vectors/rpc/compute-task-rpc-v2.json`,
 // whose objects were assembled from the serde annotations and whose bytes come
 // from the protocol fixtures — never from this crate. They assert
 // representation only: admission and consensus are covered in the node.
 
-const RPC_FIXTURE: &str = include_str!("../../../test-vectors/rpc/compute-task-rpc-v1.json");
+const RPC_FIXTURE: &str = include_str!("../../../test-vectors/rpc/compute-task-rpc-v2.json");
 
 fn rpc_doc() -> Value {
     let v: Value = serde_json::from_str(RPC_FIXTURE).expect("rpc fixture parses");
-    assert_eq!(v["fixture_version"].as_u64(), Some(1));
+    assert_eq!(v["fixture_version"].as_u64(), Some(2));
     v
 }
 
@@ -611,7 +612,10 @@ async fn submit_transaction_accepts_compute_task_objects_from_minimal_to_maximal
             fixture_32(&entry["expected"]["task_id"]),
             "{name}: task_id"
         );
-        assert!(tx.verify_signature(), "{name}: signature");
+        assert!(
+            tx.verify_signature(&mbongo_core::Genesis::dev().chain_id),
+            "{name}: signature"
+        );
         // Byte fields survived the JSON array form exactly.
         let wire = &entry["object"]["payload"]["ComputeTask"];
         let spec: Vec<u8> = wire["execution_spec"]
@@ -771,7 +775,10 @@ async fn v02_transaction_shapes_are_unchanged_under_v03() {
         assert!(v["error"].is_null(), "transaction {i}");
         let submitted = backend.submitted.lock().unwrap();
         assert_eq!(submitted[0], block.body.transactions[i]);
-        assert!(submitted[0].verify_signature(), "transaction {i}");
+        assert!(
+            submitted[0].verify_signature(&mbongo_core::Genesis::dev().chain_id),
+            "transaction {i}"
+        );
         assert_eq!(
             serde_json::to_value(&submitted[0]).unwrap(),
             *wire,

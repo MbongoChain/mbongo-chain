@@ -1,0 +1,648 @@
+{
+  "fixture_version": 2,
+  "purpose": "Neutral cross-language vectors for the transaction nonce bound of RFC 0006 section 6 step 2, and for the Transfer and Stake encodings. Pins the signing bytes, signatures, full encodings and hashes at the nonce and amount boundaries, malformed encodings that must not decode, signatures over the wrong message, and state-transition outcomes at the bound. Version 2 (RFC 0006 section 2, S1-5): every signature is over \"mbongo-tx:v2\" || chain_id || the transaction fields, for the dev chain below; the fields and the state transitions are those of version 1.",
+  "supersedes": "test-vectors/transaction/nonce-boundary-v1.json",
+  "chain": {
+    "chain_id": "2fd700acc09b3d1752ca6fe21e7d6f4844917c5a9fcd41a34fe1d13d7deed1a4",
+    "chain_id_source": "crates/mbongo-core/genesis/dev.json, the dev genesis: chain_id = BLAKE3(\"mbongo:chain-id:v1\" || file_bytes)",
+    "signing_domain": {
+      "ascii": "mbongo-tx:v2",
+      "hex": "6d626f6e676f2d74783a7632",
+      "length": 12
+    },
+    "other_chain_id": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+    "other_chain_id_use": "no signature in this file verifies for it: a signature for one network does not verify on another"
+  },
+  "authority": {
+    "state_transition": "docs/rfcs/0006-chain-identity-authenticated-blocks.md, section 6, step 2",
+    "nonce_bound": "Step 2 adds one to the sender's nonce. A nonce of u64::MAX has no successor, so a transaction whose nonce equals u64::MAX is refused with InvalidNonce (implementation note C-3 on PR #211, which does not change the accepted design). The largest applicable nonce is therefore u64::MAX - 1.",
+    "transaction_structure": "crates/mbongo-core/src/primitives.rs: Transaction, TransactionType, TransactionPayload, Transaction::signed_fields, Transaction::signing_payload(chain_id)",
+    "signing_domain": "docs/rfcs/0006-chain-identity-authenticated-blocks.md, section 2",
+    "transaction_hash": "crates/mbongo-node/src/backend.rs: compute_tx_hash, BLAKE3 over the full SCALE encoding",
+    "receipt": "test-vectors/receipt/receipt-v1.json, referenced and never duplicated"
+  },
+  "conventions": {
+    "hex": "lowercase, no 0x prefix",
+    "integers": "amount and nonce are decimal strings, because values above 2^53 do not survive a JSON number",
+    "byte_order": "fixed-width integers are little-endian and never compact",
+    "test_key": "<test_key> means the key of test-vectors/receipt/receipt-v1.json test_key: seed 0x2a repeated 32 times, TEST ONLY",
+    "receipt_reference": "receipt_vector names a vector in test-vectors/receipt/receipt-v1.json; <receipt.executor> resolves there"
+  },
+  "derivation": {
+    "method": "Every expected value was built from the protocol rules, not by encoding with production Rust or the SDK. Byte layouts by hand as concatenated fields; integers by explicit little-endian construction; signatures by Ed25519 from OpenSSL (node:crypto); hashes by a BLAKE3 written from the specification. Both primitives were first checked against published values (BLAKE3 reference vectors, RFC 8032 test 1) and against every vector of test-vectors/transaction/anchor-receipt-v1.json.",
+    "upstream_truth": "test-vectors/receipt/receipt-v1.json and crates/mbongo-core/genesis/dev.json (for chain_id) are the only machine inputs.",
+    "version_2": "The S1-1 derivation of version 1, with each signature made over \"mbongo-tx:v2\" || chain_id || fields instead of the bare fields, and checked to verify for chain_id only: not over the bare fields, not for other_chain_id."
+  },
+  "constants": {
+    "u64_max": "18446744073709551615",
+    "max_transaction_nonce": "18446744073709551614",
+    "u128_max": "340282366920938463463374607431768211455"
+  },
+  "signing_formula": {
+    "plain_transaction_fields": "tx_type[1] || sender[32] || receiver[32] || amount_u128_le[16] || nonce_u64_le[8] || 0x00",
+    "plain_transaction_fields_length": 90,
+    "plain_transaction_signing_payload": "\"mbongo-tx:v2\"[12] || chain_id[32] || plain_transaction_fields",
+    "plain_signing_payload_length": 134,
+    "full_transaction": "transaction_fields || transaction_signature[64]: the encoding holds no domain and no chain_id",
+    "plain_full_transaction_length": 154,
+    "transaction_hash": "BLAKE3(full transaction)",
+    "offsets_in_the_full_transaction": {
+      "tx_type": 0,
+      "sender": 1,
+      "receiver": 33,
+      "amount": 65,
+      "nonce": 81,
+      "payload": 89,
+      "signature": 90
+    }
+  },
+  "discriminants": {
+    "Transfer": "00",
+    "ComputeTask": "01",
+    "Stake": "02",
+    "AnchorReceipt": "03",
+    "TransactionPayload::None": "00",
+    "TransactionPayload::AnchorReceipt": "01",
+    "TransactionPayload::ComputeTask": "02"
+  },
+  "plain": [
+    {
+      "name": "transfer-nonce-zero",
+      "note": "A first transfer: nonce 0, an ordinary amount.",
+      "transaction": {
+        "tx_type": "Transfer",
+        "sender": "<test_key>",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "1000",
+        "nonce": "0"
+      },
+      "expected": {
+        "tx_type_byte": "00",
+        "amount_u128_le": "e8030000000000000000000000000000",
+        "nonce_u64_le": "0000000000000000",
+        "payload_byte": "00",
+        "transaction_fields_length": 90,
+        "transaction_fields": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000000",
+        "signing_payload_length": 134,
+        "signing_payload": "6d626f6e676f2d74783a76322fd700acc09b3d1752ca6fe21e7d6f4844917c5a9fcd41a34fe1d13d7deed1a400197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000000",
+        "transaction_signature": "566572bb2b71d181d861d1dd38345adea98cad24d76fe3d5a14e61a028239265bc496740b59b23acc4c607373a054f47806f1a71a1ed87287c14646fe15a7d04",
+        "full_transaction_length": 154,
+        "full_transaction": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000000566572bb2b71d181d861d1dd38345adea98cad24d76fe3d5a14e61a028239265bc496740b59b23acc4c607373a054f47806f1a71a1ed87287c14646fe15a7d04",
+        "transaction_hash": "d4a8d95e83f39e6fc1ed14bc6af0fe169a58f44eab588afdb4e2240a44463340"
+      }
+    },
+    {
+      "name": "transfer-diagnostic",
+      "note": "Non-palindromic amount and nonce, so a big-endian or compact integer encoding cannot reproduce the bytes.",
+      "transaction": {
+        "tx_type": "Transfer",
+        "sender": "<test_key>",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "1339673755198158349044581307228491536",
+        "nonce": "1108152157446"
+      },
+      "expected": {
+        "tx_type_byte": "00",
+        "amount_u128_le": "100f0e0d0c0b0a090807060504030201",
+        "nonce_u64_le": "0605040302010000",
+        "payload_byte": "00",
+        "transaction_fields_length": 90,
+        "transaction_fields": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1100f0e0d0c0b0a090807060504030201060504030201000000",
+        "signing_payload_length": 134,
+        "signing_payload": "6d626f6e676f2d74783a76322fd700acc09b3d1752ca6fe21e7d6f4844917c5a9fcd41a34fe1d13d7deed1a400197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1100f0e0d0c0b0a090807060504030201060504030201000000",
+        "transaction_signature": "b3463380c243b74382566858b0e732d2330f36d40f8320588d96d21e84b72884ae828bdd0b4ee4f0914414fd231fff0ddd2f9cd83c36276d91c08e423201ef01",
+        "full_transaction_length": 154,
+        "full_transaction": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1100f0e0d0c0b0a090807060504030201060504030201000000b3463380c243b74382566858b0e732d2330f36d40f8320588d96d21e84b72884ae828bdd0b4ee4f0914414fd231fff0ddd2f9cd83c36276d91c08e423201ef01",
+        "transaction_hash": "da1cabbbbdf283d528b17219cedf218f00e4e7d7b64a13cf5f93b6909919032a"
+      }
+    },
+    {
+      "name": "stake-nonce-seven",
+      "note": "The Stake type: discriminant 0x02, the same layout as Transfer.",
+      "transaction": {
+        "tx_type": "Stake",
+        "sender": "<test_key>",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "50",
+        "nonce": "7"
+      },
+      "expected": {
+        "tx_type_byte": "02",
+        "amount_u128_le": "32000000000000000000000000000000",
+        "nonce_u64_le": "0700000000000000",
+        "payload_byte": "00",
+        "transaction_fields_length": 90,
+        "transaction_fields": "02197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a132000000000000000000000000000000070000000000000000",
+        "signing_payload_length": 134,
+        "signing_payload": "6d626f6e676f2d74783a76322fd700acc09b3d1752ca6fe21e7d6f4844917c5a9fcd41a34fe1d13d7deed1a402197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a132000000000000000000000000000000070000000000000000",
+        "transaction_signature": "ab97c33ca675cc9da173dbdd763dec323ff8b33f5476a1c499c712ccb4f00b03f9bd120e0d3c2baee711e732b9ac77e3557b5c0c5ab2c2855b78bb82e8b63700",
+        "full_transaction_length": 154,
+        "full_transaction": "02197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a132000000000000000000000000000000070000000000000000ab97c33ca675cc9da173dbdd763dec323ff8b33f5476a1c499c712ccb4f00b03f9bd120e0d3c2baee711e732b9ac77e3557b5c0c5ab2c2855b78bb82e8b63700",
+        "transaction_hash": "3f40b16a09a1a38a2c59bf12ee838aefc73e40c68674c5fd4932a0a3be31fa3c"
+      }
+    },
+    {
+      "name": "transfer-amount-zero",
+      "note": "Amount 0 is a valid amount (RFC 0006 section 6 imposes no minimum).",
+      "transaction": {
+        "tx_type": "Transfer",
+        "sender": "<test_key>",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "0",
+        "nonce": "3"
+      },
+      "expected": {
+        "tx_type_byte": "00",
+        "amount_u128_le": "00000000000000000000000000000000",
+        "nonce_u64_le": "0300000000000000",
+        "payload_byte": "00",
+        "transaction_fields_length": 90,
+        "transaction_fields": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a100000000000000000000000000000000030000000000000000",
+        "signing_payload_length": 134,
+        "signing_payload": "6d626f6e676f2d74783a76322fd700acc09b3d1752ca6fe21e7d6f4844917c5a9fcd41a34fe1d13d7deed1a400197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a100000000000000000000000000000000030000000000000000",
+        "transaction_signature": "a0b2e6d48502672af4895698b2656b507b22ea2d3b2a5a7693abcb617d3d73c22e5aa6c1e225f1e194ff9d2136789a9b99c18aa7aeb2096301010f3fad5f4100",
+        "full_transaction_length": 154,
+        "full_transaction": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a100000000000000000000000000000000030000000000000000a0b2e6d48502672af4895698b2656b507b22ea2d3b2a5a7693abcb617d3d73c22e5aa6c1e225f1e194ff9d2136789a9b99c18aa7aeb2096301010f3fad5f4100",
+        "transaction_hash": "35433bdfcffbad54bcc8821b2c913deaaca31d62dfa6ebbd6df1dcce181175c8"
+      }
+    },
+    {
+      "name": "transfer-amount-u128-max",
+      "note": "The largest amount: sixteen 0xff bytes.",
+      "transaction": {
+        "tx_type": "Transfer",
+        "sender": "<test_key>",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "340282366920938463463374607431768211455",
+        "nonce": "1"
+      },
+      "expected": {
+        "tx_type_byte": "00",
+        "amount_u128_le": "ffffffffffffffffffffffffffffffff",
+        "nonce_u64_le": "0100000000000000",
+        "payload_byte": "00",
+        "transaction_fields_length": 90,
+        "transaction_fields": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1ffffffffffffffffffffffffffffffff010000000000000000",
+        "signing_payload_length": 134,
+        "signing_payload": "6d626f6e676f2d74783a76322fd700acc09b3d1752ca6fe21e7d6f4844917c5a9fcd41a34fe1d13d7deed1a400197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1ffffffffffffffffffffffffffffffff010000000000000000",
+        "transaction_signature": "08133ad3827b88c03e9a9c7f4cdc6be67235a316be767a567e6c736ffe76902aa6110517ac9fbc710f628d2bc58b6fa4b5299eb97372c25ee2cce71f1127f50b",
+        "full_transaction_length": 154,
+        "full_transaction": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1ffffffffffffffffffffffffffffffff01000000000000000008133ad3827b88c03e9a9c7f4cdc6be67235a316be767a567e6c736ffe76902aa6110517ac9fbc710f628d2bc58b6fa4b5299eb97372c25ee2cce71f1127f50b",
+        "transaction_hash": "026e14f1fd54d5b90e559ac960caf8fde53d3d6d96a3dbf969cb2756de10cacc"
+      }
+    },
+    {
+      "name": "transfer-last-applicable-nonce",
+      "note": "nonce = u64::MAX - 1, the largest nonce a transaction can carry and be applied: the sender's nonce then becomes u64::MAX.",
+      "transaction": {
+        "tx_type": "Transfer",
+        "sender": "<test_key>",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "1",
+        "nonce": "18446744073709551614"
+      },
+      "expected": {
+        "tx_type_byte": "00",
+        "amount_u128_le": "01000000000000000000000000000000",
+        "nonce_u64_le": "feffffffffffffff",
+        "payload_byte": "00",
+        "transaction_fields_length": 90,
+        "transaction_fields": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a101000000000000000000000000000000feffffffffffffff00",
+        "signing_payload_length": 134,
+        "signing_payload": "6d626f6e676f2d74783a76322fd700acc09b3d1752ca6fe21e7d6f4844917c5a9fcd41a34fe1d13d7deed1a400197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a101000000000000000000000000000000feffffffffffffff00",
+        "transaction_signature": "6802be0e356dc2cc9778b191bd7513d2bd4cf77b01c0a3f6be7ef0bfa6d50960059ae3a2eb8886d6c99bb07b41f1da81af79ed4d397407216022ee5e4f831408",
+        "full_transaction_length": 154,
+        "full_transaction": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a101000000000000000000000000000000feffffffffffffff006802be0e356dc2cc9778b191bd7513d2bd4cf77b01c0a3f6be7ef0bfa6d50960059ae3a2eb8886d6c99bb07b41f1da81af79ed4d397407216022ee5e4f831408",
+        "transaction_hash": "966bbf3a15d48fba02350cce8a762c86c6f94315a4464cc7544f2efa2a6f6445"
+      }
+    },
+    {
+      "name": "transfer-nonce-u64-max",
+      "note": "nonce = u64::MAX. Encodes and is correctly signed, but is never applicable: step 2 would have to add one to u64::MAX.",
+      "transaction": {
+        "tx_type": "Transfer",
+        "sender": "<test_key>",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "1",
+        "nonce": "18446744073709551615"
+      },
+      "expected": {
+        "tx_type_byte": "00",
+        "amount_u128_le": "01000000000000000000000000000000",
+        "nonce_u64_le": "ffffffffffffffff",
+        "payload_byte": "00",
+        "transaction_fields_length": 90,
+        "transaction_fields": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a101000000000000000000000000000000ffffffffffffffff00",
+        "signing_payload_length": 134,
+        "signing_payload": "6d626f6e676f2d74783a76322fd700acc09b3d1752ca6fe21e7d6f4844917c5a9fcd41a34fe1d13d7deed1a400197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a101000000000000000000000000000000ffffffffffffffff00",
+        "transaction_signature": "03784910ab689cdb8470e824f3534b4b172e5c287deacab4d79d4b6064f4a6280f9fd3229b3e0065c8d1cfc3aaeca2b1b46289c8d3628e556febd6e27a5f780a",
+        "full_transaction_length": 154,
+        "full_transaction": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a101000000000000000000000000000000ffffffffffffffff0003784910ab689cdb8470e824f3534b4b172e5c287deacab4d79d4b6064f4a6280f9fd3229b3e0065c8d1cfc3aaeca2b1b46289c8d3628e556febd6e27a5f780a",
+        "transaction_hash": "a2ab55b5169d60102f1bccaaa87d749637c3f8142ff79150bdb240d080805aa3"
+      }
+    },
+    {
+      "name": "stake-last-applicable-nonce",
+      "note": "The bound for Stake: nonce = u64::MAX - 1.",
+      "transaction": {
+        "tx_type": "Stake",
+        "sender": "<test_key>",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "1",
+        "nonce": "18446744073709551614"
+      },
+      "expected": {
+        "tx_type_byte": "02",
+        "amount_u128_le": "01000000000000000000000000000000",
+        "nonce_u64_le": "feffffffffffffff",
+        "payload_byte": "00",
+        "transaction_fields_length": 90,
+        "transaction_fields": "02197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a101000000000000000000000000000000feffffffffffffff00",
+        "signing_payload_length": 134,
+        "signing_payload": "6d626f6e676f2d74783a76322fd700acc09b3d1752ca6fe21e7d6f4844917c5a9fcd41a34fe1d13d7deed1a402197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a101000000000000000000000000000000feffffffffffffff00",
+        "transaction_signature": "fa56dbf309db7ffd24ce97b58ac7b56b9fddac68c5387d31f8ee3cc31c952f9df390aa83409231eb1f5e8b7bd5fcf751164bf4cc49ed580557995704884cb305",
+        "full_transaction_length": 154,
+        "full_transaction": "02197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a101000000000000000000000000000000feffffffffffffff00fa56dbf309db7ffd24ce97b58ac7b56b9fddac68c5387d31f8ee3cc31c952f9df390aa83409231eb1f5e8b7bd5fcf751164bf4cc49ed580557995704884cb305",
+        "transaction_hash": "9f29eede6bf266776de71939139113282ef193b9fa4158f4f2b47caff98272a7"
+      }
+    },
+    {
+      "name": "stake-nonce-u64-max",
+      "note": "The bound for Stake: nonce = u64::MAX, never applicable.",
+      "transaction": {
+        "tx_type": "Stake",
+        "sender": "<test_key>",
+        "receiver": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "amount": "1",
+        "nonce": "18446744073709551615"
+      },
+      "expected": {
+        "tx_type_byte": "02",
+        "amount_u128_le": "01000000000000000000000000000000",
+        "nonce_u64_le": "ffffffffffffffff",
+        "payload_byte": "00",
+        "transaction_fields_length": 90,
+        "transaction_fields": "02197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a101000000000000000000000000000000ffffffffffffffff00",
+        "signing_payload_length": 134,
+        "signing_payload": "6d626f6e676f2d74783a76322fd700acc09b3d1752ca6fe21e7d6f4844917c5a9fcd41a34fe1d13d7deed1a402197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a101000000000000000000000000000000ffffffffffffffff00",
+        "transaction_signature": "ab9f1e8a3c08963a18371dc32841c88fd3db17504b2f71576d9da92cc1e0d361f71825da95a663857b4fe7ff6eb3eb47cb3a0e377d1ef0e0e4a106a2bfb5210e",
+        "full_transaction_length": 154,
+        "full_transaction": "02197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a101000000000000000000000000000000ffffffffffffffff00ab9f1e8a3c08963a18371dc32841c88fd3db17504b2f71576d9da92cc1e0d361f71825da95a663857b4fe7ff6eb3eb47cb3a0e377d1ef0e0e4a106a2bfb5210e",
+        "transaction_hash": "1ad163681cc48289fe2d2c9b2cd01521cd26fb72e15048ab162e8bdd4ffee3fb"
+      }
+    }
+  ],
+  "anchor": [
+    {
+      "name": "anchor-last-applicable-nonce",
+      "note": "AnchorReceipt at nonce u64::MAX - 1, built by the SDK's own anchor builder.",
+      "transaction": {
+        "receipt_vector": "empty-metadata",
+        "sender": "<receipt.executor>",
+        "receiver": "0000000000000000000000000000000000000000000000000000000000000000",
+        "amount": "0",
+        "nonce": "18446744073709551614"
+      },
+      "expected": {
+        "nonce_u64_le": "feffffffffffffff",
+        "transaction_fields_length": 284,
+        "transaction_fields": "03197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000feffffffffffffff0101111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61001b654790b317c65123e0b40692b4727e1ba5133a078e15b4e9960a47fb0524ff19a4b146197ee5fa542a9c08809dfe40db899327a8fba87cbdd23baeff32e602",
+        "signing_payload_length": 328,
+        "signing_payload": "6d626f6e676f2d74783a76322fd700acc09b3d1752ca6fe21e7d6f4844917c5a9fcd41a34fe1d13d7deed1a403197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000feffffffffffffff0101111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61001b654790b317c65123e0b40692b4727e1ba5133a078e15b4e9960a47fb0524ff19a4b146197ee5fa542a9c08809dfe40db899327a8fba87cbdd23baeff32e602",
+        "transaction_signature": "b1e28ec557aa8ddd89bfbcc0d05f5c2ea67ff5009c823a78b0a2d2d2a3bbd11c1c7e04157d4bfbc68c4e3a14c8a4f8dac086dbdde8987d8111c16c9921527a02",
+        "full_transaction_length": 348,
+        "full_transaction": "03197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000feffffffffffffff0101111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61001b654790b317c65123e0b40692b4727e1ba5133a078e15b4e9960a47fb0524ff19a4b146197ee5fa542a9c08809dfe40db899327a8fba87cbdd23baeff32e602b1e28ec557aa8ddd89bfbcc0d05f5c2ea67ff5009c823a78b0a2d2d2a3bbd11c1c7e04157d4bfbc68c4e3a14c8a4f8dac086dbdde8987d8111c16c9921527a02",
+        "transaction_hash": "f7ee1f1bd41e87158f7fe2a94b35fdfc017b4569df336dab1b26a66d24b08592"
+      }
+    },
+    {
+      "name": "anchor-nonce-u64-max",
+      "note": "AnchorReceipt at nonce u64::MAX: the SDK can encode it, consensus never applies it.",
+      "transaction": {
+        "receipt_vector": "empty-metadata",
+        "sender": "<receipt.executor>",
+        "receiver": "0000000000000000000000000000000000000000000000000000000000000000",
+        "amount": "0",
+        "nonce": "18446744073709551615"
+      },
+      "expected": {
+        "nonce_u64_le": "ffffffffffffffff",
+        "transaction_fields_length": 284,
+        "transaction_fields": "03197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ffffffffffffffff0101111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61001b654790b317c65123e0b40692b4727e1ba5133a078e15b4e9960a47fb0524ff19a4b146197ee5fa542a9c08809dfe40db899327a8fba87cbdd23baeff32e602",
+        "signing_payload_length": 328,
+        "signing_payload": "6d626f6e676f2d74783a76322fd700acc09b3d1752ca6fe21e7d6f4844917c5a9fcd41a34fe1d13d7deed1a403197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ffffffffffffffff0101111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61001b654790b317c65123e0b40692b4727e1ba5133a078e15b4e9960a47fb0524ff19a4b146197ee5fa542a9c08809dfe40db899327a8fba87cbdd23baeff32e602",
+        "transaction_signature": "3c38a2c4ca5f7216b57bbd1207d9af2aca8e8b9fc19ea6e95a6b0eaa271c0e6a8c5919c52a7180949f32401328e445fdce4d2a65cda219437e3da14907bf1806",
+        "full_transaction_length": 348,
+        "full_transaction": "03197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ffffffffffffffff0101111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61001b654790b317c65123e0b40692b4727e1ba5133a078e15b4e9960a47fb0524ff19a4b146197ee5fa542a9c08809dfe40db899327a8fba87cbdd23baeff32e6023c38a2c4ca5f7216b57bbd1207d9af2aca8e8b9fc19ea6e95a6b0eaa271c0e6a8c5919c52a7180949f32401328e445fdce4d2a65cda219437e3da14907bf1806",
+        "transaction_hash": "3105d130821e90a2b932cac769f2d8d93350dc9a84d208a74e31985f24bd71a0"
+      }
+    }
+  ],
+  "sdk_input_domain": [
+    {
+      "name": "nonce-two-to-the-64",
+      "nonce": "18446744073709551616",
+      "outcome": "refused before encoding: outside u64"
+    },
+    {
+      "name": "nonce-negative",
+      "nonce": "-1",
+      "outcome": "refused before encoding: outside u64"
+    }
+  ],
+  "malformed_encodings": [
+    {
+      "name": "empty",
+      "reason": "no bytes",
+      "hex": "",
+      "hex_length": 0
+    },
+    {
+      "name": "truncated-signature",
+      "reason": "the last signature byte is missing (153 bytes)",
+      "hex": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000000566572bb2b71d181d861d1dd38345adea98cad24d76fe3d5a14e61a028239265bc496740b59b23acc4c607373a054f47806f1a71a1ed87287c14646fe15a7d",
+      "hex_length": 153
+    },
+    {
+      "name": "trailing-byte",
+      "reason": "one byte after a complete transaction (155 bytes): decoding must consume all input",
+      "hex": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000000566572bb2b71d181d861d1dd38345adea98cad24d76fe3d5a14e61a028239265bc496740b59b23acc4c607373a054f47806f1a71a1ed87287c14646fe15a7d0400",
+      "hex_length": 155
+    },
+    {
+      "name": "unknown-tx-type",
+      "reason": "tx_type discriminant 0x04 is not defined",
+      "hex": "04197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000000566572bb2b71d181d861d1dd38345adea98cad24d76fe3d5a14e61a028239265bc496740b59b23acc4c607373a054f47806f1a71a1ed87287c14646fe15a7d04",
+      "hex_length": 154
+    },
+    {
+      "name": "unknown-payload-index",
+      "reason": "payload discriminant 0x03 is not defined",
+      "hex": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000003566572bb2b71d181d861d1dd38345adea98cad24d76fe3d5a14e61a028239265bc496740b59b23acc4c607373a054f47806f1a71a1ed87287c14646fe15a7d04",
+      "hex_length": 154
+    },
+    {
+      "name": "receipt-payload-without-receipt",
+      "reason": "payload discriminant 0x01 announces a receipt, but only 64 bytes follow",
+      "hex": "00197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1e8030000000000000000000000000000000000000000000001566572bb2b71d181d861d1dd38345adea98cad24d76fe3d5a14e61a028239265bc496740b59b23acc4c607373a054f47806f1a71a1ed87287c14646fe15a7d04",
+      "hex_length": 154
+    }
+  ],
+  "invalid_signatures": [
+    {
+      "name": "signature-from-another-transaction",
+      "base_vector": "transfer-nonce-zero",
+      "reason": "a valid signature by the same key, over another transaction's payload",
+      "transaction_signature": "a0b2e6d48502672af4895698b2656b507b22ea2d3b2a5a7693abcb617d3d73c22e5aa6c1e225f1e194ff9d2136789a9b99c18aa7aeb2096301010f3fad5f4100"
+    },
+    {
+      "name": "signature-over-prehashed-payload",
+      "base_vector": "transfer-nonce-zero",
+      "reason": "signs BLAKE3(signing payload) instead of the raw payload",
+      "transaction_signature": "94111bd68c39af86997364ae741a23f56aee7167a328ae9d9789d23f6f482793ca85a038152d600c7b3dad7aa0741ef0105b7ab857a4d8ae4bf4f7c9ddf9fc05"
+    },
+    {
+      "name": "signature-over-the-bare-fields",
+      "base_vector": "transfer-nonce-zero",
+      "reason": "a v0.4 signature: over the transaction fields alone, with no domain and no chain_id",
+      "transaction_signature": "111bd8b7e3c74158a1272354b01203474732a19368a78cf73902a51a6a219b56b2c2669c36c07b5597e483acc73a2ff99725918be7aa39dd566e83fd5bce8b09"
+    },
+    {
+      "name": "signature-for-another-chain",
+      "base_vector": "transfer-nonce-zero",
+      "reason": "over \"mbongo-tx:v2\" || other_chain_id || fields: valid on that network, not on this one",
+      "transaction_signature": "77a921da89c5dcc92691d30b923afa36f55e0ab1bdae2210f0a8fe1999144f71e6eec1f8318a23dcde1f2aadcb1525d9faae5ff09a7f8ff6de47216d09d6b70c"
+    }
+  ],
+  "state_transition": [
+    {
+      "name": "last-applicable-nonce-applies",
+      "pre": [
+        {
+          "address": "<test_key>",
+          "balance": "10",
+          "nonce": "18446744073709551614"
+        }
+      ],
+      "blocks": [
+        {
+          "transactions": [
+            "transfer-last-applicable-nonce"
+          ],
+          "outcome": "applied"
+        }
+      ],
+      "post": [
+        {
+          "address": "<test_key>",
+          "balance": "9",
+          "nonce": "18446744073709551615"
+        },
+        {
+          "address": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "balance": "1",
+          "nonce": "0"
+        }
+      ]
+    },
+    {
+      "name": "nonce-beyond-bound-is-refused",
+      "pre": [
+        {
+          "address": "<test_key>",
+          "balance": "10",
+          "nonce": "18446744073709551615"
+        }
+      ],
+      "blocks": [
+        {
+          "transactions": [
+            "transfer-nonce-u64-max"
+          ],
+          "outcome": "rejected",
+          "error": "InvalidNonce",
+          "index": 0
+        }
+      ],
+      "post": [
+        {
+          "address": "<test_key>",
+          "balance": "10",
+          "nonce": "18446744073709551615"
+        },
+        {
+          "address": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "absent": true
+        }
+      ]
+    },
+    {
+      "name": "stake-nonce-beyond-bound-is-refused",
+      "pre": [
+        {
+          "address": "<test_key>",
+          "balance": "10",
+          "nonce": "18446744073709551615"
+        }
+      ],
+      "blocks": [
+        {
+          "transactions": [
+            "stake-nonce-u64-max"
+          ],
+          "outcome": "rejected",
+          "error": "InvalidNonce",
+          "index": 0
+        }
+      ],
+      "post": [
+        {
+          "address": "<test_key>",
+          "balance": "10",
+          "nonce": "18446744073709551615"
+        },
+        {
+          "address": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "absent": true
+        }
+      ]
+    },
+    {
+      "name": "stake-last-applicable-nonce-applies",
+      "pre": [
+        {
+          "address": "<test_key>",
+          "balance": "10",
+          "nonce": "18446744073709551614"
+        }
+      ],
+      "blocks": [
+        {
+          "transactions": [
+            "stake-last-applicable-nonce"
+          ],
+          "outcome": "applied"
+        }
+      ],
+      "post": [
+        {
+          "address": "<test_key>",
+          "balance": "9",
+          "nonce": "18446744073709551615"
+        },
+        {
+          "address": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "balance": "1",
+          "nonce": "0"
+        }
+      ]
+    },
+    {
+      "name": "stored-copy-at-the-bound-is-skipped",
+      "pre": [
+        {
+          "address": "<test_key>",
+          "balance": "10",
+          "nonce": "18446744073709551614"
+        }
+      ],
+      "blocks": [
+        {
+          "transactions": [
+            "transfer-last-applicable-nonce"
+          ],
+          "outcome": "applied"
+        },
+        {
+          "transactions": [
+            "transfer-last-applicable-nonce"
+          ],
+          "outcome": "applied",
+          "note": "the stored copy is skipped: the block is valid and changes nothing"
+        }
+      ],
+      "post": [
+        {
+          "address": "<test_key>",
+          "balance": "9",
+          "nonce": "18446744073709551615"
+        },
+        {
+          "address": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "balance": "1",
+          "nonce": "0"
+        }
+      ]
+    },
+    {
+      "name": "second-copy-in-one-block-fails-at-its-nonce",
+      "pre": [
+        {
+          "address": "<test_key>",
+          "balance": "10",
+          "nonce": "18446744073709551614"
+        }
+      ],
+      "blocks": [
+        {
+          "transactions": [
+            "transfer-last-applicable-nonce",
+            "transfer-last-applicable-nonce"
+          ],
+          "outcome": "rejected",
+          "error": "InvalidNonce",
+          "index": 1
+        }
+      ],
+      "post": [
+        {
+          "address": "<test_key>",
+          "balance": "10",
+          "nonce": "18446744073709551614"
+        },
+        {
+          "address": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "absent": true
+        }
+      ]
+    },
+    {
+      "name": "two-copies-of-a-stored-transaction-are-skipped",
+      "pre": [
+        {
+          "address": "<test_key>",
+          "balance": "10",
+          "nonce": "18446744073709551614"
+        }
+      ],
+      "blocks": [
+        {
+          "transactions": [
+            "transfer-last-applicable-nonce"
+          ],
+          "outcome": "applied"
+        },
+        {
+          "transactions": [
+            "transfer-last-applicable-nonce",
+            "transfer-last-applicable-nonce"
+          ],
+          "outcome": "applied",
+          "note": "every copy of a stored Transfer is skipped"
+        }
+      ],
+      "post": [
+        {
+          "address": "<test_key>",
+          "balance": "9",
+          "nonce": "18446744073709551615"
+        },
+        {
+          "address": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "balance": "1",
+          "nonce": "0"
+        }
+      ]
+    }
+  ]
+}

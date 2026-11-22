@@ -17,7 +17,9 @@
 //! executor answered this task over this committed input with this output
 //! commitment.
 
-use mbongo_core::{Address, Hash, Receipt, Transaction, TransactionPayload, TransactionType};
+use mbongo_core::{
+    Address, ChainId, Hash, Receipt, Transaction, TransactionPayload, TransactionType,
+};
 use mbongo_verification::RECEIPT_VERSION;
 
 use crate::chain::{find_receipt, transaction_hash, ChainClient, ChainError};
@@ -115,6 +117,8 @@ struct PendingSubmission {
 pub struct Worker {
     instance_id: WorkerInstanceId,
     executor: ExecutorKey,
+    /// The network the anchoring transactions are signed for (RFC 0006 §2).
+    chain_id: ChainId,
     profile: Box<dyn ExecutionProfile>,
     session: Option<Session>,
     fault: Option<Fault>,
@@ -133,15 +137,18 @@ impl std::fmt::Debug for Worker {
 }
 
 impl Worker {
-    /// A worker instance holding `executor`'s key and running `profile`.
+    /// A worker instance holding `executor`'s key, signing for the network
+    /// `chain_id` and running `profile`.
     pub fn new(
         ids: &mut IdSource,
         executor: ExecutorKey,
+        chain_id: ChainId,
         profile: Box<dyn ExecutionProfile>,
     ) -> Self {
         Self {
             instance_id: WorkerInstanceId(ids.next("worker-instance")),
             executor,
+            chain_id,
             profile,
             session: None,
             fault: None,
@@ -528,7 +535,7 @@ impl Worker {
     }
 
     /// The anchoring transaction: sender is the executor (RFC 0002 rule g),
-    /// signed by the executor over the raw signing payload.
+    /// signed by the executor for this worker's network (RFC 0006 §2).
     pub fn anchor_transaction(&self, receipt: Receipt, nonce: u64) -> Transaction {
         let mut tx = Transaction {
             tx_type: TransactionType::AnchorReceipt,
@@ -539,7 +546,7 @@ impl Worker {
             payload: TransactionPayload::AnchorReceipt(Box::new(receipt)),
             signature: [0u8; 64],
         };
-        tx.signature = self.executor.sign(&tx.signing_payload());
+        tx.signature = self.executor.sign(&tx.signing_payload(&self.chain_id));
         tx
     }
 }

@@ -28,12 +28,15 @@ fn main() {
         signature: [0u8; 64],
     };
 
-    // Sign the SCALE-encoded payload.
-    let sig = signing_key.sign(&tx.signing_payload());
+    // Sign for the network this example targets: the dev chain, the network
+    // of a node started with --dev (RFC 0006 §2). A signature for it does
+    // not verify on any other network.
+    let chain_id = mbongo_core::Genesis::dev().chain_id;
+    let sig = signing_key.sign(&tx.signing_payload(&chain_id));
     tx.signature = sig.to_bytes();
 
     // Sanity check.
-    assert!(tx.verify_signature(), "signature must be valid");
+    assert!(tx.verify_signature(&chain_id), "signature must be valid");
 
     // Wrap in a JSON-RPC 2.0 request.
     let request = json!({

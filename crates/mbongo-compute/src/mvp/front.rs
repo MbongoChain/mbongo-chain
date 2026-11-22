@@ -39,7 +39,7 @@ use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
-use mbongo_core::Address;
+use mbongo_core::{Address, ChainId};
 use tokio::sync::Mutex;
 
 use crate::chain::ChainClient;
@@ -145,6 +145,8 @@ struct Inner<C> {
     owner: LocalKey,
     issuer: LocalKey,
     executor: ExecutorKey,
+    /// The network every anchoring transaction is signed for.
+    chain_id: ChainId,
     config: FrontConfig,
     observations: Option<Arc<StdMutex<Vec<InferenceObservation>>>>,
     snapshots: StdMutex<HashMap<[u8; 32], Snapshot>>,
@@ -250,11 +252,14 @@ impl<C: ChainClient + Clone + 'static> Front<C> {
     /// and every identifier; production passes 32 bytes from the OS RNG.
     /// `observations` is the inference profile's observation log, read for
     /// status timings only.
+    // The network is an argument of its own, never a defaulted config field.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         chain: C,
         clock: Arc<dyn Clock>,
         seed: [u8; 32],
         executor: ExecutorKey,
+        chain_id: ChainId,
         profile: Arc<dyn ExecutionProfile>,
         observations: Option<Arc<StdMutex<Vec<InferenceObservation>>>>,
         mut config: FrontConfig,
@@ -273,6 +278,7 @@ impl<C: ChainClient + Clone + 'static> Front<C> {
         let worker = Worker::new(
             &mut ids,
             executor.clone(),
+            chain_id,
             Box::new(SharedProfile(Arc::clone(&profile))),
         );
         Self {
@@ -293,6 +299,7 @@ impl<C: ChainClient + Clone + 'static> Front<C> {
                 owner,
                 issuer,
                 executor,
+                chain_id,
                 config,
                 observations,
                 snapshots: StdMutex::new(HashMap::new()),
@@ -451,6 +458,7 @@ impl<C: ChainClient + Clone + 'static> Front<C> {
         core.worker = Worker::new(
             &mut core.ids,
             self.inner.executor.clone(),
+            self.inner.chain_id,
             Box::new(SharedProfile(Arc::clone(&core.profile))),
         );
         for id in exhausted {

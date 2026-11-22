@@ -10,9 +10,9 @@ use mbongo_api::rest::{
     Transaction as RestTransaction, Validator,
 };
 use mbongo_core::{
-    compute_transactions_root, Account, Address, Block, BlockBody, BlockHeader, ComputeTask,
-    Genesis, Hash, Receipt, Transaction, TransactionPayload, TransactionType, COMPUTE_TASK_VERSION,
-    MAX_EXECUTION_SPEC_BYTES, MAX_TRANSACTION_NONCE,
+    compute_transactions_root, Account, Address, Block, BlockBody, BlockHeader, ChainId,
+    ComputeTask, Genesis, Hash, Receipt, Transaction, TransactionPayload, TransactionType,
+    COMPUTE_TASK_VERSION, MAX_EXECUTION_SPEC_BYTES, MAX_TRANSACTION_NONCE,
 };
 use mbongo_network::rpc::{BackendError, RpcBackend};
 use mbongo_network::BlockBroadcaster;
@@ -231,6 +231,10 @@ pub struct NodeBackend<S: Storage> {
     broadcaster: Option<Arc<dyn BlockBroadcaster>>,
     /// Whether this node is configured as a block producer.
     is_producer: bool,
+    /// The network this node runs, set once by [`Self::ensure_genesis`]
+    /// from the genesis it was started with. Every transaction signature is
+    /// verified for it (RFC 0006 §2); before it is set, none verifies.
+    chain_id: Arc<std::sync::OnceLock<ChainId>>,
 }
 
 impl<S: Storage> Clone for NodeBackend<S> {
@@ -240,6 +244,7 @@ impl<S: Storage> Clone for NodeBackend<S> {
             mempool: Arc::clone(&self.mempool),
             broadcaster: self.broadcaster.clone(),
             is_producer: self.is_producer,
+            chain_id: Arc::clone(&self.chain_id),
         }
     }
 }
@@ -261,7 +266,33 @@ impl<S: Storage> NodeBackend<S> {
             mempool: Arc::new(RwLock::new(Mempool::with_config(config))),
             broadcaster: None,
             is_producer,
+            chain_id: Arc::new(std::sync::OnceLock::new()),
         }
+    }
+
+    /// The network this node runs, once [`Self::ensure_genesis`] succeeded.
+    #[cfg(test)]
+    pub fn chain_id(&self) -> Option<ChainId> {
+        self.chain_id.get().copied()
+    }
+
+    /// Whether `tx` carries a valid signature for this node's network. A
+    /// node with no genesis yet accepts no signature.
+    fn signature_is_valid(&self, tx: &Transaction) -> bool {
+        self.chain_id.get().is_some_and(|chain_id| tx.verify_signature(chain_id))
+    }
+
+    /// Records the network of `genesis` as this node's. A backend runs one
+    /// network for its whole life.
+    fn bind_chain(&self, genesis: &Genesis) -> Result<(), BackendError> {
+        let bound = *self.chain_id.get_or_init(|| genesis.chain_id);
+        if bound != genesis.chain_id {
+            return Err(BackendError::Internal(format!(
+                "this node runs chain {bound}, not chain {}",
+                genesis.chain_id
+            )));
+        }
+        Ok(())
     }
 
     /// Sets the block broadcaster used to push new blocks to peers.
@@ -290,8 +321,11 @@ impl<S: Storage> NodeBackend<S> {
     ///
     /// # Errors
     ///
-    /// On a storage failure, or if the stored genesis block is not the one
-    /// `genesis` derives.
+    /// On a storage failure, if the stored genesis block is not the one
+    /// `genesis` derives, or if this backend already runs another chain.
+    ///
+    /// On success the backend runs the chain of `genesis`: every
+    /// transaction signature is verified for its `chain_id` (RFC 0006 §2).
     pub fn ensure_genesis(&self, genesis: &Genesis) -> Result<(), BackendError> {
         let block = genesis_block(genesis);
         let block_hash = compute_block_hash(&block);
@@ -309,9 +343,10 @@ impl<S: Storage> NodeBackend<S> {
                     genesis.chain_id
                 )));
             }
-            return Ok(());
+            return self.bind_chain(genesis);
         }
 
+        self.bind_chain(genesis)?;
         let mut ops = vec![
             BatchOp::PutBlock(block_hash, block),
             BatchOp::PutBlockHeightIndex(0, block_hash),
@@ -427,8 +462,8 @@ impl<S: Storage> NodeBackend<S> {
                 TypedPayload::Plain | TypedPayload::Anchor(_) | TypedPayload::Task(_) => {}
             }
 
-            // (c) Transaction signature.
-            if !tx.verify_signature() {
+            // (c) Transaction signature, for this node's network.
+            if !self.signature_is_valid(tx) {
                 return Err(ApplyBlockError::InvalidSignature(i));
             }
 
@@ -1010,8 +1045,8 @@ impl<S: Storage + Send + Sync + 'static> RpcBackend for NodeBackend<S> {
                 return Ok(tx_hash.to_string());
             }
 
-            // Verify signature.
-            if !tx.verify_signature() {
+            // Verify signature, for this node's network.
+            if !self.signature_is_valid(&tx) {
                 return Err(BackendError::Internal("invalid signature".to_string()));
             }
 
@@ -1523,7 +1558,7 @@ mod tests {
             payload: TransactionPayload::None,
             signature: [0u8; 64],
         };
-        let sig = sender_sk.sign(&tx.signing_payload());
+        let sig = sender_sk.sign(&tx.signing_payload(&Genesis::dev().chain_id));
         tx.signature = sig.to_bytes();
         tx
     }
@@ -1589,6 +1624,8 @@ mod tests {
         sender_acc.balance = 1000;
         backend.storage.put_account(&sender_addr, &sender_acc).unwrap();
 
+        // A node verifies signatures for the chain of its genesis.
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         // nonce=5 but account nonce is 0.
         let tx = signed_transfer(&sender_sk, receiver_addr, 100, 5);
         let result = backend.submit_transaction(tx).await;
@@ -1607,6 +1644,7 @@ mod tests {
         let mut sender_acc = Account::new(sender_addr);
         sender_acc.balance = 50;
         backend.storage.put_account(&sender_addr, &sender_acc).unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let tx = signed_transfer(&sender_sk, receiver_addr, 100, 0);
         let result = backend.submit_transaction(tx).await;
@@ -2204,7 +2242,7 @@ mod tests {
             payload: TransactionPayload::AnchorReceipt(Box::new(receipt)),
             signature: [0u8; 64],
         };
-        tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+        tx.signature = sk.sign(&tx.signing_payload(&Genesis::dev().chain_id)).to_bytes();
         tx
     }
 
@@ -2263,7 +2301,7 @@ mod tests {
         // AnchorReceipt type with None payload.
         let mut tx = valid_anchor_tx(&sk, 0, [0x70u8; 32]);
         tx.payload = TransactionPayload::None;
-        tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+        tx.signature = sk.sign(&tx.signing_payload(&Genesis::dev().chain_id)).to_bytes();
         let block = build_valid_block(&backend, vec![tx]);
         assert!(matches!(
             backend.apply_block(&block),
@@ -2274,7 +2312,7 @@ mod tests {
         let receipt = signed_receipt_for(&sk, [0x71u8; 32], vec![], 1);
         let mut tx = signed_transfer(&sk, Address([9u8; 32]), 1, 0);
         tx.payload = TransactionPayload::AnchorReceipt(Box::new(receipt));
-        tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+        tx.signature = sk.sign(&tx.signing_payload(&Genesis::dev().chain_id)).to_bytes();
         let block = build_valid_block(&backend, vec![tx]);
         assert!(matches!(
             backend.apply_block(&block),
@@ -2292,7 +2330,7 @@ mod tests {
         // Non-zero amount.
         let mut tx = valid_anchor_tx(&sk, 0, [0x72u8; 32]);
         tx.amount = 1;
-        tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+        tx.signature = sk.sign(&tx.signing_payload(&Genesis::dev().chain_id)).to_bytes();
         let block = build_valid_block(&backend, vec![tx]);
         assert!(matches!(
             backend.apply_block(&block),
@@ -2302,7 +2340,7 @@ mod tests {
         // Non-zero receiver.
         let mut tx = valid_anchor_tx(&sk, 0, [0x73u8; 32]);
         tx.receiver = Address([9u8; 32]);
-        tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+        tx.signature = sk.sign(&tx.signing_payload(&Genesis::dev().chain_id)).to_bytes();
         let block = build_valid_block(&backend, vec![tx]);
         assert!(matches!(
             backend.apply_block(&block),
@@ -2935,7 +2973,7 @@ mod tests {
 
         let mut tx = valid_anchor_tx(&sk, 0, [0x81u8; 32]);
         tx.payload = TransactionPayload::None;
-        tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+        tx.signature = sk.sign(&tx.signing_payload(&Genesis::dev().chain_id)).to_bytes();
         let err = backend.submit_transaction(tx).await.unwrap_err();
         assert!(err.to_string().contains("payload does not match"), "{err}");
         assert_eq!(backend.mempool.read().await.len(), 0);
@@ -3611,7 +3649,7 @@ mod tests {
     ) -> Transaction {
         let mut tx = signed_transfer(sender_sk, receiver_addr, amount, nonce);
         tx.tx_type = tx_type;
-        tx.signature = sender_sk.sign(&tx.signing_payload()).to_bytes();
+        tx.signature = sender_sk.sign(&tx.signing_payload(&Genesis::dev().chain_id)).to_bytes();
         tx
     }
 
@@ -4757,7 +4795,7 @@ mod tests {
             payload: TransactionPayload::ComputeTask(Box::new(task)),
             signature: [0u8; 64],
         };
-        tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+        tx.signature = sk.sign(&tx.signing_payload(&Genesis::dev().chain_id)).to_bytes();
         tx
     }
 
@@ -4794,7 +4832,7 @@ mod tests {
     /// Re-signs a transaction after a field was changed, so that the only
     /// rule under test is the one the change targets.
     fn resign(sk: &SigningKey, tx: &mut Transaction) {
-        tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+        tx.signature = sk.sign(&tx.signing_payload(&Genesis::dev().chain_id)).to_bytes();
     }
 
     /// Asserts the chain is exactly the post-genesis state for `sk`:
@@ -5139,7 +5177,10 @@ mod tests {
         let task = task_for(victim, executor_addr(), [0x0Cu8; 32], vec![1]);
         let task_id = task.task_id();
         let tx = signed_task_tx(&sk, 0, task);
-        assert!(tx.verify_signature(), "the signature itself is sound");
+        assert!(
+            tx.verify_signature(&Genesis::dev().chain_id),
+            "the signature itself is sound"
+        );
         let block = build_valid_block(&backend, vec![tx]);
         assert!(matches!(
             backend.apply_block(&block),
@@ -5720,7 +5761,8 @@ mod tests {
         ));
 
         let mut forged = signed_anchor_tx(&ek, 0, genuine);
-        forged.signature = relayer.sign(&forged.signing_payload()).to_bytes();
+        forged.signature =
+            relayer.sign(&forged.signing_payload(&Genesis::dev().chain_id)).to_bytes();
         let block = build_valid_block(&backend, vec![forged]);
         assert!(matches!(
             backend.apply_block(&block),
@@ -5967,9 +6009,9 @@ mod tests {
     // ── RFC 0005 §12: the neutral binding vectors drive consensus ─────
 
     const BINDING_FIXTURE: &str =
-        include_str!("../../../test-vectors/compute-task/anchor-binding-v1.json");
+        include_str!("../../../test-vectors/compute-task/anchor-binding-v2.json");
     const TASK_FIXTURE: &str =
-        include_str!("../../../test-vectors/compute-task/compute-task-v1.json");
+        include_str!("../../../test-vectors/compute-task/compute-task-v2.json");
     const RECEIPT_FIXTURE: &str = include_str!("../../../test-vectors/receipt/receipt-v1.json");
 
     fn fixture_hex(v: &serde_json::Value) -> Vec<u8> {
@@ -6029,7 +6071,7 @@ mod tests {
         let bdoc: serde_json::Value = serde_json::from_str(BINDING_FIXTURE).unwrap();
         let tdoc: serde_json::Value = serde_json::from_str(TASK_FIXTURE).unwrap();
         let rdoc: serde_json::Value = serde_json::from_str(RECEIPT_FIXTURE).unwrap();
-        assert_eq!(bdoc["fixture_version"].as_u64(), Some(1));
+        assert_eq!(bdoc["fixture_version"].as_u64(), Some(2));
         let vectors = bdoc["vectors"].as_array().unwrap();
         assert_eq!(vectors.len(), 5, "vector cardinality");
 
@@ -6102,9 +6144,12 @@ mod tests {
                 payload: TransactionPayload::AnchorReceipt(Box::new(receipt)),
                 signature: fixture_hex(&v["expected"]["transaction_signature"]).try_into().unwrap(),
             };
-            assert!(tx.verify_signature(), "{name}: transaction signature");
+            assert!(
+                tx.verify_signature(&Genesis::dev().chain_id),
+                "{name}: transaction signature"
+            );
             assert_eq!(
-                tx.signing_payload(),
+                tx.signing_payload(&Genesis::dev().chain_id),
                 fixture_hex(&v["expected"]["signing_payload"]),
                 "{name}: signing payload"
             );
@@ -6657,7 +6702,7 @@ mod tests {
     }
 
     const NONCE_BOUNDARY_FIXTURE: &str =
-        include_str!("../../../test-vectors/transaction/nonce-boundary-v1.json");
+        include_str!("../../../test-vectors/transaction/nonce-boundary-v2.json");
 
     /// The `state_transition` cases of the shared nonce fixture, through
     /// `apply_block`. The fixture's transactions are decoded from their
@@ -6668,7 +6713,7 @@ mod tests {
         use std::collections::{HashMap, HashSet};
 
         let doc: serde_json::Value = serde_json::from_str(NONCE_BOUNDARY_FIXTURE).unwrap();
-        assert_eq!(doc["fixture_version"].as_u64(), Some(1));
+        assert_eq!(doc["fixture_version"].as_u64(), Some(2));
         let txs: HashMap<&str, Transaction> = doc["plain"]
             .as_array()
             .unwrap()
@@ -6677,7 +6722,7 @@ mod tests {
                 let full =
                     hex::decode(p["expected"]["full_transaction"].as_str().unwrap()).unwrap();
                 let tx = Transaction::decode_all(&mut &full[..]).unwrap();
-                assert!(tx.verify_signature());
+                assert!(tx.verify_signature(&Genesis::dev().chain_id));
                 (p["name"].as_str().unwrap(), tx)
             })
             .collect();
@@ -6759,7 +6804,7 @@ mod tests {
     // ── RFC 0006 §2–§3: strict signature verification (S1-2) ──────────
 
     const STRICT_SIGNATURE_FIXTURE: &str =
-        include_str!("../../../test-vectors/signature/ed25519-strict-v1.json");
+        include_str!("../../../test-vectors/signature/ed25519-strict-v2.json");
 
     fn strict_case(name: &str) -> serde_json::Value {
         let doc: serde_json::Value = serde_json::from_str(STRICT_SIGNATURE_FIXTURE).unwrap();
@@ -7063,11 +7108,16 @@ mod tests {
         let mut receipt = signed_receipt_for(&worker, task_id, vec![], 1);
         receipt.input_commitment = task.input_commitment;
         receipt.signature = worker.sign(&receipt.receipt_hash().0).to_bytes();
+        // Signed for this genesis's chain, not the dev chain the helpers use.
+        let for_chain = |sk: &SigningKey, mut tx: Transaction| {
+            tx.signature = sk.sign(&tx.signing_payload(&genesis.chain_id)).to_bytes();
+            tx
+        };
         let block = build_valid_block(
             &backend,
             vec![
-                signed_task_tx(&client, 0, task),
-                signed_anchor_tx(&worker, 0, receipt),
+                for_chain(&client, signed_task_tx(&client, 0, task)),
+                for_chain(&worker, signed_anchor_tx(&worker, 0, receipt)),
             ],
         );
         backend.apply_block(&block).unwrap();
@@ -7103,5 +7153,118 @@ mod tests {
         backend.apply_block(&block).unwrap();
         assert!(backend.storage.has_receipt(&task_id).unwrap());
         assert_eq!(account(&backend, executor_addr()).nonce, 1);
+    }
+
+    // ── RFC 0006 §2: signatures are verified for this node's chain (S1-5)
+
+    /// A transfer from `sk` signed for `chain_id`.
+    fn transfer_for(sk: &SigningKey, chain_id: &ChainId, nonce: u64) -> Transaction {
+        let mut tx = Transaction {
+            tx_type: TransactionType::Transfer,
+            sender: address_of(sk),
+            receiver: Address([0xB0u8; 32]),
+            amount: 1,
+            nonce,
+            payload: TransactionPayload::None,
+            signature: [0u8; 64],
+        };
+        tx.signature = sk.sign(&tx.signing_payload(chain_id)).to_bytes();
+        tx
+    }
+
+    /// A dev node with a funded account for `sk`.
+    fn dev_node_with(sk: &SigningKey) -> NodeBackend<InMemoryStorage> {
+        let backend = make_backend();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
+        fund(&backend, sk, 100);
+        backend
+    }
+
+    #[test]
+    fn the_node_runs_the_chain_of_its_genesis() {
+        let backend = make_backend();
+        assert_eq!(backend.chain_id(), None);
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
+        assert_eq!(backend.chain_id(), Some(Genesis::dev().chain_id));
+        // A clone shares it.
+        assert_eq!(backend.clone().chain_id(), Some(Genesis::dev().chain_id));
+    }
+
+    #[test]
+    fn a_node_runs_one_chain_for_its_whole_life() {
+        // Same timestamp, so the same genesis block: only the chain differs.
+        let other = Genesis::from_file_bytes(&genesis_file("other", 0, &[])).unwrap();
+        assert_eq!(genesis_block(&other), genesis_block(&Genesis::dev()));
+        let backend = make_backend();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
+        let err = backend.ensure_genesis(&other).unwrap_err().to_string();
+        assert!(err.contains("this node runs chain"), "{err}");
+        assert_eq!(backend.chain_id(), Some(Genesis::dev().chain_id));
+    }
+
+    #[test]
+    fn a_node_without_a_genesis_accepts_no_signature() {
+        let sk = SigningKey::from_bytes(&[0x61u8; 32]);
+        let backend = make_backend();
+        let tx = transfer_for(&sk, &Genesis::dev().chain_id, 0);
+        assert!(tx.verify_signature(&Genesis::dev().chain_id));
+        assert!(!backend.signature_is_valid(&tx));
+    }
+
+    #[tokio::test]
+    async fn admission_refuses_a_transaction_signed_for_another_chain() {
+        let sk = SigningKey::from_bytes(&[0x62u8; 32]);
+        let backend = dev_node_with(&sk);
+        let other = ChainId([0x5Au8; 32]);
+        let err = backend
+            .submit_transaction(transfer_for(&sk, &other, 0))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("invalid signature"), "{err}");
+        assert_eq!(backend.mempool.read().await.len(), 0);
+        // The same transaction signed for this chain is admitted.
+        backend
+            .submit_transaction(transfer_for(&sk, &Genesis::dev().chain_id, 0))
+            .await
+            .unwrap();
+        assert_eq!(backend.mempool.read().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn admission_refuses_a_v0_4_signature() {
+        let sk = SigningKey::from_bytes(&[0x63u8; 32]);
+        let backend = dev_node_with(&sk);
+        let mut tx = transfer_for(&sk, &Genesis::dev().chain_id, 0);
+        tx.signature = sk.sign(&tx.signed_fields()).to_bytes();
+        let err = backend.submit_transaction(tx).await.unwrap_err().to_string();
+        assert!(err.contains("invalid signature"), "{err}");
+        assert_eq!(backend.mempool.read().await.len(), 0);
+    }
+
+    #[test]
+    fn a_block_carrying_a_transaction_signed_for_another_chain_is_refused() {
+        let sk = SigningKey::from_bytes(&[0x64u8; 32]);
+        let backend = dev_node_with(&sk);
+        let height = backend.storage.get_latest_height().unwrap();
+        let foreign = transfer_for(&sk, &ChainId([0x5Au8; 32]), 0);
+        let block = build_valid_block(&backend, vec![foreign]);
+        assert!(matches!(
+            backend.apply_block(&block),
+            Err(ApplyBlockError::InvalidSignature(0))
+        ));
+        assert_eq!(backend.storage.get_latest_height().unwrap(), height);
+        assert_eq!(account(&backend, address_of(&sk)).nonce, 0);
+        // A follower of another chain refuses this chain's transaction too.
+        let other = Genesis::from_file_bytes(&genesis_file("other", 0, &[])).unwrap();
+        let follower = make_backend();
+        follower.ensure_genesis(&other).unwrap();
+        fund(&follower, &sk, 100);
+        let ours = transfer_for(&sk, &Genesis::dev().chain_id, 0);
+        let block = build_valid_block(&follower, vec![ours]);
+        assert!(matches!(
+            follower.apply_block(&block),
+            Err(ApplyBlockError::InvalidSignature(0))
+        ));
     }
 }

@@ -175,7 +175,7 @@ fn signed_transfer(from: &LocalKey, to: Address, amount: u128, nonce: u64) -> Tr
         payload: TransactionPayload::None,
         signature: [0u8; 64],
     };
-    tx.signature = from.sign(&tx.signing_payload());
+    tx.signature = from.sign(&tx.signing_payload(&mbongo_core::Genesis::dev().chain_id));
     tx
 }
 
@@ -189,7 +189,7 @@ fn signed_task(client: &LocalKey, task: ComputeTask, nonce: u64) -> Transaction 
         payload: TransactionPayload::ComputeTask(Box::new(task)),
         signature: [0u8; 64],
     };
-    tx.signature = client.sign(&tx.signing_payload());
+    tx.signature = client.sign(&tx.signing_payload(&mbongo_core::Genesis::dev().chain_id));
     tx
 }
 
@@ -203,7 +203,7 @@ fn signed_anchor(key: &ExecutorKey, receipt: Receipt, nonce: u64) -> Transaction
         payload: TransactionPayload::AnchorReceipt(Box::new(receipt)),
         signature: [0u8; 64],
     };
-    tx.signature = key.sign(&tx.signing_payload());
+    tx.signature = key.sign(&tx.signing_payload(&mbongo_core::Genesis::dev().chain_id));
     tx
 }
 
@@ -322,7 +322,12 @@ async fn run(chain: &RpcChainClient) -> Result<(), String> {
 
     // ── Negative first: a squatter (funded, wrong executor) cannot anchor.
     println!("Phase 4: squatter and unbound receipts are refused by the node...");
-    let mut squat_worker = Worker::new(&mut ids, squatter.clone(), Box::new(ReverseBytesProfile));
+    let mut squat_worker = Worker::new(
+        &mut ids,
+        squatter.clone(),
+        mbongo_core::Genesis::dev().chain_id,
+        Box::new(ReverseBytesProfile),
+    );
     let squat_outcome = squat_worker
         .run_once(&mut cp, &mut dp, chain)
         .await
@@ -373,7 +378,12 @@ async fn run(chain: &RpcChainClient) -> Result<(), String> {
 
     // ── The named executor's worker runs the lifecycle.
     println!("Phase 5: worker fetches, verifies, executes, persists, anchors...");
-    let mut worker = Worker::new(&mut ids, executor.clone(), Box::new(ReverseBytesProfile));
+    let mut worker = Worker::new(
+        &mut ids,
+        executor.clone(),
+        mbongo_core::Genesis::dev().chain_id,
+        Box::new(ReverseBytesProfile),
+    );
     let outcome = worker.run_once(&mut cp, &mut dp, chain).await.map_err(|e| e.to_string())?;
     let AttemptOutcome::Submitted { tx_hash, .. } = outcome else {
         return Err(format!("expected a submitted receipt, got {outcome:?}"));

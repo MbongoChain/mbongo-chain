@@ -85,6 +85,7 @@ async fn rig() -> Rig {
         Arc::new(clock.clone()) as Arc<dyn Clock>,
         [0x42u8; 32],
         executor.clone(),
+        mbongo_core::Genesis::dev().chain_id,
         Arc::new(profile),
         None,
         FrontConfig::default(),
@@ -161,7 +162,14 @@ async fn alice_task(r: &Rig) -> ([u8; 32], String) {
         .unwrap()
         .with_clock(Arc::new(r.clock.clone()));
     let up = client.upload(id, CV).await.unwrap();
-    submit_task(&r.chain, &r.alice, &task).await.unwrap();
+    submit_task(
+        &r.chain,
+        &r.alice,
+        &mbongo_core::Genesis::dev().chain_id,
+        &task,
+    )
+    .await
+    .unwrap();
     r.chain.produce_block();
     client.register(id, &up.object_ref, r.executor.address()).await.unwrap();
     for _ in 0..4 {

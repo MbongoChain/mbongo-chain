@@ -115,7 +115,7 @@ impl World {
             payload: TransactionPayload::ComputeTask(Box::new(self.task.clone())),
             signature: [0u8; 64],
         };
-        tx.signature = self.client.sign(&tx.signing_payload());
+        tx.signature = self.client.sign(&tx.signing_payload(&mbongo_core::Genesis::dev().chain_id));
         tx
     }
 
@@ -133,6 +133,7 @@ impl World {
         Worker::new(
             &mut self.ids,
             self.executor.clone(),
+            mbongo_core::Genesis::dev().chain_id,
             Box::new(ReverseBytesProfile),
         )
     }
@@ -193,7 +194,7 @@ async fn full_private_input_to_receipt_flow() {
     assert_eq!(receipt.output_commitment, result.output_commitment);
     assert_eq!(pending[0].sender, w.executor.address());
     assert!(verify_receipt_signature(receipt));
-    assert!(pending[0].verify_signature());
+    assert!(pending[0].verify_signature(&mbongo_core::Genesis::dev().chain_id));
     assert!(
         receipt.metadata.is_empty(),
         "no result bytes ride in metadata"
@@ -258,7 +259,12 @@ async fn wrong_executor_is_never_offered_the_task_and_cannot_fetch() {
     let mut w = World::new();
     w.commit_task().await;
     let other = ExecutorKey::from_seed(&[0xE9u8; 32]);
-    let mut squatter = Worker::new(&mut w.ids, other.clone(), Box::new(ReverseBytesProfile));
+    let mut squatter = Worker::new(
+        &mut w.ids,
+        other.clone(),
+        mbongo_core::Genesis::dev().chain_id,
+        Box::new(ReverseBytesProfile),
+    );
     assert_eq!(w.run(&mut squatter).await, AttemptOutcome::Idle);
     assert_eq!(w.cp.task(w.task_id).unwrap().lease, None);
 
