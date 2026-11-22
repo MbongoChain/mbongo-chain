@@ -7,10 +7,12 @@
 //!    producer's account state via REST.
 //! 3. Replaying them through the node's own `apply_block`, starting from
 //!    the node's own `ensure_genesis`.
-//! 4. Asserting that every block hash, the watched accounts, the task and the
-//!    receipt equal the producer's; that a second replay is identical; that a
-//!    RocksDB replay survives a reopen; that an altered block is refused; and
-//!    that a diverged starting state is detected.
+//! 4. Asserting that every block hash, every `state_root`, the watched
+//!    accounts, the task and the receipt equal the producer's; that a second
+//!    replay is identical; that a RocksDB replay survives a reopen; that an
+//!    altered block, and a block with an altered `state_root`, are refused;
+//!    and that a diverged starting state is refused by rule (w) at the
+//!    first block that touches the diverged account (RFC 0006 §4, §5).
 //!
 //! Block production happens in a real node process. The replay runs the
 //! node's block-application code, compiled into this harness from the same
@@ -47,16 +49,18 @@ mod mempool;
 
 #[cfg(not(test))]
 mod replay {
-    use super::backend::{compute_block_hash as node_block_hash, NodeBackend};
+    use super::backend::{compute_block_hash as node_block_hash, ApplyBlockError, NodeBackend};
     use super::mempool::MempoolConfig;
     use mbongo_core::{Address, Block, Hash};
     use mbongo_storage::{InMemoryStorage, RocksDbStorage, Storage};
 
-    /// What a chain holds, for comparison: every block hash by height, the
-    /// watched accounts, and the watched task and receipt bytes.
+    /// What a chain holds, for comparison: every block hash and `state_root`
+    /// by height, the watched accounts, and the watched task and receipt
+    /// bytes.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct ChainState {
         pub block_hashes: Vec<Hash>,
+        pub state_roots: Vec<Hash>,
         pub accounts: Vec<(Address, Option<(u128, u64)>)>,
         pub task: Option<Vec<u8>>,
         pub receipt: Option<Vec<u8>>,
@@ -119,6 +123,7 @@ mod replay {
         let err = |e: mbongo_storage::StorageError| format!("storage error: {e}");
         let tip = backend.latest_height().map_err(|e| e.to_string())?;
         let mut block_hashes = Vec::new();
+        let mut state_roots = Vec::new();
         for h in 0..=tip {
             let block = backend
                 .storage
@@ -126,6 +131,7 @@ mod replay {
                 .map_err(err)?
                 .ok_or_else(|| format!("no block at height {h}"))?;
             block_hashes.push(node_block_hash(&block));
+            state_roots.push(block.header.state_root);
         }
         let mut accounts = Vec::new();
         for a in &w.accounts {
@@ -134,6 +140,7 @@ mod replay {
         }
         Ok(ChainState {
             block_hashes,
+            state_roots,
             accounts,
             task: backend.storage.get_task(&w.task_id).map_err(err)?,
             receipt: backend.storage.get_receipt(&w.receipt_task_id).map_err(err)?,
@@ -142,6 +149,10 @@ mod replay {
 
     /// Names the first difference between two states, if any.
     pub fn compare(replayed: &ChainState, reference: &ChainState) -> Result<(), String> {
+        let (r, s) = (&replayed.state_roots, &reference.state_roots);
+        if let Some(h) = r.iter().zip(s.iter()).position(|(a, b)| a != b) {
+            return Err(format!("state_root differs first at height {h}"));
+        }
         let (r, s) = (&replayed.block_hashes, &reference.block_hashes);
         if let Some(h) = r.iter().zip(s.iter()).position(|(a, b)| a != b) {
             return Err(format!("block hashes differ first at height {h}"));
@@ -189,11 +200,28 @@ mod replay {
         let transactions: usize = blocks.iter().map(|b| b.body.transactions.len()).sum();
 
         // 1. Replay through apply_block, then compare with the producer.
+        // apply_block computes each block's state_root itself and refuses a
+        // block that carries another (rule w), so a replay that applies
+        // every block agrees with the producer's root at every height.
         let first = fresh(InMemoryStorage::new());
         replay(&first, blocks)?;
         let replayed = state(&first, watched)?;
         compare(&replayed, reference)?;
+        if replayed.state_roots.len() != blocks.len() {
+            return Err(format!(
+                "expected a state_root at each of {} heights, found {}",
+                blocks.len(),
+                replayed.state_roots.len()
+            ));
+        }
+        if let Some(h) = replayed.state_roots.iter().position(|r| *r == Hash::zero()) {
+            return Err(format!("the state_root at height {h} is zero"));
+        }
         println!("  Replay 1 (in memory): every block applied; state equals the producer's");
+        println!(
+            "  state_root: computed and equal to the producer's at all {} heights",
+            replayed.state_roots.len()
+        );
 
         // 2. Reproducibility: a second replay from nothing gives the same state.
         let second = fresh(InMemoryStorage::new());
@@ -254,13 +282,34 @@ mod replay {
         if state(&partial, watched)? != before {
             return Err("a refused block changed state".to_string());
         }
+        // The same block with only its state_root altered is refused by rule
+        // (w), and leaves no trace either.
+        let mut wrong_root = blocks[i].clone();
+        wrong_root.header.state_root.0[0] ^= 1;
+        match partial.apply_block(&wrong_root) {
+            Err(ApplyBlockError::StateRootMismatch { expected, .. })
+                if expected == blocks[i].header.state_root => {}
+            other => {
+                return Err(format!(
+                    "a block with an altered state_root at height {i}: expected StateRootMismatch, got {other:?}"
+                ))
+            }
+        }
+        if state(&partial, watched)? != before {
+            return Err("a block refused by rule (w) changed state".to_string());
+        }
         apply_all(&partial, &blocks[i..])?;
         if state(&partial, watched)? != replayed {
             return Err("after the refusals, the original blocks gave another state".to_string());
         }
         println!("  Altered block at height {i}: refused twice (content, then signature); no state written");
+        println!("  Altered state_root at height {i}: refused by rule (w); no state written");
 
         // 5. Divergence is detected: replay onto a different starting state.
+        // The dev account holds one unit less. Every block before the first
+        // one touching it applies; that block is refused by rule (w), though
+        // its transactions are all valid on the diverged state, and the node
+        // stays at the last height it agrees on.
         let diverged = fresh(InMemoryStorage::new());
         genesis(&diverged, blocks)?;
         let dev = watched.accounts[0];
@@ -274,14 +323,32 @@ mod replay {
             .storage
             .put_account(&dev, &acc)
             .map_err(|e| format!("storage error: {e}"))?;
-        let detected = match apply_all(&diverged, &blocks[1..]) {
-            Err(_) => true,
-            Ok(()) => compare(&state(&diverged, watched)?, reference).is_err(),
-        };
-        if !detected {
-            return Err("a diverged starting state was not detected".to_string());
+        let first_touch = blocks
+            .iter()
+            .position(|b| {
+                b.body.transactions.iter().any(|tx| tx.sender == dev || tx.receiver == dev)
+            })
+            .ok_or("no exported block touches the dev account")?;
+        apply_all(&diverged, &blocks[1..first_touch])?;
+        match diverged.apply_block(&blocks[first_touch]) {
+            Err(ApplyBlockError::StateRootMismatch { got, .. })
+                if got == blocks[first_touch].header.state_root => {}
+            other => {
+                return Err(format!(
+                    "a diverged starting state at height {first_touch}: expected StateRootMismatch, got {other:?}"
+                ))
+            }
         }
-        println!("  Divergence: a starting state one unit lower is detected");
+        let height = diverged.latest_height().map_err(|e| e.to_string())?;
+        if height != first_touch as u64 - 1 {
+            return Err(format!(
+                "after the refusal the diverged node is at height {height}, not {}",
+                first_touch - 1
+            ));
+        }
+        println!(
+            "  Divergence: a starting state one unit lower is refused by rule (w) at height {first_touch}, the first block touching it; the node stays at {height}"
+        );
 
         Ok(Summary {
             blocks: blocks.len(),
@@ -765,6 +832,7 @@ async fn run_replay(client: &Client, producer_dir: &std::path::Path) -> Result<(
     }
     let reference = replay::ChainState {
         block_hashes: exported_blocks.iter().map(compute_block_hash).collect(),
+        state_roots: exported_blocks.iter().map(|b| b.header.state_root).collect(),
         accounts,
         task: Some(compute_task_bytes.clone()),
         receipt: Some(anchor_receipt_bytes.clone()),

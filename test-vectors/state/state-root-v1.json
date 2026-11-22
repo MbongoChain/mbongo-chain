@@ -1,0 +1,532 @@
+{
+  "fixture_version": 1,
+  "purpose": "Cross-language vectors for the state commitment of RFC 0006 §4 and rule (w) of §5: state_root(0) from the genesis chain_id and allocations, and state_root(h) from the parent's root and what block h changes, including skipped transactions and the candidates a producer leaves out (§3).",
+  "authority": {
+    "rfc": "docs/rfcs/0006-chain-identity-authenticated-blocks.md §3 (production order), §4 (state commitment), §5 rule (w), §6 (state transition)",
+    "plan": "docs/architecture/S1_IMPLEMENTATION_PLAN.md S1-6",
+    "implementation": "crates/mbongo-core/src/state.rs; crates/mbongo-node/src/backend.rs (BlockView, apply_block, produce_block)"
+  },
+  "conventions": {
+    "hex": "lowercase, no 0x prefix",
+    "integers": "fixed-width little-endian; collection and byte-vector lengths are SCALE compact",
+    "account_value": "SCALE(Account) = address (32) || balance (u128, 16) || nonce (u64, 8)",
+    "changes": "Vec<(u8 kind, [u8; 32] key, Vec<u8> value)>, sorted by kind, then by key bytewise; one entry per key, holding the value after the whole block",
+    "kinds": {
+      "0": "account: key the address, value SCALE(Account)",
+      "1": "task: key the task_id, value SCALE(ComputeTask)",
+      "2": "receipt: key the task_id, value SCALE(Receipt)"
+    },
+    "transactions": "described by type, sender, receiver, amount and nonce, by test key name; each is signed for this file's chain_id with the sender's seed. ComputeTask and AnchorReceipt have amount 0 and the zero receiver, and carry the named task or the receipt below. A {repeat_of} entry is the byte-identical transaction of that earlier block."
+  },
+  "derivation": {
+    "method": "Derived by a script independent of the Rust crates and of the SDK: BLAKE3 written from the specification, Ed25519 public keys from OpenSSL, SCALE written by hand, and which entries a block has from a model of RFC 0006 §6 and §4 written from the RFC text. Task and receipt bytes are inputs from the fixtures below, checked against each other.",
+    "inputs": [
+      "test-vectors/compute-task/compute-task-v1.json: tasks canonical and empty-spec, and the executor test key",
+      "test-vectors/receipt/receipt-v1.json: the submitter test key",
+      "test-vectors/compute-task/anchor-binding-v2.json: vector bound-named-executor, the receipt of the canonical task"
+    ]
+  },
+  "domain": {
+    "ascii": "mbongo:state:v1",
+    "hex": "6d626f6e676f3a73746174653a7631",
+    "length": 15
+  },
+  "test_keys": {
+    "warning": "TEST ONLY. NOT PRODUCTION KEYS. Every seed is public.",
+    "authority": {
+      "ed25519_seed": "1010101010101010101010101010101010101010101010101010101010101010",
+      "public_key": "5c9c6df261c9cb840475776aaefcd944b405328fab28f9b3a95ef40490d3de84"
+    },
+    "alice": {
+      "ed25519_seed": "1111111111111111111111111111111111111111111111111111111111111111",
+      "public_key": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
+    },
+    "bob": {
+      "ed25519_seed": "1212121212121212121212121212121212121212121212121212121212121212",
+      "public_key": "204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c21"
+    },
+    "carol": {
+      "ed25519_seed": "1313131313131313131313131313131313131313131313131313131313131313",
+      "public_key": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633"
+    },
+    "big": {
+      "ed25519_seed": "1414141414141414141414141414141414141414141414141414141414141414",
+      "public_key": "20828bf5c5bdcacb684863336c202fb5599da48be5596615742170705beca9f7"
+    },
+    "submitter": {
+      "ed25519_seed": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
+      "public_key": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61"
+    },
+    "executor": {
+      "ed25519_seed": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+      "public_key": "4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff"
+    }
+  },
+  "tasks": {
+    "canonical": {
+      "task_id": "78aa35b0a94673dc67258bc5475a326f8a5f6d9994c9cc8f907b962530ddce1b",
+      "encoding": "01197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d614508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff333333333333333333333333333333333333333333333333333333333333333322222222222222222222222222222222222222222222222222222222222222220caabbcc"
+    },
+    "empty-spec": {
+      "task_id": "99398005e3e836d670b7a8c8462ba8555f2ad5f7f2e459a8165339f8910f4993",
+      "encoding": "01197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d614508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff3333333333333333333333333333333333333333333333333333333333333333222222222222222222222222222222222222222222222222222222222222222200"
+    }
+  },
+  "receipt": {
+    "task_id": "78aa35b0a94673dc67258bc5475a326f8a5f6d9994c9cc8f907b962530ddce1b",
+    "encoding": "0178aa35b0a94673dc67258bc5475a326f8a5f6d9994c9cc8f907b962530ddce1b222222222222222222222222222222222222222222222222222222222222222244444444444444444444444444444444444444444444444444444444444444444508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff00a90fc992bc25c1aceabb25295ce042bb45989828ac8d57613651fb59b584f87b8e3b8a3fd8a9ae5399ce79289f388294bcab51a67248ac568ea20dab322edd0e"
+  },
+  "genesis": {
+    "file": "{\"allocations\":[{\"address\":\"197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61\",\"amount\":\"0\"},{\"address\":\"204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c21\",\"amount\":\"5\"},{\"address\":\"20828bf5c5bdcacb684863336c202fb5599da48be5596615742170705beca9f7\",\"amount\":\"340282366920938463463374607431768210450\"},{\"address\":\"4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff\",\"amount\":\"0\"},{\"address\":\"d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737\",\"amount\":\"1000\"}],\"authorities\":[\"5c9c6df261c9cb840475776aaefcd944b405328fab28f9b3a95ef40490d3de84\"],\"name\":\"state-v1\",\"schema\":\"mbongo-genesis:v1\",\"timestamp\":0}",
+    "chain_id": "2231f864493cb334adadb1b8ce4e44b4cc1bc736643c62ac0ecf6a4be6310983",
+    "allocations": [
+      {
+        "account": "submitter",
+        "address": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+        "amount": "0"
+      },
+      {
+        "account": "bob",
+        "address": "204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c21",
+        "amount": "5"
+      },
+      {
+        "account": "big",
+        "address": "20828bf5c5bdcacb684863336c202fb5599da48be5596615742170705beca9f7",
+        "amount": "340282366920938463463374607431768210450"
+      },
+      {
+        "account": "executor",
+        "address": "4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff",
+        "amount": "0"
+      },
+      {
+        "account": "alice",
+        "address": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "amount": "1000"
+      }
+    ],
+    "allocations_encoding": "14197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d6100000000000000000000000000000000204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c210500000000000000000000000000000020828bf5c5bdcacb684863336c202fb5599da48be5596615742170705beca9f712fcffffffffffffffffffffffffffff4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff00000000000000000000000000000000d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737e8030000000000000000000000000000",
+    "state_root": "1478803e7bf8d63e607f402e9f88110329540833f99bf773aeb48802bb6f4fd1",
+    "note": "The allocations sum to exactly u128::MAX. state_root(0) = BLAKE3(domain || chain_id || allocations_encoding)."
+  },
+  "blocks": [
+    {
+      "height": 1,
+      "name": "empty",
+      "note": "No transaction: changes is the empty vector, one byte 0x00.",
+      "transactions": [],
+      "changes": [],
+      "changes_encoding": "00",
+      "parent_state_root": "1478803e7bf8d63e607f402e9f88110329540833f99bf773aeb48802bb6f4fd1",
+      "state_root": "ffd02d3dc022d4773e4cfa1d31eaf703b10542e6ea1b5820ec1b0f91c9f7a6a9"
+    },
+    {
+      "height": 2,
+      "name": "transfer",
+      "note": "alice sends 100 to bob: two account entries.",
+      "transactions": [
+        {
+          "id": "t1",
+          "type": "Transfer",
+          "sender": "alice",
+          "receiver": "bob",
+          "amount": "100",
+          "nonce": 0,
+          "skipped": false
+        }
+      ],
+      "changes": [
+        {
+          "kind": 0,
+          "key": "204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c21",
+          "account": "bob",
+          "balance": "105",
+          "nonce": 0,
+          "value": "204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c21690000000000000000000000000000000000000000000000"
+        },
+        {
+          "kind": 0,
+          "key": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+          "account": "alice",
+          "balance": "900",
+          "nonce": 1,
+          "value": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737840300000000000000000000000000000100000000000000"
+        }
+      ],
+      "changes_encoding": "0800204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c21e0204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c2169000000000000000000000000000000000000000000000000d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737e0d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737840300000000000000000000000000000100000000000000",
+      "parent_state_root": "ffd02d3dc022d4773e4cfa1d31eaf703b10542e6ea1b5820ec1b0f91c9f7a6a9",
+      "state_root": "a0ab063eeebddfe72701705bc5380edd2dacc5ec8fa3cb1a152ad2c1e347a6db"
+    },
+    {
+      "height": 3,
+      "name": "self-transfer-whole-balance",
+      "note": "alice sends her whole balance to herself: one entry, nonce advanced, balance unchanged.",
+      "transactions": [
+        {
+          "id": "t2",
+          "type": "Transfer",
+          "sender": "alice",
+          "receiver": "alice",
+          "amount": "900",
+          "nonce": 1,
+          "skipped": false
+        }
+      ],
+      "changes": [
+        {
+          "kind": 0,
+          "key": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+          "account": "alice",
+          "balance": "900",
+          "nonce": 2,
+          "value": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737840300000000000000000000000000000200000000000000"
+        }
+      ],
+      "changes_encoding": "0400d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737e0d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737840300000000000000000000000000000200000000000000",
+      "parent_state_root": "a0ab063eeebddfe72701705bc5380edd2dacc5ec8fa3cb1a152ad2c1e347a6db",
+      "state_root": "fdbb23fe3b781a1b85066b6710b09afda7ef1a35b86d7a432ab2f45340549b05"
+    },
+    {
+      "height": 4,
+      "name": "transfer-zero-to-new-account",
+      "note": "alice sends 0 to carol, absent until now: carol is created with zero balance and nonce, and has an entry.",
+      "transactions": [
+        {
+          "id": "t3",
+          "type": "Transfer",
+          "sender": "alice",
+          "receiver": "carol",
+          "amount": "0",
+          "nonce": 2,
+          "skipped": false
+        }
+      ],
+      "changes": [
+        {
+          "kind": 0,
+          "key": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+          "account": "carol",
+          "balance": "0",
+          "nonce": 0,
+          "value": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633000000000000000000000000000000000000000000000000"
+        },
+        {
+          "kind": 0,
+          "key": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+          "account": "alice",
+          "balance": "900",
+          "nonce": 3,
+          "value": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737840300000000000000000000000000000300000000000000"
+        }
+      ],
+      "changes_encoding": "080066cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633e066cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf763300000000000000000000000000000000000000000000000000d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737e0d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737840300000000000000000000000000000300000000000000",
+      "parent_state_root": "fdbb23fe3b781a1b85066b6710b09afda7ef1a35b86d7a432ab2f45340549b05",
+      "state_root": "7e3596d3636f5149e9400cfeb10ad238c19b9ec938f52d4ccb58ef650c423fdc"
+    },
+    {
+      "height": 5,
+      "name": "stake-whole-balance",
+      "note": "bob stakes his whole balance to alice; Stake takes the transfer path (RFC 0006 §6).",
+      "transactions": [
+        {
+          "id": "t4",
+          "type": "Stake",
+          "sender": "bob",
+          "receiver": "alice",
+          "amount": "105",
+          "nonce": 0,
+          "skipped": false
+        }
+      ],
+      "changes": [
+        {
+          "kind": 0,
+          "key": "204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c21",
+          "account": "bob",
+          "balance": "0",
+          "nonce": 1,
+          "value": "204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c21000000000000000000000000000000000100000000000000"
+        },
+        {
+          "kind": 0,
+          "key": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+          "account": "alice",
+          "balance": "1005",
+          "nonce": 3,
+          "value": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737ed0300000000000000000000000000000300000000000000"
+        }
+      ],
+      "changes_encoding": "0800204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c21e0204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c2100000000000000000000000000000000010000000000000000d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737e0d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737ed0300000000000000000000000000000300000000000000",
+      "parent_state_root": "7e3596d3636f5149e9400cfeb10ad238c19b9ec938f52d4ccb58ef650c423fdc",
+      "state_root": "fc2000e07b36ccf747dd3aef9082dce3add086a8a651a34f1a17ed3e4c456a1b"
+    },
+    {
+      "height": 6,
+      "name": "task-and-receipt-same-block",
+      "note": "submitter registers the canonical task and executor anchors its receipt in the same block: the task (kind 1) and receipt (kind 2) entries share one key.",
+      "transactions": [
+        {
+          "id": "t5",
+          "type": "ComputeTask",
+          "sender": "submitter",
+          "receiver": null,
+          "amount": "0",
+          "nonce": 0,
+          "task": "canonical",
+          "skipped": false
+        },
+        {
+          "id": "t6",
+          "type": "AnchorReceipt",
+          "sender": "executor",
+          "receiver": null,
+          "amount": "0",
+          "nonce": 0,
+          "skipped": false
+        }
+      ],
+      "changes": [
+        {
+          "kind": 0,
+          "key": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+          "account": "submitter",
+          "balance": "0",
+          "nonce": 1,
+          "value": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61000000000000000000000000000000000100000000000000"
+        },
+        {
+          "kind": 0,
+          "key": "4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff",
+          "account": "executor",
+          "balance": "0",
+          "nonce": 1,
+          "value": "4508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff000000000000000000000000000000000100000000000000"
+        },
+        {
+          "kind": 1,
+          "key": "78aa35b0a94673dc67258bc5475a326f8a5f6d9994c9cc8f907b962530ddce1b",
+          "value": "01197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d614508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff333333333333333333333333333333333333333333333333333333333333333322222222222222222222222222222222222222222222222222222222222222220caabbcc"
+        },
+        {
+          "kind": 2,
+          "key": "78aa35b0a94673dc67258bc5475a326f8a5f6d9994c9cc8f907b962530ddce1b",
+          "value": "0178aa35b0a94673dc67258bc5475a326f8a5f6d9994c9cc8f907b962530ddce1b222222222222222222222222222222222222222222222222222222222222222244444444444444444444444444444444444444444444444444444444444444444508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff00a90fc992bc25c1aceabb25295ce042bb45989828ac8d57613651fb59b584f87b8e3b8a3fd8a9ae5399ce79289f388294bcab51a67248ac568ea20dab322edd0e"
+        }
+      ],
+      "changes_encoding": "1000197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61e0197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61000000000000000000000000000000000100000000000000004508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ffe04508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff0000000000000000000000000000000001000000000000000178aa35b0a94673dc67258bc5475a326f8a5f6d9994c9cc8f907b962530ddce1b150201197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d614508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff333333333333333333333333333333333333333333333333333333333333333322222222222222222222222222222222222222222222222222222222222222220caabbcc0278aa35b0a94673dc67258bc5475a326f8a5f6d9994c9cc8f907b962530ddce1b09030178aa35b0a94673dc67258bc5475a326f8a5f6d9994c9cc8f907b962530ddce1b222222222222222222222222222222222222222222222222222222222222222244444444444444444444444444444444444444444444444444444444444444444508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff00a90fc992bc25c1aceabb25295ce042bb45989828ac8d57613651fb59b584f87b8e3b8a3fd8a9ae5399ce79289f388294bcab51a67248ac568ea20dab322edd0e",
+      "parent_state_root": "fc2000e07b36ccf747dd3aef9082dce3add086a8a651a34f1a17ed3e4c456a1b",
+      "state_root": "cb64f3c338b631eacfa96805d061665c3f2374a9227de2a825b2e8ce492a5a25"
+    },
+    {
+      "height": 7,
+      "name": "compute-task",
+      "note": "submitter registers the empty-spec task.",
+      "transactions": [
+        {
+          "id": "t7",
+          "type": "ComputeTask",
+          "sender": "submitter",
+          "receiver": null,
+          "amount": "0",
+          "nonce": 1,
+          "task": "empty-spec",
+          "skipped": false
+        }
+      ],
+      "changes": [
+        {
+          "kind": 0,
+          "key": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61",
+          "account": "submitter",
+          "balance": "0",
+          "nonce": 2,
+          "value": "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61000000000000000000000000000000000200000000000000"
+        },
+        {
+          "kind": 1,
+          "key": "99398005e3e836d670b7a8c8462ba8555f2ad5f7f2e459a8165339f8910f4993",
+          "value": "01197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d614508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff3333333333333333333333333333333333333333333333333333333333333333222222222222222222222222222222222222222222222222222222222222222200"
+        }
+      ],
+      "changes_encoding": "0800197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61e0197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d610000000000000000000000000000000002000000000000000199398005e3e836d670b7a8c8462ba8555f2ad5f7f2e459a8165339f8910f4993090201197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d614508a07aa941707f3eb2db94c8897a80b2c1197476b6de213ac273df7d86c4ff3333333333333333333333333333333333333333333333333333333333333333222222222222222222222222222222222222222222222222222222222222222200",
+      "parent_state_root": "cb64f3c338b631eacfa96805d061665c3f2374a9227de2a825b2e8ce492a5a25",
+      "state_root": "91634c73453edc8381762ed118872e42ff849aae161c6840a5b570e0434759b3"
+    },
+    {
+      "height": 8,
+      "name": "skipped-only",
+      "note": "Only the stored transfer of block 2, byte for byte: skipped, so changes is empty.",
+      "transactions": [
+        {
+          "repeat_of": "block 2",
+          "id": "t1",
+          "skipped": true
+        }
+      ],
+      "changes": [],
+      "changes_encoding": "00",
+      "parent_state_root": "91634c73453edc8381762ed118872e42ff849aae161c6840a5b570e0434759b3",
+      "state_root": "85864b0e2c9d8113a2b931666ef801949471818f2a8887582927264c9a4fb2ee"
+    },
+    {
+      "height": 9,
+      "name": "mixed",
+      "note": "Four transactions: big sends 1 to carol, the stored transfer of block 4 is skipped, alice sends her whole balance to bob, bob sends 5 to carol. Entries are sorted by key, not by body order, and bob's entry holds his value after the whole block.",
+      "transactions": [
+        {
+          "id": "t8",
+          "type": "Transfer",
+          "sender": "big",
+          "receiver": "carol",
+          "amount": "1",
+          "nonce": 0,
+          "skipped": false
+        },
+        {
+          "repeat_of": "block 4",
+          "id": "t3",
+          "skipped": true
+        },
+        {
+          "id": "t9",
+          "type": "Transfer",
+          "sender": "alice",
+          "receiver": "bob",
+          "amount": "1005",
+          "nonce": 3,
+          "skipped": false
+        },
+        {
+          "id": "t10",
+          "type": "Transfer",
+          "sender": "bob",
+          "receiver": "carol",
+          "amount": "5",
+          "nonce": 1,
+          "skipped": false
+        }
+      ],
+      "changes": [
+        {
+          "kind": 0,
+          "key": "204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c21",
+          "account": "bob",
+          "balance": "1000",
+          "nonce": 2,
+          "value": "204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c21e80300000000000000000000000000000200000000000000"
+        },
+        {
+          "kind": 0,
+          "key": "20828bf5c5bdcacb684863336c202fb5599da48be5596615742170705beca9f7",
+          "account": "big",
+          "balance": "340282366920938463463374607431768210449",
+          "nonce": 1,
+          "value": "20828bf5c5bdcacb684863336c202fb5599da48be5596615742170705beca9f711fcffffffffffffffffffffffffffff0100000000000000"
+        },
+        {
+          "kind": 0,
+          "key": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+          "account": "carol",
+          "balance": "6",
+          "nonce": 0,
+          "value": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633060000000000000000000000000000000000000000000000"
+        },
+        {
+          "kind": 0,
+          "key": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+          "account": "alice",
+          "balance": "0",
+          "nonce": 4,
+          "value": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737000000000000000000000000000000000400000000000000"
+        }
+      ],
+      "changes_encoding": "1000204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c21e0204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c21e803000000000000000000000000000002000000000000000020828bf5c5bdcacb684863336c202fb5599da48be5596615742170705beca9f7e020828bf5c5bdcacb684863336c202fb5599da48be5596615742170705beca9f711fcffffffffffffffffffffffffffff01000000000000000066cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633e066cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf763306000000000000000000000000000000000000000000000000d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737e0d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737000000000000000000000000000000000400000000000000",
+      "parent_state_root": "85864b0e2c9d8113a2b931666ef801949471818f2a8887582927264c9a4fb2ee",
+      "state_root": "cea52b53d5e34ac6709739766066884181f807a155edc85081ce28a39dd1bccf"
+    }
+  ],
+  "production": {
+    "height": 10,
+    "note": "A producer executes these candidates in order on a view of the state after the last block. A candidate that fails is left out with no effect, including no nonce consumed; the block holds the others, and its state_root is that of the included ones.",
+    "candidates": [
+      {
+        "id": "p1",
+        "type": "Transfer",
+        "sender": "alice",
+        "receiver": "bob",
+        "amount": "1",
+        "nonce": 4,
+        "included": false,
+        "reason": "InsufficientBalance"
+      },
+      {
+        "id": "p2",
+        "type": "Transfer",
+        "sender": "bob",
+        "receiver": "alice",
+        "amount": "5",
+        "nonce": 2,
+        "included": true
+      },
+      {
+        "id": "p3",
+        "type": "Transfer",
+        "sender": "bob",
+        "receiver": "carol",
+        "amount": "2000",
+        "nonce": 3,
+        "included": false,
+        "reason": "InsufficientBalance"
+      },
+      {
+        "id": "p4",
+        "type": "Transfer",
+        "sender": "carol",
+        "receiver": "alice",
+        "amount": "1",
+        "nonce": 0,
+        "included": true
+      },
+      {
+        "id": "p5",
+        "type": "Transfer",
+        "sender": "carol",
+        "receiver": "carol",
+        "amount": "5",
+        "nonce": 2,
+        "included": false,
+        "reason": "InvalidNonce"
+      }
+    ],
+    "changes": [
+      {
+        "kind": 0,
+        "key": "204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c21",
+        "account": "bob",
+        "balance": "995",
+        "nonce": 3,
+        "value": "204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c21e30300000000000000000000000000000300000000000000"
+      },
+      {
+        "kind": 0,
+        "key": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+        "account": "carol",
+        "balance": "5",
+        "nonce": 1,
+        "value": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633050000000000000000000000000000000100000000000000"
+      },
+      {
+        "kind": 0,
+        "key": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "account": "alice",
+        "balance": "6",
+        "nonce": 4,
+        "value": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737060000000000000000000000000000000400000000000000"
+      }
+    ],
+    "changes_encoding": "0c00204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c21e0204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c21e303000000000000000000000000000003000000000000000066cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633e066cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf763305000000000000000000000000000000010000000000000000d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737e0d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737060000000000000000000000000000000400000000000000",
+    "parent_state_root": "cea52b53d5e34ac6709739766066884181f807a155edc85081ce28a39dd1bccf",
+    "state_root": "c49df6510cab6a53205354ab882847ba25b9fa5c31b265faf7191d18c0a1c162"
+  }
+}
