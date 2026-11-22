@@ -10,8 +10,8 @@ use mbongo_api::rest::{
     Transaction as RestTransaction, Validator,
 };
 use mbongo_core::{
-    compute_transactions_root, Account, Address, Block, BlockBody, BlockHeader, ComputeTask, Hash,
-    Receipt, Transaction, TransactionPayload, TransactionType, COMPUTE_TASK_VERSION,
+    compute_transactions_root, Account, Address, Block, BlockBody, BlockHeader, ComputeTask,
+    Genesis, Hash, Receipt, Transaction, TransactionPayload, TransactionType, COMPUTE_TASK_VERSION,
     MAX_EXECUTION_SPEC_BYTES, MAX_TRANSACTION_NONCE,
 };
 use mbongo_network::rpc::{BackendError, RpcBackend};
@@ -279,61 +279,51 @@ impl<S: Storage> NodeBackend<S> {
             .map_err(|e| BackendError::Internal(format!("storage error: {e}")))
     }
 
-    /// Writes the genesis block (height 0) if it does not already exist.
+    /// Writes the genesis of `genesis` if height 0 is absent, or checks the
+    /// stored genesis block against it if present (RFC 0006 §1).
     ///
-    /// The genesis block has an all-zero parent hash, empty body, and
-    /// timestamp 0. This method is idempotent.
-    pub fn ensure_genesis(&self) -> Result<(), BackendError> {
-        // If height 0 already exists, nothing to do.
-        if self
+    /// The block, its height index and every allocation are written in one
+    /// `write_batch`, so a failure leaves nothing behind. An allocation
+    /// creates an account with its amount and nonce 0, a zero amount
+    /// included (plan D-3). The node calls this only once it has proven the
+    /// directory belongs to `genesis` (`genesis_dir`).
+    ///
+    /// # Errors
+    ///
+    /// On a storage failure, or if the stored genesis block is not the one
+    /// `genesis` derives.
+    pub fn ensure_genesis(&self, genesis: &Genesis) -> Result<(), BackendError> {
+        let block = genesis_block(genesis);
+        let block_hash = compute_block_hash(&block);
+        let stored = self
             .storage
             .get_block_by_height(0)
-            .map_err(|e| BackendError::Internal(format!("storage error: {e}")))?
-            .is_some()
-        {
+            .map_err(|e| BackendError::Internal(format!("storage error: {e}")))?;
+        if let Some(stored) = stored {
+            let stored_hash = compute_block_hash(&stored);
+            if stored_hash != block_hash {
+                return Err(BackendError::Internal(format!(
+                    "the stored genesis block {} is not the genesis block {} of chain {}",
+                    hex::encode(stored_hash.0),
+                    hex::encode(block_hash.0),
+                    genesis.chain_id
+                )));
+            }
             return Ok(());
         }
 
-        let txs: Vec<Transaction> = Vec::new();
-        let block = Block {
-            header: BlockHeader {
-                parent_hash: Hash::zero(),
-                state_root: Hash::zero(),
-                transactions_root: compute_transactions_root(&txs),
-                timestamp: 0,
-                height: 0,
-            },
-            body: BlockBody { transactions: txs },
-        };
-
-        let block_hash = compute_block_hash(&block);
-
-        self.storage
-            .put_block(&block_hash, &block)
-            .map_err(|e| BackendError::Internal(format!("storage error: {e}")))?;
-        self.storage
-            .put_block_height_index(0, block_hash)
-            .map_err(|e| BackendError::Internal(format!("storage error: {e}")))?;
-
-        // DEV ONLY: Pre-funded account for testing.
-        // Deterministic dev key (must match wallet example).
-        use ed25519_dalek::SigningKey;
-        let signing_key = SigningKey::from_bytes(&[0xAAu8; 32]);
-        let verifying_key = signing_key.verifying_key();
-        let dev_addr = Address(verifying_key.to_bytes());
-        let existing = self
-            .storage
-            .get_account(&dev_addr)
-            .map_err(|e| BackendError::Internal(format!("storage error: {e}")))?;
-        if existing.is_none() {
-            let mut dev_account = Account::new(dev_addr);
-            dev_account.balance = 1_000_000_000;
-            self.storage
-                .put_account(&dev_addr, &dev_account)
-                .map_err(|e| BackendError::Internal(format!("storage error: {e}")))?;
+        let mut ops = vec![
+            BatchOp::PutBlock(block_hash, block),
+            BatchOp::PutBlockHeightIndex(0, block_hash),
+        ];
+        for (address, amount) in &genesis.allocations {
+            let mut account = Account::new(*address);
+            account.balance = *amount;
+            ops.push(BatchOp::PutAccount(*address, account));
         }
-
-        Ok(())
+        self.storage
+            .write_batch(ops)
+            .map_err(|e| BackendError::Internal(format!("storage error: {e}")))
     }
 
     /// Validate and atomically apply a block to storage.
@@ -898,6 +888,25 @@ pub(crate) fn compute_tx_hash(tx: &Transaction) -> Hash {
     let mut out = [0u8; 32];
     out.copy_from_slice(digest.as_bytes());
     Hash(out)
+}
+
+/// The genesis block of `genesis`, derived and never received (RFC 0006
+/// §1): height 0, zero parent, the file's timestamp, an empty body and
+/// the `transactions_root` of an empty list. `state_root` stays zero until
+/// S1-6 defines the state commitment, and the producer fields arrive with
+/// S1-7.
+pub(crate) fn genesis_block(genesis: &Genesis) -> Block {
+    let txs: Vec<Transaction> = Vec::new();
+    Block {
+        header: BlockHeader {
+            parent_hash: Hash::zero(),
+            state_root: Hash::zero(),
+            transactions_root: compute_transactions_root(&txs),
+            timestamp: genesis.timestamp,
+            height: 0,
+        },
+        body: BlockBody { transactions: txs },
+    }
 }
 
 /// Computes a deterministic blake3 hash over the SCALE-encoded block.
@@ -1540,7 +1549,7 @@ mod tests {
     #[tokio::test]
     async fn submit_tx_success_updates_balances() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let sender_sk = SigningKey::from_bytes(&[1u8; 32]);
         let sender_addr = Address(sender_sk.verifying_key().to_bytes());
@@ -1609,7 +1618,7 @@ mod tests {
     #[tokio::test]
     async fn submit_tx_duplicate_returns_same_hash() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let sender_sk = SigningKey::from_bytes(&[4u8; 32]);
         let sender_addr = Address(sender_sk.verifying_key().to_bytes());
@@ -1750,7 +1759,7 @@ mod tests {
     #[tokio::test]
     async fn ensure_genesis_creates_block_at_height_zero() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         // Height should still be 0 (genesis).
         let height = backend.get_block_height().await.unwrap();
@@ -1767,8 +1776,8 @@ mod tests {
     #[tokio::test]
     async fn ensure_genesis_is_idempotent() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
-        backend.ensure_genesis().unwrap(); // second call should be a no-op
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap(); // second call should be a no-op
 
         let height = backend.get_block_height().await.unwrap();
         assert_eq!(height, 0);
@@ -1777,7 +1786,7 @@ mod tests {
     #[tokio::test]
     async fn ensure_genesis_creates_dev_account() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         // Deterministic dev key (must match ensure_genesis and wallet example).
         let sk = SigningKey::from_bytes(&[0xAAu8; 32]);
@@ -1796,7 +1805,7 @@ mod tests {
     #[tokio::test]
     async fn produce_block_creates_height_one() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let hash = backend.produce_block().await.unwrap();
         assert!(hash.starts_with("0x"));
@@ -1817,7 +1826,7 @@ mod tests {
     #[tokio::test]
     async fn produce_block_increments_height() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         backend.produce_block().await.unwrap();
         backend.produce_block().await.unwrap();
@@ -1849,7 +1858,7 @@ mod tests {
     #[tokio::test]
     async fn api_list_blocks_after_genesis_and_produce() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         backend.produce_block().await.unwrap();
 
         let blocks = backend.list_blocks(10).await.unwrap();
@@ -1864,7 +1873,7 @@ mod tests {
     #[tokio::test]
     async fn produce_block_includes_submitted_transactions() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let sender_sk = SigningKey::from_bytes(&[10u8; 32]);
         let sender_addr = Address(sender_sk.verifying_key().to_bytes());
@@ -1910,7 +1919,7 @@ mod tests {
     #[tokio::test]
     async fn produce_block_second_block_has_no_duplicates() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let sender_sk = SigningKey::from_bytes(&[11u8; 32]);
         let sender_addr = Address(sender_sk.verifying_key().to_bytes());
@@ -1947,7 +1956,7 @@ mod tests {
     #[tokio::test]
     async fn produce_block_only_includes_new_transactions() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let sender_sk = SigningKey::from_bytes(&[12u8; 32]);
         let sender_addr = Address(sender_sk.verifying_key().to_bytes());
@@ -1989,7 +1998,7 @@ mod tests {
     #[tokio::test]
     async fn submit_tx_inserts_into_mempool_not_storage() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let sender_sk = SigningKey::from_bytes(&[30u8; 32]);
         let sender_addr = Address(sender_sk.verifying_key().to_bytes());
@@ -2014,7 +2023,7 @@ mod tests {
     #[tokio::test]
     async fn submit_tx_duplicate_hash_rejected() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let sender_sk = SigningKey::from_bytes(&[32u8; 32]);
         let sender_addr = Address(sender_sk.verifying_key().to_bytes());
@@ -2039,7 +2048,7 @@ mod tests {
     #[tokio::test]
     async fn submit_tx_duplicate_sender_nonce_rejected() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let sender_sk = SigningKey::from_bytes(&[34u8; 32]);
         let sender_addr = Address(sender_sk.verifying_key().to_bytes());
@@ -2066,7 +2075,7 @@ mod tests {
     #[tokio::test]
     async fn mempool_empty_after_produce() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let sender_sk = SigningKey::from_bytes(&[37u8; 32]);
         let sender_addr = Address(sender_sk.verifying_key().to_bytes());
@@ -2092,7 +2101,7 @@ mod tests {
     #[tokio::test]
     async fn produce_block_applies_all_state_atomically() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         // Two distinct senders to avoid nonce contention.
         let sk_a = SigningKey::from_bytes(&[40u8; 32]);
@@ -2247,7 +2256,7 @@ mod tests {
     #[test]
     fn wrong_type_payload_pairing_rejected() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         fund(&backend, &sk, 5000);
 
@@ -2276,7 +2285,7 @@ mod tests {
     #[test]
     fn anchor_field_constraints_rejected() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         fund(&backend, &sk, 5000);
 
@@ -2304,7 +2313,7 @@ mod tests {
     #[test]
     fn tx_signature_precedes_receipt_signature() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         fund(&backend, &sk, 5000);
 
@@ -2329,7 +2338,7 @@ mod tests {
     #[test]
     fn nonce_precedes_receipt_signature() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         fund(&backend, &sk, 5000);
 
@@ -2353,7 +2362,7 @@ mod tests {
     #[test]
     fn metadata_cap_enforced() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         fund(&backend, &sk, 5000);
 
@@ -2379,7 +2388,7 @@ mod tests {
     #[test]
     fn wrong_receipt_version_rejected() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         fund(&backend, &sk, 5000);
 
@@ -2397,7 +2406,7 @@ mod tests {
     #[test]
     fn sender_executor_mismatch_rejected() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         fund(&backend, &sk, 5000);
 
@@ -2415,7 +2424,7 @@ mod tests {
     #[test]
     fn invalid_receipt_signature_rejected() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         fund(&backend, &sk, 5000);
 
@@ -2439,7 +2448,7 @@ mod tests {
     #[test]
     fn stored_anchor_tx_in_later_block_rejected() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         let sender_addr = fund(&backend, &sk, 5000);
         let task_id = seed_task(&backend, &sk, [0x96u8; 32]);
@@ -2481,7 +2490,7 @@ mod tests {
     #[test]
     fn prior_state_duplicate_rejected() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         fund(&backend, &sk, 5000);
         let task_id = seed_task(&backend, &sk, [0x7Au8; 32]);
@@ -2503,7 +2512,7 @@ mod tests {
     #[test]
     fn in_block_duplicate_rejected() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         fund(&backend, &sk, 5000);
         let task_id = seed_task(&backend, &sk, [0x7Bu8; 32]);
@@ -2535,7 +2544,7 @@ mod tests {
     #[test]
     fn first_failure_precedence_pinned() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         fund(&backend, &sk, 5000);
         let other = SigningKey::from_bytes(&[61u8; 32]);
@@ -2580,7 +2589,7 @@ mod tests {
     #[test]
     fn transfer_before_invalid_receipt_leaves_no_state() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let transfer_sk = SigningKey::from_bytes(&[62u8; 32]);
         let transfer_sender = fund(&backend, &transfer_sk, 5000);
         let anchor_sk = SigningKey::from_bytes(&[63u8; 32]);
@@ -2626,7 +2635,7 @@ mod tests {
     #[test]
     fn valid_receipt_before_invalid_tx_leaves_no_receipt() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let anchor_sk = SigningKey::from_bytes(&[63u8; 32]);
         let anchor_sender = fund(&backend, &anchor_sk, 100);
         let poor_sk = SigningKey::from_bytes(&[65u8; 32]);
@@ -2656,7 +2665,7 @@ mod tests {
     #[test]
     fn mixed_block_commits_atomically() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let transfer_sk = SigningKey::from_bytes(&[62u8; 32]);
         let transfer_sender = fund(&backend, &transfer_sk, 5000);
         let anchor_sk = SigningKey::from_bytes(&[63u8; 32]);
@@ -2711,7 +2720,7 @@ mod tests {
     fn failed_block_does_not_advance_persistent_seq_counter() {
         // Scenario 1: valid transfer before an invalid receipt.
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let transfer_sk = SigningKey::from_bytes(&[62u8; 32]);
         fund(&backend, &transfer_sk, 5000);
         let anchor_sk = SigningKey::from_bytes(&[63u8; 32]);
@@ -2741,7 +2750,7 @@ mod tests {
 
         // Scenario 2: valid receipt before an over-spending transfer.
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let anchor_sk = SigningKey::from_bytes(&[63u8; 32]);
         fund(&backend, &anchor_sk, 100);
         let poor_sk = SigningKey::from_bytes(&[65u8; 32]);
@@ -2760,7 +2769,7 @@ mod tests {
 
         // Scenario 3: two receipts for the same task_id.
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         fund(&backend, &sk, 5000);
         let block = build_valid_block(
@@ -2779,7 +2788,7 @@ mod tests {
     #[test]
     fn retry_after_failed_block_assigns_same_sequences() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let transfer_sk = SigningKey::from_bytes(&[62u8; 32]);
         fund(&backend, &transfer_sk, 5000);
         let anchor_sk = SigningKey::from_bytes(&[63u8; 32]);
@@ -2827,9 +2836,9 @@ mod tests {
         // identical parent hash) and must end with identical sequence
         // state — including the persistent counter.
         let backend_a = make_backend();
-        backend_a.ensure_genesis().unwrap();
+        backend_a.ensure_genesis(&Genesis::dev()).unwrap();
         let backend_b = make_backend();
-        backend_b.ensure_genesis().unwrap();
+        backend_b.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         fund(&backend_a, &sk, 5000);
         fund(&backend_b, &sk, 5000);
@@ -2868,7 +2877,7 @@ mod tests {
     #[test]
     fn idempotent_reapply_allocates_no_new_seq() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         fund(&backend, &sk, 5000);
         let other_sk = SigningKey::from_bytes(&[61u8; 32]);
@@ -2908,7 +2917,7 @@ mod tests {
     #[tokio::test]
     async fn submit_anchor_valid_accepted() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         fund(&backend, &sk, 5000);
 
@@ -2920,7 +2929,7 @@ mod tests {
     #[tokio::test]
     async fn submit_anchor_wrong_pairing_rejected() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         fund(&backend, &sk, 5000);
 
@@ -2935,7 +2944,7 @@ mod tests {
     #[tokio::test]
     async fn submit_anchor_sender_executor_mismatch_rejected() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         fund(&backend, &sk, 5000);
         let other = SigningKey::from_bytes(&[61u8; 32]);
@@ -2950,7 +2959,7 @@ mod tests {
     #[tokio::test]
     async fn submit_anchor_bad_receipt_signature_rejected() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         fund(&backend, &sk, 5000);
 
@@ -2971,7 +2980,7 @@ mod tests {
     #[tokio::test]
     async fn submit_anchor_persistent_duplicate_rejected() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         fund(&backend, &sk, 5000);
         let task_id = seed_task(&backend, &sk, [0x84u8; 32]);
@@ -2990,7 +2999,7 @@ mod tests {
     #[tokio::test]
     async fn resubmit_identical_anchored_tx_rejected() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         fund(&backend, &sk, 5000);
         let task_id = seed_task(&backend, &sk, [0x97u8; 32]);
@@ -3011,7 +3020,7 @@ mod tests {
     #[tokio::test]
     async fn submit_anchor_pending_duplicate_rejected() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         fund(&backend, &sk, 5000);
         let task_id = seed_task(&backend, &sk, [0x85u8; 32]);
@@ -3038,7 +3047,7 @@ mod tests {
     #[tokio::test]
     async fn produce_block_anchors_submitted_receipt() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[60u8; 32]);
         fund(&backend, &sk, 5000);
         let task_id = seed_task(&backend, &sk, [0x86u8; 32]);
@@ -3054,7 +3063,7 @@ mod tests {
     #[test]
     fn apply_block_empty_block_succeeds() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let block = build_valid_block(&backend, vec![]);
         let hash = backend.apply_block(&block).unwrap();
@@ -3070,7 +3079,7 @@ mod tests {
     #[test]
     fn apply_block_with_valid_tx() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let sk = SigningKey::from_bytes(&[50u8; 32]);
         let sender_addr = Address(sk.verifying_key().to_bytes());
@@ -3099,7 +3108,7 @@ mod tests {
     #[test]
     fn apply_block_rejects_bad_parent() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let block = Block {
             header: BlockHeader {
@@ -3124,7 +3133,7 @@ mod tests {
     #[test]
     fn apply_block_rejects_bad_height() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let genesis = backend.storage.get_block_by_height(0).unwrap().unwrap();
         let parent_hash = compute_block_hash(&genesis);
@@ -3158,7 +3167,7 @@ mod tests {
     #[test]
     fn apply_block_rejects_invalid_tx_signature() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let sk = SigningKey::from_bytes(&[52u8; 32]);
         let sender_addr = Address(sk.verifying_key().to_bytes());
@@ -3182,7 +3191,7 @@ mod tests {
     #[test]
     fn apply_block_rejects_invalid_nonce() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let sk = SigningKey::from_bytes(&[54u8; 32]);
         let sender_addr = Address(sk.verifying_key().to_bytes());
@@ -3205,7 +3214,7 @@ mod tests {
     #[test]
     fn apply_block_rejects_insufficient_balance() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let sk = SigningKey::from_bytes(&[56u8; 32]);
         let sender_addr = Address(sk.verifying_key().to_bytes());
@@ -3227,7 +3236,7 @@ mod tests {
     #[test]
     fn apply_block_rejects_transactions_root_mismatch() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let genesis = backend.storage.get_block_by_height(0).unwrap().unwrap();
         let parent_hash = compute_block_hash(&genesis);
@@ -3255,7 +3264,7 @@ mod tests {
     #[test]
     fn apply_block_chain_of_three_blocks() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let sk = SigningKey::from_bytes(&[58u8; 32]);
         let sender_addr = Address(sk.verifying_key().to_bytes());
@@ -3309,7 +3318,7 @@ mod tests {
     #[test]
     fn apply_block_accepts_consecutive_nonces_from_one_sender() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let sk = SigningKey::from_bytes(&[70u8; 32]);
         let sender_addr = fund(&backend, &sk, 5000);
@@ -3353,7 +3362,7 @@ mod tests {
     #[test]
     fn apply_block_accepts_consecutive_anchors_from_one_executor() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let sk = SigningKey::from_bytes(&[72u8; 32]);
         let executor_addr = fund(&backend, &sk, 100);
@@ -3423,7 +3432,7 @@ mod tests {
             (u128::MAX, u128::MAX),
         ] {
             let backend = make_backend();
-            backend.ensure_genesis().unwrap();
+            backend.ensure_genesis(&Genesis::dev()).unwrap();
             let sk = SigningKey::from_bytes(&[71u8; 32]);
             let addr = fund_with_nonce(&backend, &sk, balance, 0);
             let block = build_valid_block(&backend, vec![signed_transfer(&sk, addr, amount, 0)]);
@@ -3437,7 +3446,7 @@ mod tests {
     #[test]
     fn a_transfer_within_one_account_above_the_balance_is_refused() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[72u8; 32]);
         let addr = fund_with_nonce(&backend, &sk, 50, 0);
         let block = build_valid_block(&backend, vec![signed_transfer(&sk, addr, 51, 0)]);
@@ -3453,7 +3462,7 @@ mod tests {
     #[test]
     fn a_transaction_included_again_changes_nothing() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[73u8; 32]);
         let addr = fund_with_nonce(&backend, &sk, 1000, 0);
         let tx = signed_transfer(&sk, addr, 300, 0);
@@ -3467,7 +3476,7 @@ mod tests {
     #[test]
     fn a_stale_nonce_is_refused_after_a_transfer_within_one_account() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[77u8; 32]);
         let addr = fund_with_nonce(&backend, &sk, 1000, 0);
         let first = signed_transfer(&sk, addr, 300, 0);
@@ -3481,7 +3490,7 @@ mod tests {
     #[test]
     fn the_same_transfer_within_one_account_twice_in_a_block_is_refused() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[78u8; 32]);
         let addr = fund_with_nonce(&backend, &sk, 1000, 0);
         let tx = signed_transfer(&sk, addr, 500, 0);
@@ -3495,7 +3504,7 @@ mod tests {
     #[test]
     fn a_second_transfer_at_the_same_nonce_in_a_block_is_refused() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[79u8; 32]);
         let addr = fund_with_nonce(&backend, &sk, 1000, 0);
         let other = Address([80u8; 32]);
@@ -3515,7 +3524,7 @@ mod tests {
     #[test]
     fn a_mixed_block_conserves_the_total_supply() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let (a, b) = (
             SigningKey::from_bytes(&[74u8; 32]),
             SigningKey::from_bytes(&[75u8; 32]),
@@ -3548,7 +3557,7 @@ mod tests {
     #[test]
     fn generated_blocks_conserve_the_total_supply() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let keys: Vec<SigningKey> =
             (0u8..4).map(|i| SigningKey::from_bytes(&[80 + i; 32])).collect();
         let accounts: Vec<Address> =
@@ -3609,7 +3618,7 @@ mod tests {
     #[test]
     fn a_stake_within_one_account_conserves_and_advances_the_nonce() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[90u8; 32]);
         let addr = fund_with_nonce(&backend, &sk, 1000, 0);
         let tx = signed_plain(&sk, TransactionType::Stake, addr, 400, 0);
@@ -3621,7 +3630,7 @@ mod tests {
     #[test]
     fn a_transfer_within_an_absent_account_is_refused_and_creates_nothing() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[91u8; 32]);
         let addr = Address(sk.verifying_key().to_bytes());
         let height = backend.storage.get_latest_height().unwrap();
@@ -3640,7 +3649,7 @@ mod tests {
     #[test]
     fn an_overflowing_credit_after_a_transfer_within_one_account_rejects_the_block() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let (a, b) = (
             SigningKey::from_bytes(&[92u8; 32]),
             SigningKey::from_bytes(&[93u8; 32]),
@@ -3679,7 +3688,7 @@ mod tests {
         );
         let mut addrs = Vec::new();
         for node in [&producer, &follower] {
-            node.ensure_genesis().unwrap();
+            node.ensure_genesis(&Genesis::dev()).unwrap();
             addrs = vec![
                 fund_with_nonce(node, &a, 1000, 0),
                 fund_with_nonce(node, &b, 500, 0),
@@ -3741,7 +3750,7 @@ mod tests {
         let within = signed_transfer(&sk, addr, 700, 0);
         {
             let backend = NodeBackend::new(RocksDbStorage::open(&dir).unwrap(), true);
-            backend.ensure_genesis().unwrap();
+            backend.ensure_genesis(&Genesis::dev()).unwrap();
             let mut funded = Account::new(addr);
             funded.balance = 1000;
             backend.storage.put_account(&addr, &funded).unwrap();
@@ -3750,7 +3759,7 @@ mod tests {
             backend.produce_block().await.unwrap();
         }
         let restarted = NodeBackend::new(RocksDbStorage::open(&dir).unwrap(), true);
-        restarted.ensure_genesis().unwrap();
+        restarted.ensure_genesis(&Genesis::dev()).unwrap();
         assert_eq!(restarted.latest_height().unwrap(), 1);
         let held = |node: &NodeBackend<RocksDbStorage>| {
             let a = node.storage.get_account(&addr).unwrap().unwrap();
@@ -3771,7 +3780,7 @@ mod tests {
     #[tokio::test]
     async fn submit_accepts_first_nonce_with_empty_pending() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[80u8; 32]);
         fund(&backend, &sk, 10_000);
 
@@ -3786,7 +3795,7 @@ mod tests {
     #[tokio::test]
     async fn submit_accepts_successor_while_predecessor_pending() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[81u8; 32]);
         fund(&backend, &sk, 10_000);
 
@@ -3807,7 +3816,7 @@ mod tests {
     #[tokio::test]
     async fn submit_accepts_three_deep_pending_chain() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[82u8; 32]);
         let addr = fund(&backend, &sk, 10_000);
 
@@ -3828,7 +3837,7 @@ mod tests {
     #[tokio::test]
     async fn submit_rejects_gap_with_empty_pending() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[83u8; 32]);
         fund(&backend, &sk, 10_000);
 
@@ -3850,7 +3859,7 @@ mod tests {
     #[tokio::test]
     async fn submit_rejects_gap_beyond_pending_chain() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[84u8; 32]);
         fund(&backend, &sk, 10_000);
 
@@ -3872,7 +3881,7 @@ mod tests {
     #[tokio::test]
     async fn submit_rejects_stale_nonce_below_committed() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[85u8; 32]);
         fund(&backend, &sk, 10_000);
 
@@ -3899,7 +3908,7 @@ mod tests {
     #[tokio::test]
     async fn submit_exact_resubmission_stays_idempotent() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[86u8; 32]);
         fund(&backend, &sk, 10_000);
 
@@ -3919,7 +3928,7 @@ mod tests {
     #[tokio::test]
     async fn submit_same_nonce_different_transaction_rejected() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[87u8; 32]);
         fund(&backend, &sk, 10_000);
 
@@ -3941,7 +3950,7 @@ mod tests {
     #[tokio::test]
     async fn submit_different_senders_same_nonce_independent() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk_a = SigningKey::from_bytes(&[88u8; 32]);
         let sk_b = SigningKey::from_bytes(&[89u8; 32]);
         fund(&backend, &sk_a, 10_000);
@@ -3962,7 +3971,7 @@ mod tests {
     #[tokio::test]
     async fn produce_block_includes_whole_pending_chain() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[90u8; 32]);
         let addr = fund(&backend, &sk, 10_000);
 
@@ -3988,7 +3997,7 @@ mod tests {
     #[tokio::test]
     async fn submit_rejects_when_nonce_space_exhausted() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[91u8; 32]);
         fund_with_nonce(&backend, &sk, 10_000, MAX_TRANSACTION_NONCE);
 
@@ -4021,7 +4030,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn concurrent_submissions_claim_one_nonce_slot() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[92u8; 32]);
         let addr = fund(&backend, &sk, 10_000);
 
@@ -4055,7 +4064,7 @@ mod tests {
     #[tokio::test]
     async fn submit_rejects_chain_exceeding_committed_balance() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[93u8; 32]);
         fund(&backend, &sk, 10);
 
@@ -4076,7 +4085,7 @@ mod tests {
     #[tokio::test]
     async fn submit_accepts_chain_within_committed_balance() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[94u8; 32]);
         let addr = fund(&backend, &sk, 10);
 
@@ -4104,7 +4113,7 @@ mod tests {
     #[tokio::test]
     async fn submit_two_anchors_from_one_executor_without_a_block_between() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[95u8; 32]);
         let executor = fund(&backend, &sk, 100);
         let task_a = seed_task(&backend, &sk, [0xB1u8; 32]);
@@ -4136,7 +4145,7 @@ mod tests {
     #[tokio::test]
     async fn submit_rejects_beyond_max_pending_per_sender() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[96u8; 32]);
         let other_sk = SigningKey::from_bytes(&[97u8; 32]);
         fund(&backend, &sk, 10_000);
@@ -4184,7 +4193,7 @@ mod tests {
     #[tokio::test]
     async fn failed_block_application_keeps_transactions_pending() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[98u8; 32]);
         let addr = fund(&backend, &sk, 10_000);
 
@@ -4235,7 +4244,7 @@ mod tests {
     #[tokio::test]
     async fn pending_chain_reaches_the_block_in_nonce_order() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk_a = SigningKey::from_bytes(&[99u8; 32]);
         let sk_b = SigningKey::from_bytes(&[101u8; 32]);
         let addr_a = Address(sk_a.verifying_key().to_bytes());
@@ -4307,10 +4316,10 @@ mod tests {
     fn broadcast_block_updates_follower_height() {
         // Simulate: producer produces a block, follower applies it via handle_incoming_block.
         let producer = make_backend();
-        producer.ensure_genesis().unwrap();
+        producer.ensure_genesis(&Genesis::dev()).unwrap();
 
         let follower = make_backend();
-        follower.ensure_genesis().unwrap();
+        follower.ensure_genesis(&Genesis::dev()).unwrap();
 
         // Producer: build and apply a block.
         let block = build_valid_block(&producer, vec![]);
@@ -4327,11 +4336,11 @@ mod tests {
     #[test]
     fn follower_ignores_future_height_block() {
         let follower = make_backend();
-        follower.ensure_genesis().unwrap();
+        follower.ensure_genesis(&Genesis::dev()).unwrap();
 
         // Build a chain of 5 blocks on a separate backend.
         let producer = make_backend();
-        producer.ensure_genesis().unwrap();
+        producer.ensure_genesis(&Genesis::dev()).unwrap();
         for _ in 0..5 {
             let b = build_valid_block(&producer, vec![]);
             producer.apply_block(&b).unwrap();
@@ -4349,10 +4358,10 @@ mod tests {
     #[test]
     fn follower_rejects_invalid_block() {
         let producer = make_backend();
-        producer.ensure_genesis().unwrap();
+        producer.ensure_genesis(&Genesis::dev()).unwrap();
 
         let follower = make_backend();
-        follower.ensure_genesis().unwrap();
+        follower.ensure_genesis(&Genesis::dev()).unwrap();
 
         // Build a valid block but tamper with the transactions_root.
         let mut block = build_valid_block(&producer, vec![]);
@@ -4397,7 +4406,7 @@ mod tests {
         tokio::time::pause();
 
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let producer_backend = backend.clone();
         let handle = tokio::spawn(async move {
@@ -4420,7 +4429,7 @@ mod tests {
     #[tokio::test]
     async fn non_producer_does_not_auto_produce() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         // Non-producer: no timed loop spawned.
         // Simply assert that after genesis, height remains 0.
@@ -4431,7 +4440,7 @@ mod tests {
     #[tokio::test]
     async fn producer_broadcasts_after_produce() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let mock = Arc::new(MockBroadcaster::new());
         let mut backend = backend;
@@ -4450,7 +4459,7 @@ mod tests {
     #[tokio::test]
     async fn non_producer_cannot_produce_block() {
         let backend = NodeBackend::new(InMemoryStorage::new(), false);
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let result = backend.produce_block().await;
         assert!(result.is_err());
@@ -4464,7 +4473,7 @@ mod tests {
     #[tokio::test]
     async fn producer_can_produce_block() {
         let backend = NodeBackend::new(InMemoryStorage::new(), true);
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let result = backend.produce_block().await;
         assert!(result.is_ok());
@@ -4476,7 +4485,7 @@ mod tests {
     #[tokio::test]
     async fn get_latest_block_hash_returns_genesis_hash() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let hash = backend.get_latest_block_hash().await.unwrap();
         assert!(hash.starts_with("0x"), "expected hex hash, got: {hash}");
@@ -4490,7 +4499,7 @@ mod tests {
     #[tokio::test]
     async fn get_latest_block_hash_changes_after_produce() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let hash0 = backend.get_latest_block_hash().await.unwrap();
         backend.produce_block().await.unwrap();
@@ -4506,7 +4515,7 @@ mod tests {
     async fn replay_reproduces_tip_hash() {
         // Build a chain of 5 blocks on backend A.
         let backend_a = make_backend();
-        backend_a.ensure_genesis().unwrap();
+        backend_a.ensure_genesis(&Genesis::dev()).unwrap();
         for _ in 0..5 {
             backend_a.produce_block().await.unwrap();
         }
@@ -4524,7 +4533,7 @@ mod tests {
         // Replay on fresh backend B (producer=true so apply_block works, but
         // we use apply_block directly, not produce_block).
         let backend_b = make_backend();
-        backend_b.ensure_genesis().unwrap();
+        backend_b.ensure_genesis(&Genesis::dev()).unwrap();
 
         // Apply blocks 1..N (genesis already applied via ensure_genesis).
         for block in &blocks[1..] {
@@ -4542,7 +4551,7 @@ mod tests {
     async fn replay_height_matches() {
         // Produce 3 blocks, export, replay, verify height.
         let backend_a = make_backend();
-        backend_a.ensure_genesis().unwrap();
+        backend_a.ensure_genesis(&Genesis::dev()).unwrap();
         for _ in 0..3 {
             backend_a.produce_block().await.unwrap();
         }
@@ -4553,7 +4562,7 @@ mod tests {
         }
 
         let backend_b = make_backend();
-        backend_b.ensure_genesis().unwrap();
+        backend_b.ensure_genesis(&Genesis::dev()).unwrap();
         for block in &blocks[1..] {
             backend_b.apply_block(block).unwrap();
         }
@@ -4565,7 +4574,7 @@ mod tests {
     fn replay_fails_on_invalid_block() {
         // Build a valid chain of 2 blocks.
         let backend_a = make_backend();
-        backend_a.ensure_genesis().unwrap();
+        backend_a.ensure_genesis(&Genesis::dev()).unwrap();
         let block1 = build_valid_block(&backend_a, vec![]);
         backend_a.apply_block(&block1).unwrap();
 
@@ -4574,7 +4583,7 @@ mod tests {
         tampered.header.transactions_root = Hash([0xFFu8; 32]);
 
         let backend_b = make_backend();
-        backend_b.ensure_genesis().unwrap();
+        backend_b.ensure_genesis(&Genesis::dev()).unwrap();
         let err = backend_b.apply_block(&tampered).unwrap_err();
         assert!(
             matches!(err, ApplyBlockError::TransactionsRootMismatch),
@@ -4587,7 +4596,7 @@ mod tests {
     #[tokio::test]
     async fn get_block_by_height_returns_block() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let result = backend.get_block_by_height(0).await.unwrap();
         // Result is a serde_json::Value representing the genesis block.
@@ -4598,7 +4607,7 @@ mod tests {
     #[tokio::test]
     async fn get_block_by_height_not_found() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let result = backend.get_block_by_height(999).await;
         assert!(result.is_err());
@@ -4622,7 +4631,7 @@ mod tests {
 
         // ── Producer side: build a chain up to target_height ──────────
         let producer = make_backend();
-        producer.ensure_genesis().unwrap();
+        producer.ensure_genesis(&Genesis::dev()).unwrap();
 
         for _ in 0..target_height {
             producer.produce_block().await.unwrap();
@@ -4644,7 +4653,7 @@ mod tests {
 
         // ── Follower side: at genesis, apply synced blocks ────────────
         let follower = make_backend();
-        follower.ensure_genesis().unwrap();
+        follower.ensure_genesis(&Genesis::dev()).unwrap();
         assert_eq!(follower.latest_height().unwrap(), 0);
 
         for (_hash, block) in &synced_blocks {
@@ -4670,7 +4679,7 @@ mod tests {
     async fn follower_gap_recovery_on_new_block() {
         // ── Producer: build chain of 7 blocks ─────────────────────────
         let producer = make_backend();
-        producer.ensure_genesis().unwrap();
+        producer.ensure_genesis(&Genesis::dev()).unwrap();
 
         for _ in 0..7 {
             producer.produce_block().await.unwrap();
@@ -4679,7 +4688,7 @@ mod tests {
 
         // ── Follower: starts at genesis ───────────────────────────────
         let follower = make_backend();
-        follower.ensure_genesis().unwrap();
+        follower.ensure_genesis(&Genesis::dev()).unwrap();
         assert_eq!(follower.latest_height().unwrap(), 0);
 
         // The pushed block arrives at height 5 (simulates NewBlock push).
@@ -4807,7 +4816,7 @@ mod tests {
     #[test]
     fn compute_task_valid_block_registers_task() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[70u8; 32]);
         let sender = fund(&backend, &sk, 5000);
 
@@ -4840,7 +4849,7 @@ mod tests {
     #[test]
     fn compute_task_repeated_work_needs_a_new_salt() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[70u8; 32]);
         fund(&backend, &sk, 5000);
 
@@ -4861,7 +4870,7 @@ mod tests {
     #[test]
     fn compute_task_different_executor_is_a_different_task() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[70u8; 32]);
         let submitter = fund(&backend, &sk, 5000);
 
@@ -4899,7 +4908,7 @@ mod tests {
         // Rule (k): ComputeTask ⟺ ComputeTask payload, and no other type
         // carries that payload.
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[70u8; 32]);
         let sender = fund(&backend, &sk, 5000);
         let task = task_of(&valid_task_tx(&sk, 0, [0x04u8; 32])).clone();
@@ -4957,7 +4966,7 @@ mod tests {
         // Rule (l): amount == 0 and receiver == zero are consensus rules,
         // not conventions (RFC 0005 §2.8).
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[70u8; 32]);
         fund(&backend, &sk, 5000);
         let task_id = task_of(&valid_task_tx(&sk, 0, [0x06u8; 32])).task_id();
@@ -4988,7 +4997,7 @@ mod tests {
         // submission; the envelope carries no second signature, so
         // tampering with any envelope byte after signing is caught here.
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[70u8; 32]);
         fund(&backend, &sk, 5000);
 
@@ -5026,7 +5035,7 @@ mod tests {
         // Rule (d): the sender account must exist and the nonce must
         // match. A task never creates an account and never moves balance.
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let unfunded = SigningKey::from_bytes(&[72u8; 32]);
         let tx = valid_task_tx(&unfunded, 0, [0x08u8; 32]);
         let block = build_valid_block(&backend, vec![tx]);
@@ -5049,7 +5058,7 @@ mod tests {
     fn compute_task_version_rejected() {
         // Rule (m): task.version == 1.
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[70u8; 32]);
         fund(&backend, &sk, 5000);
         for version in [0u8, 2, 255] {
@@ -5072,7 +5081,7 @@ mod tests {
         // Rule (n): 0 and 1024 bytes accepted, 1025 rejected; the maximal
         // stored envelope is exactly 1155 bytes (RFC 0005 §2.10).
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[70u8; 32]);
         let submitter = fund(&backend, &sk, 5000);
 
@@ -5122,7 +5131,7 @@ mod tests {
         // Rule (o): the envelope cannot claim a submitter other than the
         // signer, however valid the signature is.
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[70u8; 32]);
         fund(&backend, &sk, 5000);
         let victim = Address([0x77u8; 32]);
@@ -5145,7 +5154,7 @@ mod tests {
         // the same envelope under a fresh nonce is the same task and the
         // second registration loses (first-registered-wins).
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[70u8; 32]);
         let sender = fund(&backend, &sk, 5000);
 
@@ -5178,7 +5187,7 @@ mod tests {
     fn compute_task_duplicate_in_same_block_rejected() {
         // Rule (p), same-block half: the whole block is invalid.
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[70u8; 32]);
         fund(&backend, &sk, 5000);
 
@@ -5199,7 +5208,7 @@ mod tests {
         // The byte-identical transaction must not take the idempotent
         // skip path: a stored task transaction implies a registered task.
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[70u8; 32]);
         fund(&backend, &sk, 5000);
 
@@ -5220,7 +5229,7 @@ mod tests {
         // When several rules fail at once, the first in normative order
         // names the error: (l) before (m) before (n) before (o).
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[70u8; 32]);
         let submitter = fund(&backend, &sk, 5000);
         let big = vec![0x5A; MAX_EXECUTION_SPEC_BYTES + 1];
@@ -5262,7 +5271,7 @@ mod tests {
         // same-block half of RFC 0005 rule (q), with (r) and (s) holding —
         // same task_id, same input_commitment, the named executor.
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[70u8; 32]);
         let submitter = fund(&backend, &sk, 5000);
         let ek = executor_key();
@@ -5295,9 +5304,9 @@ mod tests {
         // an independent node, passes the same rules and yields the same
         // tip: block validation and block re-validation are one path.
         let producer = make_backend();
-        producer.ensure_genesis().unwrap();
+        producer.ensure_genesis(&Genesis::dev()).unwrap();
         let follower = make_backend();
-        follower.ensure_genesis().unwrap();
+        follower.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[70u8; 32]);
         fund(&producer, &sk, 5000);
         fund(&follower, &sk, 5000);
@@ -5330,7 +5339,7 @@ mod tests {
     #[tokio::test]
     async fn submit_compute_task_admitted_and_included() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[70u8; 32]);
         let sender = fund(&backend, &sk, 5000);
 
@@ -5382,7 +5391,7 @@ mod tests {
     #[tokio::test]
     async fn submit_compute_task_rejections_mirror_apply_block() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[70u8; 32]);
         let submitter = fund(&backend, &sk, 5000);
         let base = || task_of(&valid_task_tx(&sk, 0, [0x22u8; 32])).clone();
@@ -5504,7 +5513,7 @@ mod tests {
         // task over the committed input. Both derived states exist
         // afterwards (RFC 0005 §4.1): submitted and completed.
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let ek = executor_key();
         let executor = fund(&backend, &ek, 10);
         let task = register_task(&backend, executor, [0x30u8; 32], [0x1Cu8; 32]);
@@ -5530,7 +5539,7 @@ mod tests {
         // registration failed (never stored); the receipt that was valid
         // before RFC 0005 (v0.3 anchored it unbound).
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let ek = executor_key();
         let executor = fund(&backend, &ek, 10);
 
@@ -5579,7 +5588,7 @@ mod tests {
         // is judged against B. Where B committed a different input the
         // verdict is (r); where B named a different executor it is (s).
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let ek = executor_key();
         let executor = fund(&backend, &ek, 10);
         let task_a = register_task(&backend, executor, [0x32u8; 32], [0x1Cu8; 32]);
@@ -5617,7 +5626,7 @@ mod tests {
         // for another registered task. Consensus compares the 32 bytes and
         // learns nothing about how either was derived.
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let ek = executor_key();
         let executor = fund(&backend, &ek, 10);
         let task = register_task(&backend, executor, [0x35u8; 32], [0x1Cu8; 32]);
@@ -5650,7 +5659,7 @@ mod tests {
         // task named someone else. This is the squatting receipt of RFC
         // 0005 §9.1, and it never consumes the task.
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let ek = executor_key();
         let executor = fund(&backend, &ek, 10);
         let task = register_task(&backend, executor, [0x37u8; 32], [0x1Cu8; 32]);
@@ -5678,7 +5687,7 @@ mod tests {
         // The client who committed the task, anchoring its own task with
         // itself as receipt executor: authenticated (g), unauthorised (s).
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let task = register_task(&backend, executor_addr(), [0x38u8; 32], [0x1Cu8; 32]);
         let ck = client_key();
         let receipt = receipt_answering(&ck, &task);
@@ -5697,7 +5706,7 @@ mod tests {
         // before (s) is reached. Forging the anchoring signature instead
         // fails rule (c). Either way, no key but the executor's anchors.
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let ek = executor_key();
         let executor = fund(&backend, &ek, 10);
         let task = register_task(&backend, executor, [0x39u8; 32], [0x1Cu8; 32]);
@@ -5725,7 +5734,7 @@ mod tests {
         // (q) is "prior chain state or EARLIER in the same block": the
         // receipt ahead of its task sees no task, and the block fails.
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let ck = client_key();
         let client = fund(&backend, &ck, 1);
         let ek = executor_key();
@@ -5752,7 +5761,7 @@ mod tests {
         // the whole block fails through the existing atomic batch, so the
         // task is not persisted either, and no nonce or sequence moves.
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let ck = client_key();
         let client = fund(&backend, &ck, 1);
         let ek = executor_key();
@@ -5795,7 +5804,7 @@ mod tests {
         // an unknown task; and within the binding, (q) before (r) before
         // (s) when several fail at once.
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let ek = executor_key();
         let executor = fund(&backend, &ek, 10);
         let task = register_task(&backend, executor, [0x3Cu8; 32], [0x1Cu8; 32]);
@@ -5848,7 +5857,7 @@ mod tests {
         // canonical encoding gone wrong: reported as a storage error, so a
         // node never turns corruption into a protocol verdict.
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let ek = executor_key();
         let executor = fund(&backend, &ek, 10);
         let task = register_task(&backend, executor, [0x3Du8; 32], [0x1Cu8; 32]);
@@ -5869,7 +5878,7 @@ mod tests {
     #[tokio::test]
     async fn admission_and_block_validation_agree_on_binding() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let ek = executor_key();
         let executor = fund(&backend, &ek, 10);
         let task = register_task(&backend, executor, [0x40u8; 32], [0x1Cu8; 32]);
@@ -5929,7 +5938,7 @@ mod tests {
         // admitted; a receipt whose task is neither stored nor pending is
         // not.
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let ck = client_key();
         let client = fund(&backend, &ck, 1);
         let ek = executor_key();
@@ -6035,7 +6044,7 @@ mod tests {
         for v in vectors {
             let name = v["name"].as_str().unwrap();
             let backend = make_backend();
-            backend.ensure_genesis().unwrap();
+            backend.ensure_genesis(&Genesis::dev()).unwrap();
             fund(&backend, &submitter_sk, 10);
 
             // Register the referenced task exactly as the fixture states it,
@@ -6141,7 +6150,7 @@ mod tests {
     fn bounded_backend(max_pending: usize, ttl_secs: u64) -> NodeBackend<InMemoryStorage> {
         let config = MempoolConfig::new(max_pending, ttl_secs).unwrap();
         let backend = NodeBackend::with_mempool_config(InMemoryStorage::new(), true, config);
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         backend
     }
 
@@ -6535,7 +6544,7 @@ mod tests {
         let pending = signed_transfer(&sk, Address([1u8; 32]), 10, 1);
         {
             let backend = NodeBackend::new(RocksDbStorage::open(&dir).unwrap(), true);
-            backend.ensure_genesis().unwrap();
+            backend.ensure_genesis(&Genesis::dev()).unwrap();
             let mut funded = Account::new(addr);
             funded.balance = 1000;
             backend.storage.put_account(&addr, &funded).unwrap();
@@ -6546,7 +6555,7 @@ mod tests {
         }
 
         let restarted = NodeBackend::new(RocksDbStorage::open(&dir).unwrap(), true);
-        restarted.ensure_genesis().unwrap();
+        restarted.ensure_genesis(&Genesis::dev()).unwrap();
         assert_eq!(restarted.latest_height().unwrap(), 1);
 
         // The included one answers from storage and is not admitted again.
@@ -6566,7 +6575,7 @@ mod tests {
     #[test]
     fn a_compute_task_at_nonce_u64_max_is_refused_and_writes_nothing() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[110u8; 32]);
         let addr = fund_with_nonce(&backend, &sk, 5, u64::MAX);
         let height = backend.storage.get_latest_height().unwrap();
@@ -6582,7 +6591,7 @@ mod tests {
     #[test]
     fn an_anchor_at_nonce_u64_max_is_refused_and_writes_nothing() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[112u8; 32]);
         let addr = fund_with_nonce(&backend, &sk, 5, u64::MAX);
         let height = backend.storage.get_latest_height().unwrap();
@@ -6598,7 +6607,7 @@ mod tests {
     #[tokio::test]
     async fn admission_refuses_a_nonce_beyond_the_bound() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[113u8; 32]);
         fund_with_nonce(&backend, &sk, 10, u64::MAX);
         let err = backend
@@ -6616,7 +6625,7 @@ mod tests {
     #[tokio::test]
     async fn the_last_applicable_nonce_is_admitted_produced_and_then_exhausted() {
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[115u8; 32]);
         let addr = fund_with_nonce(&backend, &sk, 10, MAX_TRANSACTION_NONCE);
         let to = Address([116u8; 32]);
@@ -6689,7 +6698,7 @@ mod tests {
         for case in cases {
             let name = case["name"].as_str().unwrap();
             let backend = make_backend();
-            backend.ensure_genesis().unwrap();
+            backend.ensure_genesis(&Genesis::dev()).unwrap();
             for pre in case["pre"].as_array().unwrap() {
                 let addr = resolve(&pre["address"]);
                 let mut acc = Account::new(addr);
@@ -6801,7 +6810,7 @@ mod tests {
         for name in &names {
             let tx = strict_transaction(name);
             let backend = make_backend();
-            backend.ensure_genesis().unwrap();
+            backend.ensure_genesis(&Genesis::dev()).unwrap();
             let mut funded = Account::new(tx.sender);
             funded.balance = 5_000;
             funded.nonce = tx.nonce;
@@ -6850,7 +6859,7 @@ mod tests {
         ] {
             let tx = strict_transaction(name);
             let backend = make_backend();
-            backend.ensure_genesis().unwrap();
+            backend.ensure_genesis(&Genesis::dev()).unwrap();
             let mut funded = Account::new(tx.sender);
             funded.balance = 5_000;
             backend.storage.put_account(&tx.sender, &funded).unwrap();
@@ -6892,7 +6901,7 @@ mod tests {
         };
         assert_eq!(receipt.receipt_hash().0, hex_field::<32>(&c["message"]));
         let backend = make_backend();
-        backend.ensure_genesis().unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
         let addr = fund_with_nonce(&backend, &sk, 10, 0);
         let height = backend.storage.get_latest_height().unwrap();
         let block = build_valid_block(&backend, vec![signed_anchor_tx(&sk, 0, receipt)]);
@@ -6903,5 +6912,196 @@ mod tests {
         );
         assert_eq!(backend.storage.get_latest_height().unwrap(), height);
         assert_eq!(account(&backend, addr).nonce, 0);
+    }
+
+    // ── RFC 0006 §1: the node starts from a genesis file (S1-4) ───────
+
+    /// A canonical genesis file with the dev authority, `timestamp`, and
+    /// `allocations` given in any order (sorted here, as the RFC requires).
+    fn genesis_file(name: &str, timestamp: u64, allocations: &[(Address, u128)]) -> Vec<u8> {
+        let mut allocations = allocations.to_vec();
+        allocations.sort_by_key(|(address, _)| address.0);
+        let allocations: Vec<String> = allocations
+            .iter()
+            .map(|(a, m)| {
+                format!(
+                    "{{\"address\":\"{}\",\"amount\":\"{m}\"}}",
+                    hex::encode(a.0)
+                )
+            })
+            .collect();
+        format!(
+            "{{\"allocations\":[{}],\"authorities\":[\"{}\"],\"name\":\"{name}\",\"schema\":\"mbongo-genesis:v1\",\"timestamp\":{timestamp}}}",
+            allocations.join(","),
+            hex::encode(Genesis::dev().authority().0)
+        )
+        .into_bytes()
+    }
+
+    fn address_of(sk: &SigningKey) -> Address {
+        Address(sk.verifying_key().to_bytes())
+    }
+
+    #[test]
+    fn the_dev_genesis_gives_the_dev_account_and_the_zero_balance_worker() {
+        let backend = make_backend();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
+        let dev = account(&backend, address_of(&SigningKey::from_bytes(&[0xAAu8; 32])));
+        assert_eq!((dev.balance, dev.nonce), (1_000_000_000, 0));
+        // The compute worker every harness uses (seed 0xE1), plan D-3.
+        assert_eq!(
+            executor_addr(),
+            address_of(&SigningKey::from_bytes(&[0xE1u8; 32]))
+        );
+        let worker = account(&backend, executor_addr());
+        assert_eq!((worker.balance, worker.nonce), (0, 0));
+        assert_eq!(Genesis::dev().allocations.len(), 2);
+        assert_eq!(backend.storage.get_latest_height().unwrap(), 0);
+    }
+
+    #[test]
+    fn the_genesis_accounts_are_exactly_the_allocations() {
+        let a = address_of(&SigningKey::from_bytes(&[0x31u8; 32]));
+        let b = address_of(&SigningKey::from_bytes(&[0x32u8; 32]));
+        let c = address_of(&SigningKey::from_bytes(&[0x33u8; 32]));
+        let allocations = [(a, 7), (b, 0), (c, u128::MAX - 7)];
+        let genesis =
+            Genesis::from_file_bytes(&genesis_file("t-1", 1_700_000_000, &allocations)).unwrap();
+        assert_eq!(genesis.allocations.len(), 3);
+        let backend = make_backend();
+        backend.ensure_genesis(&genesis).unwrap();
+        let mut supply = 0u128;
+        for (address, amount) in &genesis.allocations {
+            let held = account(&backend, *address);
+            assert_eq!(
+                (held.address, held.balance, held.nonce),
+                (*address, *amount, 0)
+            );
+            supply = supply.checked_add(held.balance).unwrap();
+        }
+        // The supply is the sum of the allocations, here exactly u128::MAX.
+        assert_eq!(supply, u128::MAX);
+        // No dev account: a private genesis gets nothing it does not name.
+        let dev = address_of(&SigningKey::from_bytes(&[0xAAu8; 32]));
+        assert!(backend.storage.get_account(&dev).unwrap().is_none());
+        assert!(backend.storage.get_account(&executor_addr()).unwrap().is_none());
+    }
+
+    #[test]
+    fn the_genesis_block_is_derived_from_the_file() {
+        let genesis = Genesis::from_file_bytes(&genesis_file("t-2", 1_700_000_123, &[])).unwrap();
+        let backend = make_backend();
+        backend.ensure_genesis(&genesis).unwrap();
+        let block = backend.storage.get_block_by_height(0).unwrap().unwrap();
+        assert_eq!(block, genesis_block(&genesis));
+        assert_eq!(block.header.timestamp, 1_700_000_123);
+        assert_eq!(block.header.parent_hash, Hash::zero());
+        assert!(block.body.transactions.is_empty());
+        // The dev genesis block is the one v0.4 wrote: timestamp 0.
+        assert_eq!(genesis_block(&Genesis::dev()).header.timestamp, 0);
+    }
+
+    #[test]
+    fn initialization_is_deterministic() {
+        let file = genesis_file(
+            "t-3",
+            42,
+            &[(executor_addr(), 0), (Address([0x7Eu8; 32]), 5)],
+        );
+        let snapshot = |file: &[u8]| {
+            let genesis = Genesis::from_file_bytes(file).unwrap();
+            let backend = make_backend();
+            backend.ensure_genesis(&genesis).unwrap();
+            let block = backend.storage.get_block_by_height(0).unwrap().unwrap();
+            let accounts: Vec<Account> =
+                genesis.allocations.iter().map(|(a, _)| account(&backend, *a)).collect();
+            (compute_block_hash(&block), accounts, genesis.chain_id)
+        };
+        assert_eq!(snapshot(&file), snapshot(&file));
+    }
+
+    #[test]
+    fn ensure_genesis_again_with_the_same_genesis_writes_nothing() {
+        let backend = make_backend();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
+        let dev = address_of(&SigningKey::from_bytes(&[0xAAu8; 32]));
+        let mut spent = account(&backend, dev);
+        spent.balance -= 1;
+        backend.storage.put_account(&dev, &spent).unwrap();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
+        // The allocation is not written again over the live state.
+        assert_eq!(account(&backend, dev).balance, 1_000_000_000 - 1);
+    }
+
+    #[test]
+    fn ensure_genesis_refuses_the_genesis_block_of_another_file() {
+        let backend = make_backend();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
+        let other = Genesis::from_file_bytes(&genesis_file("dev", 1, &[])).unwrap();
+        let err = backend.ensure_genesis(&other).unwrap_err().to_string();
+        assert!(err.contains("is not the genesis block"), "{err}");
+    }
+
+    #[test]
+    fn zero_balance_genesis_accounts_commit_a_task_and_anchor_a_receipt() {
+        // Plan D-3: under v0.5 a sender account comes only from genesis or
+        // from receiving a Transfer. A client and a worker allocated "0"
+        // can each send their compute transaction.
+        let client = SigningKey::from_bytes(&[0x71u8; 32]);
+        let worker = executor_key();
+        let genesis = Genesis::from_file_bytes(&genesis_file(
+            "compute",
+            0,
+            &[(address_of(&client), 0), (executor_addr(), 0)],
+        ))
+        .unwrap();
+        let backend = make_backend();
+        backend.ensure_genesis(&genesis).unwrap();
+
+        let task = task_for(address_of(&client), executor_addr(), [0x5Au8; 32], vec![1]);
+        let task_id = task.task_id();
+        let mut receipt = signed_receipt_for(&worker, task_id, vec![], 1);
+        receipt.input_commitment = task.input_commitment;
+        receipt.signature = worker.sign(&receipt.receipt_hash().0).to_bytes();
+        let block = build_valid_block(
+            &backend,
+            vec![
+                signed_task_tx(&client, 0, task),
+                signed_anchor_tx(&worker, 0, receipt),
+            ],
+        );
+        backend.apply_block(&block).unwrap();
+
+        assert!(backend.storage.has_task(&task_id).unwrap());
+        assert!(backend.storage.has_receipt(&task_id).unwrap());
+        for address in [address_of(&client), executor_addr()] {
+            let held = account(&backend, address);
+            assert_eq!((held.balance, held.nonce), (0, 1));
+        }
+    }
+
+    #[test]
+    fn the_dev_worker_anchors_a_receipt_on_a_dev_chain() {
+        // The same on the dev genesis: the funded dev account as client,
+        // the zero-balance 0xE1 worker as executor.
+        let client = SigningKey::from_bytes(&[0xAAu8; 32]);
+        let worker = executor_key();
+        let backend = make_backend();
+        backend.ensure_genesis(&Genesis::dev()).unwrap();
+        let task = task_for(address_of(&client), executor_addr(), [0x5Bu8; 32], vec![]);
+        let task_id = task.task_id();
+        let mut receipt = signed_receipt_for(&worker, task_id, vec![], 1);
+        receipt.input_commitment = task.input_commitment;
+        receipt.signature = worker.sign(&receipt.receipt_hash().0).to_bytes();
+        let block = build_valid_block(
+            &backend,
+            vec![
+                signed_task_tx(&client, 0, task),
+                signed_anchor_tx(&worker, 0, receipt),
+            ],
+        );
+        backend.apply_block(&block).unwrap();
+        assert!(backend.storage.has_receipt(&task_id).unwrap());
+        assert_eq!(account(&backend, executor_addr()).nonce, 1);
     }
 }

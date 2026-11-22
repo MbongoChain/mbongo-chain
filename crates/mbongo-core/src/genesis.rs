@@ -364,7 +364,10 @@ mod tests {
         assert_eq!(dev.name, "dev");
         assert_eq!(dev.timestamp, 0);
         let account = Address(SigningKey::from_bytes(&[0xAA; 32]).verifying_key().to_bytes());
-        assert_eq!(dev.allocations, vec![(account, 1_000_000_000)]);
+        let worker = Address(SigningKey::from_bytes(&[0xE1; 32]).verifying_key().to_bytes());
+        // Sorted by address: the zero-balance compute worker (S1-4, plan
+        // D-3) comes before the existing dev account.
+        assert_eq!(dev.allocations, vec![(worker, 0), (account, 1_000_000_000)]);
         let authority = SigningKey::from_bytes(&dev_authority_seed()).verifying_key();
         assert_eq!(dev.authority(), Address(authority.to_bytes()));
         assert_eq!(dev.chain_id, chain_id(DEV_GENESIS_FILE));

@@ -199,6 +199,44 @@ impl RocksDbStorage {
     pub(crate) fn schema_version(&self) -> Result<u32, StorageError> {
         read_schema_version(&self.db)
     }
+
+    /// Whether the database holds exactly what [`RocksDbStorage::open`]
+    /// writes into a new directory and nothing else: every column family
+    /// empty, except `meta`, whose only key is `schema_version` at the
+    /// current version.
+    ///
+    /// Read-only: it adds no key and changes no layout. The node uses it
+    /// (S1-4) to prove that a directory whose genesis initialization was
+    /// interrupted holds no chain data before it writes the genesis.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] on database failure.
+    pub fn holds_only_schema_stamp(&self) -> Result<bool, StorageError> {
+        for name in KNOWN_CFS {
+            let mut iter = if name == "default" {
+                self.db.iterator(rocksdb::IteratorMode::Start)
+            } else {
+                let cf = self.db.cf_handle(name).ok_or(StorageError::Database)?;
+                self.db.iterator_cf(&cf, rocksdb::IteratorMode::Start)
+            };
+            if name == CF_META {
+                match iter.next() {
+                    Some(Ok((key, value)))
+                        if &*key == SCHEMA_VERSION_KEY
+                            && *value == SCHEMA_VERSION_CURRENT.to_be_bytes() => {}
+                    Some(Err(_)) => return Err(StorageError::Database),
+                    _ => return Ok(false),
+                }
+            }
+            match iter.next() {
+                None => {}
+                Some(Err(_)) => return Err(StorageError::Database),
+                Some(Ok(_)) => return Ok(false),
+            }
+        }
+        Ok(true)
+    }
 }
 
 /// Reads `schema_version` from the meta column family. Absent means 1

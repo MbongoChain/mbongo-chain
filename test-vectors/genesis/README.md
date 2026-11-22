@@ -72,9 +72,21 @@ holds:
 
 - `name` `dev` and `timestamp` 0;
 - the existing dev account (seed `0xaa` repeated) with `1000000000`;
+- the compute worker (seed `0xe1` repeated) with `0`, added by S1-4 (plan
+  D-3) so that a worker can anchor receipts on a dev chain;
 - one authority, whose seed is `BLAKE3("mbongo:dev-authority:v1")`.
 
-Both seeds are public **test** keys. `.gitattributes` keeps the file and this
+The worker allocation changed the dev `chain_id`:
+
+| | Bytes | `chain_id` |
+|---|---|---|
+| S1-3 (one allocation) | 257 | `4ee831cbca24913708fca6937f35dbc8ea51065124ce292cd9fae1316086a8b8` |
+| S1-4 (with the worker) | 349 | `2fd700acc09b3d1752ca6fe21e7d6f4844917c5a9fcd41a34fe1d13d7deed1a4` |
+
+The invalid cases built from the dev file were derived again from the new
+one. Their names and error classes are unchanged.
+
+All three seeds are public **test** keys. `.gitattributes` keeps the file and this
 directory free of line-ending conversion.
 
 ## Derivation

@@ -246,7 +246,7 @@ try {
 async function spawnNode(n, bootnode) {
   const dir = path.join(RUN, "nodes", n.name);
   fs.mkdirSync(dir, { recursive: true });
-  const args = ["--rpc-port", String(n.rpc), "--rest-port", String(n.rest), "--p2p-port", String(n.p2p), "--data-dir", dir];
+  const args = ["--dev", "--rpc-port", String(n.rpc), "--rest-port", String(n.rest), "--p2p-port", String(n.p2p), "--data-dir", dir];
   if (n.producer) args.push("--producer", "--block-time", "1");
   if (bootnode) args.push("--bootnodes", bootnode);
   const out = fs.createWriteStream(path.join(RUN, `${n.name}.log`));

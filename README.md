@@ -109,14 +109,21 @@ cargo test --workspace
 **Terminal 1 — Producer:**
 
 ```powershell
-cargo run --bin mbongo-node -- --producer --block-time 5 --rpc-port 9944 --rest-port 8080 --p2p-port 30333 --data-dir data_producer
+cargo run --bin mbongo-node -- --dev --producer --block-time 5 --rpc-port 9944 --rest-port 8080 --p2p-port 30333 --data-dir data_producer
 ```
 
 **Terminal 2 — Follower:**
 
 ```powershell
-cargo run --bin mbongo-node -- --bootnodes /ip4/127.0.0.1/tcp/30333 --rpc-port 9945 --rest-port 8081 --p2p-port 30334 --data-dir data_follower
+cargo run --bin mbongo-node -- --dev --bootnodes /ip4/127.0.0.1/tcp/30333 --rpc-port 9945 --rest-port 8081 --p2p-port 30334 --data-dir data_follower
 ```
+
+Every node needs exactly one of `--dev` (the built-in dev genesis, public test
+keys) and `--genesis <file>` (a network defined by its genesis file, RFC 0006
+§1). A data directory belongs to the genesis it was created with: a node
+refuses a directory created with another genesis, or one with no
+`MBONGO_GENESIS` marker, such as a directory from an earlier version. Start
+from an empty directory.
 
 ### Run Validation Harnesses
 
