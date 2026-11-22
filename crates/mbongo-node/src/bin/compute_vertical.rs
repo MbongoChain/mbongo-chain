@@ -71,6 +71,8 @@ const WAIT_SECS: u64 = 90;
 
 /// Lease lifetime: short, so a crashed worker's lease lapses within the run.
 const LEASE_SECS: u64 = 5;
+/// Confirmations before the control plane offers a task.
+const CONFIRMATION_DEPTH: u64 = 1;
 
 struct NodeCfg {
     name: &'static str,
@@ -371,6 +373,39 @@ struct SdkRun {
     stderr: String,
 }
 
+/// Polls until the control plane has itself observed `task_id` with `depth`
+/// confirmations, that is, until `ControlPlane::offer` can offer it.
+///
+/// `offer` counts confirmations against the height the control plane
+/// recorded at its last `observe`, not the chain's current height. The chain
+/// is therefore read *before* observing: the control plane then holds at least
+/// that height. Read after observing, it can show a block produced in
+/// between, and the wait returns while the task is not yet offerable; the
+/// next `run_once` is then `Idle` (PR #271's Phase 6 CI failure).
+async fn observe_until_confirmed<C: ChainClient>(
+    cp: &mut ControlPlane,
+    chain: &C,
+    task_id: [u8; 32],
+    task_height: u64,
+    depth: u64,
+    within: Duration,
+) -> Result<(), String> {
+    let start = std::time::Instant::now();
+    loop {
+        let latest = chain.latest_height().await.map_err(|e| e.to_string())?;
+        cp.observe(chain).await.map_err(|e| e.to_string())?;
+        if cp.task(task_id).is_some_and(|t| t.state == TaskState::Discovered)
+            && latest >= task_height + depth
+        {
+            return Ok(());
+        }
+        if start.elapsed() > within {
+            return Err("control plane never discovered the confirmed task".to_string());
+        }
+        sleep(POLL).await;
+    }
+}
+
 async fn run_sdk(command: &str, input: &serde_json::Value) -> Result<SdkRun, String> {
     let mut child = Command::new("node")
         .arg(sdk_script())
@@ -614,24 +649,19 @@ async fn run(base: &Path, trace: &mut Trace) -> Result<(), String> {
         ControlPlaneConfig {
             lease_secs: LEASE_SECS,
             session_secs: 300,
-            confirmation_depth: 1,
+            confirmation_depth: CONFIRMATION_DEPTH,
             capability_secs: 60,
         },
     );
-    let start = std::time::Instant::now();
-    loop {
-        cp.observe(&chain).await.map_err(|e| e.to_string())?;
-        let latest = chain.latest_height().await.map_err(|e| e.to_string())?;
-        if cp.task(task_id).is_some_and(|t| t.state == TaskState::Discovered)
-            && latest > task_height
-        {
-            break;
-        }
-        if start.elapsed() > Duration::from_secs(WAIT_SECS) {
-            return Err("control plane never discovered the confirmed task".to_string());
-        }
-        sleep(POLL).await;
-    }
+    observe_until_confirmed(
+        &mut cp,
+        &chain,
+        task_id,
+        task_height,
+        CONFIRMATION_DEPTH,
+        Duration::from_secs(WAIT_SECS),
+    )
+    .await?;
     cp.register_input(task_id, input_object).map_err(|e| e.to_string())?;
     let rec = cp.task(task_id).ok_or("record")?;
     if rec.task.executor != executor.address()
@@ -1126,5 +1156,165 @@ async fn main() {
             eprintln!("\nMBONGO COMPUTE V0.4 VERTICAL: FAIL\n  Error: {e}");
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The Phase 4 → Phase 6 hand-over, deterministically (PR #271 CI).
+    //!
+    //! `BlockAfterEachRead` produces a block right after every height read,
+    //! so the window "a block lands between two chain reads", which the live
+    //! harness hits only by timing, is hit on every call.
+
+    use super::*;
+    use mbongo_compute::chain::testing::FakeChain;
+    use mbongo_compute::chain::ChainError;
+    use mbongo_compute::clock::ManualClock;
+    use mbongo_core::Hash;
+
+    #[derive(Clone)]
+    struct BlockAfterEachRead(FakeChain);
+
+    impl ChainClient for BlockAfterEachRead {
+        async fn latest_height(&self) -> Result<u64, ChainError> {
+            let height = self.0.latest_height().await?;
+            self.0.produce_block();
+            Ok(height)
+        }
+        async fn block_by_height(&self, height: u64) -> Result<Option<Block>, ChainError> {
+            self.0.block_by_height(height).await
+        }
+        async fn submit_transaction(&self, tx: &Transaction) -> Result<Hash, ChainError> {
+            self.0.submit_transaction(tx).await
+        }
+        async fn account_nonce(&self, address: &Address) -> Result<u64, ChainError> {
+            self.0.account_nonce(address).await
+        }
+    }
+
+    struct World {
+        chain: BlockAfterEachRead,
+        cp: ControlPlane,
+        dp: InMemoryDataPlane,
+        ids: IdSource,
+        executor: ExecutorKey,
+        task_id: [u8; 32],
+        task_height: u64,
+        input_object: ObjectId,
+    }
+
+    /// One task, committed at a known height, its input stored.
+    async fn world() -> World {
+        let clock: Arc<dyn Clock> = Arc::new(ManualClock::starting_at(1_000));
+        let issuer = LocalKey::from_seed(&[0xC0u8; 32]);
+        let cp = ControlPlane::new(
+            Arc::clone(&clock),
+            IdSource::new([0x22u8; 32]),
+            issuer.clone(),
+            ControlPlaneConfig {
+                lease_secs: LEASE_SECS,
+                session_secs: 300,
+                confirmation_depth: CONFIRMATION_DEPTH,
+                capability_secs: 60,
+            },
+        );
+        let mut dp = InMemoryDataPlane::new(Arc::clone(&clock), IdSource::new([0x33u8; 32]));
+        let client = LocalKey::from_seed(&[0xAAu8; 32]);
+        let executor = ExecutorKey::from_seed(&[0xE1u8; 32]);
+        let input = b"phase six input".to_vec();
+        let task = ComputeTask {
+            version: COMPUTE_TASK_VERSION,
+            submitter: client.address(),
+            executor: executor.address(),
+            salt: [0x5Au8; 32],
+            input_commitment: reference_input_commitment(&input),
+            execution_spec: REVERSE_BYTES_SPEC.to_vec(),
+        };
+        let task_id = task.task_id();
+        let input_object = dp.store_input(&client, task_id, task.input_commitment, input, 3_600);
+        dp.register_task(&client, task_id, executor.address()).unwrap();
+        dp.delegate_issuer(&client, task_id, issuer.address()).unwrap();
+
+        let inner = FakeChain::new();
+        let mut tx = Transaction {
+            tx_type: TransactionType::ComputeTask,
+            sender: client.address(),
+            receiver: Address::zero(),
+            amount: 0,
+            nonce: 0,
+            payload: TransactionPayload::ComputeTask(Box::new(task)),
+            signature: [0u8; 64],
+        };
+        tx.signature = client.sign(&tx.signing_payload(&mbongo_core::Genesis::dev().chain_id));
+        inner.submit_transaction(&tx).await.unwrap();
+        let task_height = inner.produce_block();
+        World {
+            chain: BlockAfterEachRead(inner),
+            cp,
+            dp,
+            ids: IdSource::new([0x11u8; 32]),
+            executor,
+            task_id,
+            task_height,
+            input_object,
+        }
+    }
+
+    /// Phase 6's first step: an attempt that must fail at the input stage.
+    async fn corrupted_input_attempt(w: &mut World) -> AttemptOutcome {
+        w.cp.register_input(w.task_id, w.input_object).unwrap();
+        let mut worker = Worker::new(
+            &mut w.ids,
+            w.executor.clone(),
+            mbongo_core::Genesis::dev().chain_id,
+            Box::new(ReverseBytesProfile),
+        );
+        worker.inject(Fault::CorruptInput);
+        worker.run_once(&mut w.cp, &mut w.dp, &w.chain).await.unwrap()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn observing_before_reading_the_chain_can_leave_the_task_unoffered() {
+        // The wait as it was: observe, then read the chain. A block between
+        // the two reads satisfies the exit test while the control plane
+        // still holds the task's own height, so nothing is offered.
+        let mut w = world().await;
+        loop {
+            w.cp.observe(&w.chain).await.unwrap();
+            let latest = w.chain.latest_height().await.unwrap();
+            if w.cp.task(w.task_id).is_some_and(|t| t.state == TaskState::Discovered)
+                && latest > w.task_height
+            {
+                break;
+            }
+        }
+        assert_eq!(corrupted_input_attempt(&mut w).await, AttemptOutcome::Idle);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_wait_returns_only_once_the_task_is_offerable() {
+        let mut w = world().await;
+        observe_until_confirmed(
+            &mut w.cp,
+            &w.chain,
+            w.task_id,
+            w.task_height,
+            CONFIRMATION_DEPTH,
+            Duration::from_secs(WAIT_SECS),
+        )
+        .await
+        .unwrap();
+        let outcome = corrupted_input_attempt(&mut w).await;
+        assert!(
+            matches!(
+                outcome,
+                AttemptOutcome::Failed {
+                    class: FailureClass::Input,
+                    ..
+                }
+            ),
+            "{outcome:?}"
+        );
     }
 }

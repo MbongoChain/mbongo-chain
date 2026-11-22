@@ -180,7 +180,9 @@ prepare)
   ;;
 run)
   [ $# -ge 5 ] || die "usage: $0 run <base> <service> <config> --dev|--genesis <file>"
-  run "$2" "$3" "$4"
+  # Everything after `run`: base, service, config, then the network arguments.
+  shift
+  run "$@"
   ;;
 *)
   die "usage: $0 prepare|run ..."
