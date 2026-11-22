@@ -37,6 +37,7 @@
 pub mod account;
 pub mod compute_task;
 pub mod crypto;
+pub mod genesis;
 mod primitives;
 pub mod receipt;
 
@@ -45,6 +46,7 @@ pub use compute_task::{
     ComputeTask, COMPUTE_TASK_VERSION, DOMAIN_TASK, MAX_COMPUTE_TASK_BYTES,
     MAX_EXECUTION_SPEC_BYTES, MAX_TASK_ID_PREIMAGE_BYTES,
 };
+pub use genesis::{chain_id, ChainId, Genesis, GenesisError};
 pub use primitives::{
     compute_transactions_root, Address, Block, BlockBody, BlockHeader, Hash, Transaction,
     TransactionPayload, TransactionType,
