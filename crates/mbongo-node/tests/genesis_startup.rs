@@ -3,9 +3,9 @@
 //! network start, and that a data directory stays bound to its genesis
 //! across restarts.
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -71,6 +71,14 @@ fn refused(args: &[&str], data: &Path) -> Output {
 /// A node that must start: returns its banner, up to the P2P line, then
 /// stops it.
 fn started(args: &[&str], data: &Path) -> String {
+    let (mut child, banner) = running(args, data);
+    child.kill().unwrap();
+    child.wait().unwrap();
+    banner
+}
+
+/// A node that must start, left running, with its banner up to the P2P line.
+fn running(args: &[&str], data: &Path) -> (Child, String) {
     let mut child = node(args, data).spawn().unwrap();
     let stdout = child.stdout.take().unwrap();
     let (tx, rx) = mpsc::channel();
@@ -103,9 +111,78 @@ fn started(args: &[&str], data: &Path) -> String {
             }
         }
     }
-    child.kill().unwrap();
-    child.wait().unwrap();
-    banner
+    (child, banner)
+}
+
+/// Starts two nodes on one new directory at the same moment. Exactly one
+/// may start; the other must refuse before the network. Returns which one
+/// started, after stopping it.
+fn race(contenders: [&[&str]; 2], data: &Path) -> usize {
+    let mut children: Vec<Child> =
+        contenders.iter().map(|a| node(a, data).spawn().unwrap()).collect();
+    let (tx, rx) = mpsc::channel::<(usize, String)>();
+    for (i, child) in children.iter_mut().enumerate() {
+        let stdout = child.stdout.take().unwrap();
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                let Ok(line) = line else { break };
+                if tx.send((i, line)).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+    drop(tx);
+    let stop_all = |children: &mut Vec<Child>| {
+        for c in children.iter_mut() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    };
+    let mut lines: Vec<(usize, String)> = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let winner = loop {
+        match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok((i, line)) => {
+                let started = line.contains("PeerId:");
+                lines.push((i, line));
+                if started {
+                    break i;
+                }
+            }
+            Err(_) => {
+                stop_all(&mut children);
+                panic!("neither node started: {lines:?}");
+            }
+        }
+    };
+    let loser = 1 - winner;
+    let waited = Instant::now();
+    let status = loop {
+        if let Some(status) = children[loser].try_wait().unwrap() {
+            break status;
+        }
+        if waited.elapsed() > Duration::from_secs(30) {
+            stop_all(&mut children);
+            panic!("both nodes ran on one directory: {lines:?}");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(!status.success(), "the second node exited successfully");
+    let mut stderr = String::new();
+    children[loser].stderr.take().unwrap().read_to_string(&mut stderr).unwrap();
+    stop_all(&mut children);
+    // Both pipes are closed now: collect what is left.
+    while let Ok(line) = rx.recv_timeout(Duration::from_secs(10)) {
+        lines.push(line);
+    }
+    assert!(
+        !lines.iter().any(|(i, l)| *i == loser && l.contains("PeerId:")),
+        "the second node reached the network: {lines:?}"
+    );
+    assert!(stderr.contains("data directory"), "{stderr}");
+    winner
 }
 
 fn line<'a>(banner: &'a str, label: &str) -> &'a str {
@@ -205,6 +282,53 @@ fn starts_and_restarts_on_its_own_genesis() {
         line(&banner, "Data dir:").ends_with("(existing chain)"),
         "{banner}"
     );
+
+    // While a node runs on a directory, RocksDB's lock refuses a second
+    // node on it, before the network, even with the same genesis.
+    let (mut first, _) = running(&["--dev"], &dev_data);
+    let out = refused(&["--dev"], &dev_data);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("storage error"), "{stderr}");
+    first.kill().unwrap();
+    first.wait().unwrap();
+    assert_eq!(std::fs::read(dev_data.join(MARKER)).unwrap(), marker);
+
+    // Two nodes with different genesis files started at once on one new
+    // directory: one chain, the winner's, and the other genesis refused
+    // afterwards. Both launch orders.
+    let dev_args: &[&str] = &["--dev"];
+    let net_args: &[&str] = &["--genesis", net_arg];
+    for round in 0..4 {
+        let data = dir.join(format!("race-{round}"));
+        let order = if round % 2 == 0 {
+            [dev_args, net_args]
+        } else {
+            [net_args, dev_args]
+        };
+        let winner = race(order, &data);
+        let (won, lost) = (order[winner], order[1 - winner]);
+        let won_id = if won == dev_args { &dev_id } else { &net_id };
+        eprintln!("race round {round}: {:?} started, {:?} refused", won, lost);
+        let marker = std::fs::read_to_string(data.join(MARKER)).unwrap();
+        assert!(
+            marker.contains(&format!(
+                "chain_id {won_id}
+"
+            )),
+            "round {round}"
+        );
+        let out = refused(lost, &data);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains(&format!("belongs to chain {won_id}")),
+            "round {round}: {stderr}"
+        );
+        let banner = started(won, &data);
+        assert!(
+            line(&banner, "Data dir:").ends_with("(existing chain)"),
+            "{banner}"
+        );
+    }
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

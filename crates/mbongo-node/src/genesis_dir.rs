@@ -23,7 +23,7 @@
 //! # Start sequence
 //!
 //! 1. **Before RocksDB opens the directory**, classify what is in it:
-//!    - absent, empty, or holding only `MBONGO_GENESIS.tmp`: new;
+//!    - absent, empty, or holding only `MBONGO_GENESIS.tmp*` files: new;
 //!    - holding `MBONGO_GENESIS`: verify it (corrupt → refuse, other genesis
 //!      → refuse);
 //!    - anything else: refuse. A directory with data and no marker was not
@@ -31,9 +31,17 @@
 //!      shown to belong to the selected genesis.
 //!
 //!    Nothing is opened, migrated or written in a refused directory.
-//! 2. New: write the marker atomically (`.tmp`, `sync_all`, then a hard
-//!    link, which fails rather than replace an existing marker).
-//! 3. Open RocksDB.
+//! 2. New: publish the marker.
+//!    - Write it to a temporary file whose name is unique to this attempt,
+//!      created with `create_new`. An existing file is never opened, so never
+//!      truncated, under any name.
+//!    - `sync_all` it.
+//!    - Hard-link it to `MBONGO_GENESIS`. A hard link fails rather than
+//!      replace an existing marker, on NTFS and on POSIX filesystems.
+//!    - Read the published marker back. It must record exactly the selected
+//!      genesis, or the start is refused.
+//! 3. Open RocksDB. Its `LOCK` file is exclusive: a second process, or a
+//!    second open in this one, is refused while the directory is in use.
 //! 4. Block 0 present: it must be the genesis block the marker's genesis
 //!    derives. Block 0 absent: the database must hold only the schema stamp
 //!    that opening writes, which is exactly the state an initialization
@@ -43,6 +51,36 @@
 //!
 //! Every crash point between these steps leaves a state that step 1 or 4
 //! recognises, and the tests below produce each one with the real steps.
+//!
+//! # Competing starts
+//!
+//! Two starts on one new directory race only for the hard link of step 2,
+//! and exactly one wins. The loser's link fails (`MarkerExists`), or, if it
+//! classified the directory after the link, its marker check of step 1
+//! refuses another genesis. The loser touches only its own temporary file,
+//! which no other start ever names, so it cannot change the winner's marker.
+//! Before this rule a fixed temporary name was truncated by `File::create`
+//! while it was still a second name for a published marker, which let a
+//! loser rewrite that marker. The tests replay that sequence.
+//!
+//! Temporary files left by a crash are ignored, never reused and never
+//! removed by another start: removing one could break an attempt that is
+//! still running.
+//!
+//! # Limits
+//!
+//! - **Not a cryptographic database identity.** The marker binds a directory
+//!   that this code created. If someone copies a valid marker into a
+//!   directory holding another chain's data, step 4 only catches it when
+//!   that chain's block 0 differs from the one the marker's genesis derives,
+//!   and until S1-6 and S1-7 block 0 commits only the genesis timestamp. Two
+//!   genesis files with the same timestamp have the same block 0. S1-8 moves
+//!   the identity into the database and removes this case.
+//! - A filesystem without hard links cannot be initialized: the start is
+//!   refused.
+//! - Windows has no directory flush. After a power loss the link may be gone
+//!   while RocksDB files remain; the directory is then refused as
+//!   unverifiable rather than opened.
 //!
 //! # S1-8
 //!
@@ -64,7 +102,8 @@ use crate::backend::{compute_block_hash, genesis_block};
 
 /// The marker file, inside the data directory.
 pub(crate) const MARKER_FILE: &str = "MBONGO_GENESIS";
-/// The marker while it is written; never trusted.
+/// Prefix of the temporary file each attempt writes the marker to before
+/// publishing it; never trusted, never reused.
 pub(crate) const MARKER_TMP: &str = "MBONGO_GENESIS.tmp";
 /// First line of every marker.
 const MARKER_MAGIC: &[u8] = b"mbongo-genesis-marker:v1\n";
@@ -208,7 +247,7 @@ pub(crate) fn classify(dir: &Path) -> Result<DirState, DirError> {
     if names.iter().any(|n| n == MARKER_FILE) {
         return Ok(DirState::Marked);
     }
-    let data: Vec<String> = names.into_iter().filter(|n| n != MARKER_TMP).collect();
+    let data: Vec<String> = names.into_iter().filter(|n| !n.starts_with(MARKER_TMP)).collect();
     if data.is_empty() {
         Ok(DirState::New)
     } else {
@@ -284,38 +323,77 @@ fn sync_dir(_dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Step 2: write the marker of a new directory, atomically and without
-/// replacing one that exists.
+/// A temporary marker name no other attempt uses: this process, the time,
+/// and a counter for attempts within one process.
+fn unique_tmp_name() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static ATTEMPT: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    format!(
+        "{MARKER_TMP}-{}-{nanos}-{}",
+        std::process::id(),
+        ATTEMPT.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+/// Creates this attempt's temporary file. `create_new` refuses an existing
+/// file, so no other attempt's file is ever opened.
+fn create_tmp(dir: &Path) -> Result<(PathBuf, File), DirError> {
+    for _ in 0..8 {
+        let tmp = dir.join(unique_tmp_name());
+        match fs::OpenOptions::new().write(true).create_new(true).open(&tmp) {
+            Ok(file) => return Ok((tmp, file)),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(io_err("create", &tmp, e)),
+        }
+    }
+    Err(DirError::Io(format!(
+        "cannot create a unique temporary marker in {}",
+        dir.display()
+    )))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Runs right after the marker is linked, on this thread only: lets a
+    /// test change the published marker before it is read back.
+    static AFTER_LINK: std::cell::Cell<Option<fn(&Path)>> = const { std::cell::Cell::new(None) };
+}
+
+/// Step 2: publish the marker of a new directory, atomically and without
+/// replacing one that exists, then confirm what was published.
 pub(crate) fn write_marker(dir: &Path, selected: &SelectedGenesis) -> Result<(), DirError> {
     fs::create_dir_all(dir).map_err(|e| io_err("create the data directory", dir, e))?;
     if let Some(parent) = dir.parent().filter(|p| !p.as_os_str().is_empty()) {
         sync_dir(parent).map_err(|e| io_err("sync", parent, e))?;
     }
-    let tmp: PathBuf = dir.join(MARKER_TMP);
+    let (tmp, mut file) = create_tmp(dir)?;
+    let written = file.write_all(&marker_bytes(&selected.bytes)).and_then(|()| file.sync_all());
+    drop(file);
     let marker = dir.join(MARKER_FILE);
-    {
-        let mut file = File::create(&tmp).map_err(|e| io_err("create", &tmp, e))?;
-        file.write_all(&marker_bytes(&selected.bytes))
-            .and_then(|()| file.sync_all())
-            .map_err(|e| io_err("write", &tmp, e))?;
-    }
-    match fs::hard_link(&tmp, &marker) {
-        Ok(()) => {}
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Err(DirError::MarkerExists),
-        Err(e) => return Err(io_err("create", &marker, e)),
-    }
+    let published =
+        written.map_err(|e| io_err("write", &tmp, e)).and_then(|()| {
+            match fs::hard_link(&tmp, &marker) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(DirError::MarkerExists),
+                Err(e) => Err(io_err("create", &marker, e)),
+            }
+        });
+    // Only this attempt ever names `tmp`: removing it cannot affect another
+    // start, and once linked it is just a second name for the marker.
+    let _ = fs::remove_file(&tmp);
+    published?;
     sync_dir(dir).map_err(|e| io_err("sync", dir, e))?;
-    remove_tmp(dir)
-}
-
-/// The `.tmp` copy is never read; once a marker exists it is dropped.
-fn remove_tmp(dir: &Path) -> Result<(), DirError> {
-    let tmp = dir.join(MARKER_TMP);
-    match fs::remove_file(&tmp) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(io_err("remove", &tmp, e)),
-    }
+    #[cfg(test)]
+    AFTER_LINK.with(|hook| {
+        if let Some(hook) = hook.get() {
+            hook(dir);
+        }
+    });
+    // Read back: the marker on disk must be the one this start wrote.
+    verify_marker(dir, selected)
 }
 
 /// Step 4: with the marker verified and RocksDB open, the database must be
@@ -363,7 +441,6 @@ pub(crate) fn open(
         }
         DirState::Marked => {
             verify_marker(dir, selected)?;
-            remove_tmp(dir)?;
             false
         }
     };
@@ -424,6 +501,17 @@ mod tests {
             }
         }
         out
+    }
+
+    /// The temporary marker files in `dir`, sorted.
+    fn tmp_files(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with(MARKER_TMP))
+            .collect();
+        names.sort();
+        names
     }
 
     /// Another valid genesis: the dev file with timestamp 1.
@@ -489,7 +577,11 @@ mod tests {
             Opened::Created
         );
         assert!(dir.path().join(MARKER_FILE).is_file());
-        assert!(!dir.path().join(MARKER_TMP).exists());
+        assert_eq!(
+            tmp_files(dir.path()),
+            Vec::<String>::new(),
+            "a temporary file was left"
+        );
         let (height, _, accounts) = chain_state(dir.path());
         assert_eq!(height, 0);
         let balances: Vec<u128> = accounts.iter().map(|a| a.as_ref().unwrap().balance).collect();
@@ -676,18 +768,26 @@ mod tests {
 
     #[test]
     fn crash_while_writing_the_marker_restarts_as_new() {
-        // Boundary 1: only a partial .tmp exists.
+        // Boundary 1: only partial temporary files exist, under the legacy
+        // fixed name and under an attempt name.
         let dir = TempDir::new("crash1");
         fs::create_dir_all(dir.path()).unwrap();
         let partial = &marker_bytes(DEV_GENESIS_FILE)[..20];
-        fs::write(dir.path().join(MARKER_TMP), partial).unwrap();
+        let stale = [MARKER_TMP.to_string(), format!("{MARKER_TMP}-1-2-3")];
+        for name in &stale {
+            fs::write(dir.path().join(name), partial).unwrap();
+        }
         assert_eq!(classify(dir.path()).unwrap(), DirState::New);
         assert_eq!(
             start(dir.path(), &SelectedGenesis::dev()).unwrap(),
             Opened::Created
         );
         assert_eq!(chain_state(dir.path()).0, 0);
-        assert!(!dir.path().join(MARKER_TMP).exists());
+        // Never reused, never removed: they belong to another attempt.
+        assert_eq!(tmp_files(dir.path()), stale.to_vec());
+        for name in &stale {
+            assert_eq!(fs::read(dir.path().join(name)).unwrap(), partial);
+        }
     }
 
     #[test]
@@ -702,8 +802,10 @@ mod tests {
             start(dir.path(), &SelectedGenesis::dev()).unwrap(),
             Opened::Resumed
         );
-        assert!(!dir.path().join(MARKER_TMP).exists());
         assert_eq!(chain_state(dir.path()).0, 0);
+        // The leftover name is not opened: the marker is untouched.
+        assert_eq!(fs::read(dir.path().join(MARKER_FILE)).unwrap(), raw);
+        assert_eq!(fs::read(dir.path().join(MARKER_TMP)).unwrap(), raw);
     }
 
     #[test]
@@ -824,5 +926,237 @@ mod tests {
         fs::write(&large, vec![b' '; MAX_GENESIS_FILE_BYTES + 10]).unwrap();
         let err = SelectedGenesis::from_file(&large).err().unwrap();
         assert!(err.contains("invalid genesis file"), "{err}");
+    }
+
+    // ── Competing starts (the marker race) ─────────────────────────────
+
+    /// The dev genesis file with another timestamp: another chain.
+    fn genesis_with_timestamp(timestamp: u64) -> SelectedGenesis {
+        let text = std::str::from_utf8(DEV_GENESIS_FILE)
+            .unwrap()
+            .replace("\"timestamp\":0}", &format!("\"timestamp\":{timestamp}}}"));
+        let bytes = text.into_bytes();
+        let genesis = Genesis::from_file_bytes(&bytes).unwrap();
+        SelectedGenesis {
+            source: format!("timestamp {timestamp}"),
+            bytes,
+            genesis,
+        }
+    }
+
+    #[test]
+    fn a_competing_start_never_rewrites_a_published_marker() {
+        // The race reproduced on NTFS: the winner has linked its temporary
+        // file to the marker and not yet removed it, so both names are one
+        // file. A start with another genesis then runs step 2. With the
+        // fixed name and `File::create`, that truncated the shared file and
+        // rewrote the marker.
+        for winner_tmp in [MARKER_TMP.to_string(), format!("{MARKER_TMP}-7-7-7")] {
+            let dir = TempDir::new("rewrite");
+            fs::create_dir_all(dir.path()).unwrap();
+            let winner = marker_bytes(DEV_GENESIS_FILE);
+            fs::write(dir.path().join(&winner_tmp), &winner).unwrap();
+            fs::hard_link(dir.path().join(&winner_tmp), dir.path().join(MARKER_FILE)).unwrap();
+
+            let loser = other_genesis();
+            assert!(
+                matches!(
+                    write_marker(dir.path(), &loser),
+                    Err(DirError::MarkerExists)
+                ),
+                "{winner_tmp}"
+            );
+            assert_eq!(
+                fs::read(dir.path().join(MARKER_FILE)).unwrap(),
+                winner,
+                "{winner_tmp}"
+            );
+            assert_eq!(
+                fs::read(dir.path().join(&winner_tmp)).unwrap(),
+                winner,
+                "{winner_tmp}"
+            );
+            // The loser removed its own temporary file and nothing else.
+            assert_eq!(tmp_files(dir.path()), vec![winner_tmp.clone()]);
+            // Its full start is refused; the winner's goes on.
+            assert!(matches!(
+                start(dir.path(), &loser),
+                Err(DirError::Mismatch { .. })
+            ));
+            assert_eq!(
+                start(dir.path(), &SelectedGenesis::dev()).unwrap(),
+                Opened::Resumed
+            );
+        }
+    }
+
+    fn replace_marker_with_other_genesis(dir: &Path) {
+        let marker = dir.join(MARKER_FILE);
+        fs::remove_file(&marker).unwrap();
+        fs::write(&marker, marker_bytes(&other_genesis().bytes)).unwrap();
+    }
+
+    fn truncate_marker(dir: &Path) {
+        fs::write(dir.join(MARKER_FILE), b"mbongo-genesis-marker:v1\n").unwrap();
+    }
+
+    #[test]
+    fn a_marker_changed_after_publication_is_refused_before_the_database_opens() {
+        // Step 2 reads the published marker back. Whatever changed it
+        // between the link and that read, the start stops there.
+        type Hook = fn(&Path);
+        let hooks: [(&str, Hook); 2] = [
+            ("another genesis", replace_marker_with_other_genesis),
+            ("truncated", truncate_marker),
+        ];
+        for (name, hook) in hooks {
+            let dir = TempDir::new("readback");
+            AFTER_LINK.with(|h| h.set(Some(hook)));
+            let result = open(dir.path(), &SelectedGenesis::dev());
+            AFTER_LINK.with(|h| h.set(None));
+            match result {
+                Err(DirError::Mismatch { stored, selected }) => {
+                    assert_eq!(name, "another genesis");
+                    assert_eq!(stored, other_genesis().genesis.chain_id);
+                    assert_eq!(selected, Genesis::dev().chain_id);
+                }
+                Err(DirError::MarkerCorrupt(_)) => assert_eq!(name, "truncated"),
+                Err(e) => panic!("{name}: unexpected {e}"),
+                Ok(_) => panic!("{name}: a changed marker was accepted"),
+            }
+            // RocksDB never opened the directory.
+            assert!(!dir.path().join("CURRENT").exists(), "{name}");
+        }
+    }
+
+    #[test]
+    fn racing_starts_with_different_genesis_initialize_exactly_one_chain() {
+        const STARTS: u64 = 6;
+        const ROUNDS: usize = 25;
+        for round in 0..ROUNDS {
+            let dir = TempDir::new("race");
+            let candidates: Vec<SelectedGenesis> =
+                (1..=STARTS).map(genesis_with_timestamp).collect();
+            let barrier = std::sync::Barrier::new(candidates.len());
+            let results: Vec<Result<Opened, DirError>> = std::thread::scope(|s| {
+                let handles: Vec<_> = candidates
+                    .iter()
+                    .map(|g| {
+                        let (barrier, path) = (&barrier, dir.path());
+                        s.spawn(move || {
+                            barrier.wait();
+                            start(path, g)
+                        })
+                    })
+                    .collect();
+                handles.into_iter().map(|h| h.join().unwrap()).collect()
+            });
+
+            let winners: Vec<usize> = (0..results.len()).filter(|i| results[*i].is_ok()).collect();
+            assert_eq!(winners.len(), 1, "round {round}: {results:?}");
+            let w = winners[0];
+            assert_eq!(
+                results[w].as_ref().unwrap(),
+                &Opened::Created,
+                "round {round}"
+            );
+            for (i, r) in results.iter().enumerate() {
+                if i != w {
+                    assert!(
+                        matches!(r, Err(DirError::MarkerExists | DirError::Mismatch { .. })),
+                        "round {round}, start {i}: {r:?}"
+                    );
+                }
+            }
+            // The marker and the chain are the winner's, and stay so.
+            assert_eq!(
+                fs::read(dir.path().join(MARKER_FILE)).unwrap(),
+                marker_bytes(&candidates[w].bytes),
+                "round {round}"
+            );
+            {
+                let storage = RocksDbStorage::open(dir.path()).unwrap();
+                let block = storage.get_block_by_height(0).unwrap().unwrap();
+                assert_eq!(
+                    block,
+                    genesis_block(&candidates[w].genesis),
+                    "round {round}"
+                );
+            }
+            for (i, g) in candidates.iter().enumerate() {
+                if i != w {
+                    assert!(matches!(
+                        start(dir.path(), g),
+                        Err(DirError::Mismatch { .. })
+                    ));
+                }
+            }
+            assert_eq!(start(dir.path(), &candidates[w]).unwrap(), Opened::Reopened);
+            assert_eq!(tmp_files(dir.path()), Vec::<String>::new(), "round {round}");
+        }
+    }
+
+    #[test]
+    fn racing_starts_with_the_same_genesis_end_on_one_chain() {
+        const STARTS: usize = 6;
+        const ROUNDS: usize = 25;
+        for round in 0..ROUNDS {
+            let dir = TempDir::new("race-same");
+            let barrier = std::sync::Barrier::new(STARTS);
+            let results: Vec<Result<Opened, DirError>> = std::thread::scope(|s| {
+                let handles: Vec<_> = (0..STARTS)
+                    .map(|_| {
+                        let (barrier, path) = (&barrier, dir.path());
+                        s.spawn(move || {
+                            barrier.wait();
+                            start(path, &SelectedGenesis::dev())
+                        })
+                    })
+                    .collect();
+                handles.into_iter().map(|h| h.join().unwrap()).collect()
+            });
+            let created = results.iter().filter(|r| matches!(r, Ok(Opened::Created))).count();
+            assert!(created <= 1, "round {round}: {results:?}");
+            assert!(
+                results.iter().any(Result::is_ok),
+                "round {round}: {results:?}"
+            );
+            for r in &results {
+                // A start that lost the link, or found RocksDB locked by
+                // another one; never an inconsistent or foreign directory.
+                assert!(
+                    matches!(
+                        r,
+                        Ok(_) | Err(DirError::MarkerExists | DirError::Storage(_))
+                    ),
+                    "round {round}: {r:?}"
+                );
+            }
+            let (height, block, accounts) = chain_state(dir.path());
+            assert_eq!(height, 0);
+            assert_eq!(block, compute_block_hash(&genesis_block(&Genesis::dev())));
+            assert!(accounts.iter().all(Option::is_some));
+            assert_eq!(
+                fs::read(dir.path().join(MARKER_FILE)).unwrap(),
+                marker_bytes(DEV_GENESIS_FILE)
+            );
+        }
+    }
+
+    #[test]
+    fn rocksdb_refuses_a_second_open_while_the_directory_is_in_use() {
+        let dir = TempDir::new("lock");
+        start(dir.path(), &SelectedGenesis::dev()).unwrap();
+        let (held, _) = open(dir.path(), &SelectedGenesis::dev()).unwrap();
+        match open(dir.path(), &SelectedGenesis::dev()) {
+            Err(DirError::Storage(_)) => {}
+            Err(e) => panic!("unexpected {e}"),
+            Ok(_) => panic!("the directory was opened twice"),
+        }
+        drop(held);
+        assert_eq!(
+            open(dir.path(), &SelectedGenesis::dev()).unwrap().1,
+            Opened::Reopened
+        );
     }
 }
