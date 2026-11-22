@@ -176,3 +176,54 @@ exactly BLAKE3 over the full SCALE encoding.
 The signing key is the TEST ONLY key from the receipt fixture — seed `0x2a`
 repeated 32 times, a public constant. It is resolved from that file rather than
 restated here. **Never a production key.**
+
+---
+
+# Nonce-boundary vectors
+
+`nonce-boundary-v1.json` pins the transaction nonce bound of RFC 0006 §6
+step 2, and the `Transfer` and `Stake` encodings around it. Rust and
+TypeScript read the same file.
+
+## The bound
+
+Applying a transaction adds one to its sender's nonce, and `u64::MAX` has no
+successor. A transaction whose nonce is `u64::MAX` is therefore refused with
+`InvalidNonce`, whatever its type and whatever the build profile. The largest
+applicable nonce is `MAX_TRANSACTION_NONCE = u64::MAX - 1`. This is
+implementation note C-3 on #211, and it does not change the accepted design.
+
+A transaction at `u64::MAX` still **encodes** and is correctly signed. Encoding
+and applicability are separate questions, and the fixture keeps them apart.
+
+## Sections
+
+| Section | Content | Consumers |
+|---|---|---|
+| `plain` | 9 `Transfer` and `Stake` transactions: nonce 0, diagnostic non-palindromic amount and nonce, amount 0 and `u128::MAX`, the last applicable nonce, and `u64::MAX` | Rust encoder and signer; TS fixed-layout reader with the SDK's Ed25519 and BLAKE3 |
+| `anchor` | `AnchorReceipt` at the last applicable nonce and at `u64::MAX` | Rust encoder; **the SDK's own anchor builder, signer and hash** |
+| `sdk_input_domain` | nonces of 2^64 and −1 | the SDK refuses both before encoding |
+| `malformed_encodings` | 6 byte strings that must not decode as a transaction | Rust `decode_all`; the TS reader |
+| `invalid_signatures` | a signature over another transaction, and one over the prehashed payload | both refuse |
+| `state_transition` | 7 cases at the bound, applied through `apply_block` | Rust (`mbongo-node` backend tests); TS checks that every reference resolves |
+
+The plain signing payload is
+`tx_type || sender || receiver || amount_u128_le || nonce_u64_le || 0x00`.
+It is 90 bytes; a signed transaction is 154.
+
+## Derivation
+
+Nothing here was produced by production Rust or the SDK:
+
+- **Byte layouts** by hand, as concatenated fields.
+- **Integers** by explicit little-endian construction.
+- **Signatures** from OpenSSL's Ed25519.
+- **Hashes** from a BLAKE3 written from the specification.
+
+Both primitives were first checked against published values: the BLAKE3
+reference vectors and RFC 8032 test 1. They were also checked against every
+vector of `anchor-receipt-v1.json`.
+
+## Key material
+
+As above: the TEST ONLY key of `../receipt/receipt-v1.json`.

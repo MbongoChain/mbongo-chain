@@ -27,6 +27,14 @@ impl std::fmt::Display for AccountError {
 
 impl std::error::Error for AccountError {}
 
+/// The largest nonce a transaction can carry and still be applied.
+///
+/// Applying a transaction adds one to its sender's nonce (RFC 0006 §6 step
+/// 2), and `u64::MAX` has no successor. A transaction at this nonce leaves
+/// its sender at `u64::MAX`, after which that account can still receive but
+/// can no longer send.
+pub const MAX_TRANSACTION_NONCE: u64 = u64::MAX - 1;
+
 /// On-chain account with an address, balance, and nonce.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 pub struct Account {
@@ -74,14 +82,21 @@ impl Account {
 
     /// Validates the provided nonce matches the current nonce and increments it.
     ///
+    /// RFC 0006 §6 step 2. A nonce of `u64::MAX` has no successor, so it is
+    /// refused rather than wrapped or overflowed: the largest nonce a
+    /// transaction can carry and be applied is [`MAX_TRANSACTION_NONCE`].
+    /// The outcome is the same in every build profile.
+    ///
     /// # Errors
     ///
-    /// Returns [`AccountError::InvalidNonce`] if `provided` does not equal `self.nonce`.
+    /// Returns [`AccountError::InvalidNonce`] if `provided` does not equal
+    /// `self.nonce`, or if the nonce cannot advance. The account is unchanged
+    /// on error.
     pub fn validate_and_increment_nonce(&mut self, provided: u64) -> Result<(), AccountError> {
         if provided != self.nonce {
             return Err(AccountError::InvalidNonce);
         }
-        self.nonce += 1;
+        self.nonce = self.nonce.checked_add(1).ok_or(AccountError::InvalidNonce)?;
         Ok(())
     }
 
@@ -209,5 +224,44 @@ mod tests {
         assert_eq!(result, Err(AccountError::BalanceOverflow));
         assert_eq!(from.balance, 500);
         assert_eq!(to.balance, u128::MAX);
+    }
+
+    #[test]
+    fn the_last_applicable_nonce_advances_to_u64_max() {
+        let mut account = Account::new(test_address(1));
+        account.nonce = MAX_TRANSACTION_NONCE;
+        account.validate_and_increment_nonce(MAX_TRANSACTION_NONCE).unwrap();
+        assert_eq!(account.nonce, u64::MAX);
+    }
+
+    #[test]
+    fn a_nonce_of_u64_max_is_refused_and_leaves_the_account_unchanged() {
+        let mut account = Account::new(test_address(1));
+        account.balance = 7;
+        account.nonce = u64::MAX;
+        let before = account.clone();
+        assert_eq!(
+            account.validate_and_increment_nonce(u64::MAX),
+            Err(AccountError::InvalidNonce)
+        );
+        assert_eq!(account, before);
+    }
+
+    #[test]
+    fn a_mismatched_nonce_at_the_bound_is_refused() {
+        let mut account = Account::new(test_address(1));
+        account.nonce = u64::MAX;
+        for provided in [0, MAX_TRANSACTION_NONCE] {
+            assert_eq!(
+                account.validate_and_increment_nonce(provided),
+                Err(AccountError::InvalidNonce)
+            );
+            assert_eq!(account.nonce, u64::MAX);
+        }
+    }
+
+    #[test]
+    fn the_nonce_bound_is_one_below_u64_max() {
+        assert_eq!(MAX_TRANSACTION_NONCE, u64::MAX - 1);
     }
 }
