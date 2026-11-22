@@ -147,6 +147,7 @@ fn spawn_node(config: &NodeConfig) -> Result<Child, String> {
         .arg(config.rest_port.to_string())
         .arg("--p2p-port")
         .arg(config.p2p_port.to_string())
+        .arg("--dev")
         .arg("--data-dir")
         .arg(config.data_dir.to_str().unwrap());
 

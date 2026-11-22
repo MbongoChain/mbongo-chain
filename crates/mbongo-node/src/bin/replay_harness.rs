@@ -82,7 +82,9 @@ mod replay {
 
     /// Writes genesis as the node does, and checks it is the exported one.
     fn genesis<S: Storage>(backend: &NodeBackend<S>, blocks: &[Block]) -> Result<(), String> {
-        backend.ensure_genesis().map_err(|e| format!("ensure_genesis: {e}"))?;
+        backend
+            .ensure_genesis(&mbongo_core::Genesis::dev())
+            .map_err(|e| format!("ensure_genesis: {e}"))?;
         let local = backend
             .storage
             .get_block_by_height(0)
@@ -444,6 +446,7 @@ fn spawn_producer(data_dir: &std::path::Path) -> Result<Child, String> {
         .arg(REST_PORT.to_string())
         .arg("--p2p-port")
         .arg(P2P_PORT.to_string())
+        .arg("--dev")
         .arg("--data-dir")
         .arg(data_dir.to_str().unwrap())
         .stdout(Stdio::piped())

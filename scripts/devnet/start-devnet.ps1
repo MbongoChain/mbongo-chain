@@ -142,6 +142,7 @@ function Start-Node {
     $errLog = Join-Path $logDir "$($Node.Name)-$stamp.err.log"
 
     $nodeArgs = @(
+        '--dev',
         '--rpc-port', $Node.Rpc,
         '--rest-port', $Node.Rest,
         '--p2p-port', $Node.P2p,

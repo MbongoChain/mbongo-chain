@@ -128,13 +128,24 @@ fn the_dev_genesis_is_the_committed_file_and_the_fixture_one() {
         SigningKey::from_bytes(&dev_authority_seed()).verifying_key().to_bytes(),
         address(&d["authority"]).0
     );
+    let worker_seed: [u8; 32] = bytes(&d["worker_seed"]).try_into().unwrap();
+    assert_eq!(
+        SigningKey::from_bytes(&worker_seed).verifying_key().to_bytes(),
+        address(&d["worker"]).0
+    );
     let g = Genesis::dev();
     assert_eq!(g.authority(), address(&d["authority"]));
     assert_eq!(
         g.allocations,
-        vec![(
-            address(&d["account"]),
-            d["amount"].as_str().unwrap().parse().unwrap()
-        )]
+        vec![
+            (
+                address(&d["worker"]),
+                d["worker_amount"].as_str().unwrap().parse().unwrap()
+            ),
+            (
+                address(&d["account"]),
+                d["amount"].as_str().unwrap().parse().unwrap()
+            ),
+        ]
     );
 }

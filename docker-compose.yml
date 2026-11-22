@@ -51,7 +51,7 @@ services:
     <<: *node
     container_name: mbongo-devnet-producer
     command:
-      - --chain=${MBONGO_CHAIN}
+      - --dev
       - --producer
       - --block-time=${MBONGO_BLOCK_TIME}
       - --rpc-host=${MBONGO_RPC_HOST}
@@ -77,7 +77,7 @@ services:
       producer:
         condition: service_healthy
     command:
-      - --chain=${MBONGO_CHAIN}
+      - --dev
       - --rpc-host=${MBONGO_RPC_HOST}
       - --rpc-port=${MBONGO_RPC_PORT}
       - --rest-host=${MBONGO_REST_HOST}
@@ -95,7 +95,7 @@ services:
       producer:
         condition: service_healthy
     command:
-      - --chain=${MBONGO_CHAIN}
+      - --dev
       - --rpc-host=${MBONGO_RPC_HOST}
       - --rpc-port=${MBONGO_RPC_PORT}
       - --rest-host=${MBONGO_REST_HOST}

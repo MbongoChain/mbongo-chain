@@ -46,7 +46,7 @@ node() { # name ip extra-docker-args -- node-args
   docker run -d --name "$name" --network $NET --ip "$ip" "${docker_args[@]}" \
     -e RUST_LOG=info -v "$NODE_BIN:/opt/m:ro" "$IMAGE" /opt/m/mbongo-node \
     --rpc-host 0.0.0.0 --rpc-port 9944 --rest-port 8080 --p2p-host 0.0.0.0 --p2p-port 30333 \
-    --data-dir /tmp/data --no-mdns "$@" >/dev/null
+    --dev --data-dir /tmp/data --no-mdns "$@" >/dev/null
 }
 rpc_height() { # ip
   docker exec a2-producer curl -s -m 1 -X POST -H 'content-type: application/json' \

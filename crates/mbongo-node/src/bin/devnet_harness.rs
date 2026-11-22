@@ -219,6 +219,7 @@ fn spawn_node(config: &NodeConfig) -> Result<ManagedChild, String> {
         .arg(config.rest_port.to_string())
         .arg("--p2p-port")
         .arg(config.p2p_port.to_string())
+        .arg("--dev")
         .arg("--data-dir")
         .arg(config.data_dir.to_str().unwrap())
         // Peers find each other through bootnodes only, as on separate hosts:
@@ -289,6 +290,7 @@ fn format_cmdline(binary: &std::path::Path, config: &NodeConfig) -> String {
         config.rest_port.to_string(),
         "--p2p-port".to_string(),
         config.p2p_port.to_string(),
+        "--dev".to_string(),
         "--data-dir".to_string(),
         config.data_dir.display().to_string(),
         "--no-mdns".to_string(),
@@ -533,7 +535,14 @@ fn cleanup_data_dirs(dirs: &[PathBuf]) {
         if dir.exists() {
             let _ = std::fs::remove_dir_all(dir);
         }
+        let _ = std::fs::remove_file(node_key_path(dir));
     }
+}
+
+/// Next to the data directory, not in it: a node refuses a data directory
+/// holding a file it did not write (S1-4, `genesis_dir`).
+fn node_key_path(data_dir: &Path) -> PathBuf {
+    data_dir.with_extension("key")
 }
 
 // ── Main ────────────────────────────────────────────────────────────────
@@ -574,9 +583,10 @@ async fn main() {
 
 /// Writes the producer's node key, readable by its owner only.
 fn write_node_key(data_dir: &Path) -> Result<PathBuf, String> {
-    std::fs::create_dir_all(data_dir).map_err(|e| format!("create data directory: {e}"))?;
-    // Inside the data directory, so that the harness cleanup removes it.
-    let path = data_dir.join("node.key");
+    let path = node_key_path(data_dir);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create harness directory: {e}"))?;
+    }
     std::fs::write(&path, "42".repeat(32)).map_err(|e| format!("write node key: {e}"))?;
     #[cfg(unix)]
     {

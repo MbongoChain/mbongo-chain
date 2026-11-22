@@ -25,6 +25,7 @@ fn make_private(path: &Path) {
 /// Runs the node on these paths, and fails rather than hangs if it does not stop.
 fn run_node(key: &Path, data: &Path) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_mbongo-node"))
+        .arg("--dev")
         .arg("--node-key-file")
         .arg(key)
         .arg("--data-dir")

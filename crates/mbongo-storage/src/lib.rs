@@ -477,6 +477,96 @@ mod tests {
     }
 
     #[test]
+    fn rocksdb_fresh_database_holds_only_the_schema_stamp() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RocksDbStorage::open(dir.path()).unwrap();
+        assert!(store.holds_only_schema_stamp().unwrap());
+        drop(store);
+        // Reopening writes nothing.
+        let store = RocksDbStorage::open(dir.path()).unwrap();
+        assert!(store.holds_only_schema_stamp().unwrap());
+    }
+
+    #[test]
+    fn rocksdb_any_chain_data_is_more_than_the_schema_stamp() {
+        use crate::storage::BatchOp;
+        type Write = Box<dyn Fn(&RocksDbStorage)>;
+        let cases: Vec<(&str, Write)> = vec![
+            (
+                "account",
+                Box::new(|s| {
+                    let (addr, account) = sample_account();
+                    s.put_account(&addr, &account).unwrap();
+                }),
+            ),
+            (
+                "block",
+                Box::new(|s| {
+                    let (hash, block) = sample_block();
+                    s.put_block(&hash, &block).unwrap();
+                }),
+            ),
+            (
+                "transaction",
+                Box::new(|s| {
+                    let (hash, tx) = sample_transaction();
+                    s.put_transaction(&hash, &tx).unwrap();
+                }),
+            ),
+            (
+                "height index and meta latest_height",
+                Box::new(|s| s.put_block_height_index(0, Hash([1u8; 32])).unwrap()),
+            ),
+            (
+                "tx seq index",
+                Box::new(|s| s.put_tx_seq_index(0, &Hash([2u8; 32])).unwrap()),
+            ),
+            (
+                "meta only",
+                Box::new(|s| s.set_last_included_tx_seq(1).unwrap()),
+            ),
+            (
+                "receipt",
+                Box::new(|s| s.write_batch(vec![BatchOp::PutReceipt([3u8; 32], vec![1])]).unwrap()),
+            ),
+            (
+                "task",
+                Box::new(|s| s.write_batch(vec![BatchOp::PutTask([4u8; 32], vec![1])]).unwrap()),
+            ),
+        ];
+        assert_eq!(cases.len(), 8);
+        for (name, write) in &cases {
+            let dir = tempfile::tempdir().unwrap();
+            let store = RocksDbStorage::open(dir.path()).unwrap();
+            write(&store);
+            assert!(!store.holds_only_schema_stamp().unwrap(), "{name}");
+        }
+        // The default column family, which no API writes, counts too.
+        let dir = tempfile::tempdir().unwrap();
+        drop(RocksDbStorage::open(dir.path()).unwrap());
+        {
+            let names = [
+                "accounts",
+                "blocks",
+                "transactions",
+                "meta",
+                "height_index",
+                "tx_seq_index",
+                "receipts",
+                "tasks",
+            ];
+            let cfs: Vec<ColumnFamilyDescriptor> = names
+                .iter()
+                .map(|name| ColumnFamilyDescriptor::new(*name, Options::default()))
+                .collect();
+            let db = DB::open_cf_descriptors(&Options::default(), dir.path(), cfs).unwrap();
+            db.put(b"stray", b"x").unwrap();
+        }
+        let store = RocksDbStorage::open(dir.path()).unwrap();
+        assert!(!store.holds_only_schema_stamp().unwrap(), "default");
+    }
+
+    #[test]
     fn rocksdb_v1_database_migrates_to_v3() {
         let dir = tempfile::tempdir().unwrap();
         create_v1_database(dir.path(), true);

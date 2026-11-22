@@ -2117,6 +2117,7 @@ async fn run(base: &Path, contain: bool) -> Result<(), String> {
         .args(["--rpc-port", &RPC_PORT.to_string()])
         .args(["--rest-port", &REST_PORT.to_string()])
         .args(["--p2p-port", &P2P_PORT.to_string()])
+        .arg("--dev")
         .arg("--data-dir")
         .arg(base.join("chain"));
     if contain {

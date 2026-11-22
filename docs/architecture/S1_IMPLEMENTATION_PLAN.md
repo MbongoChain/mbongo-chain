@@ -173,7 +173,12 @@ approval, through the merge gate.
 - **Scope:** `--genesis <file>` or `--dev`, exactly one; `--chain` and `MBONGO_CHAIN`
   removed; genesis block, allocations written at start. `ensure_genesis` stops creating the
   hard-coded dev account and reads the file instead. Chain identity is computed at start,
-  not yet stored (S1-8).
+  not yet stored in the database (S1-8). Until then, by owner decision of 2026-11-22, the
+  node binds each data directory to its genesis with a marker file, `MBONGO_GENESIS`,
+  that holds the exact genesis bytes and their `chain_id`. The RocksDB schema is
+  unchanged. A directory with data and no marker, a corrupt marker, or the marker of
+  another genesis is refused unopened. An initialization is resumed only when the marker
+  is valid and the database holds nothing but its schema stamp.
 - **Modules:** `mbongo-node/src/main.rs` (Tier 1 for flags), `backend.rs`
   (`ensure_genesis`, Tier 0).
 - **Consumers updated in the same PR:** `docker-compose.yml`, `Dockerfile`, `scripts/devnet/*`,
@@ -263,7 +268,9 @@ approval, through the merge gate.
   `backend.rs` (`ensure_genesis`, commit path).
 - **Protected:** Lock §6, storage schema; `write_batch` durability for the authority.
 - **Compatibility:** a v0.4 directory is refused rather than stamped, unlike earlier
-  upgrades. Operators must start from an empty directory.
+  upgrades. Operators must start from an empty directory. This includes S1-4 directories:
+  their `MBONGO_GENESIS` marker is not migrated into schema 4 and is no longer read, so
+  a schema-3 directory is refused with or without it.
 - **Tests:** schema-3 directory refused; another chain's directory refused; a directory
   left by a crash during creation restarts as new.
 

@@ -102,6 +102,7 @@ fn spawn(
     cmd.args(["--rpc-port", &rpc_port.to_string()])
         .args(["--rest-port", &rest.to_string()])
         .args(["--p2p-port", &p2p.to_string()])
+        .arg("--dev")
         .args(["--data-dir", data_dir.to_str().unwrap()])
         .arg("--no-mdns");
     if producer {

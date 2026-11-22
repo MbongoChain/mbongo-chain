@@ -9,22 +9,21 @@
 //! # Usage
 //!
 //! ```bash
-//! # Run development node
+//! # Run a development node, on the built-in dev genesis
 //! mbongo-node --dev
 //!
-//! # Run full node on testnet
-//! mbongo-node --chain testnet --bootnodes /ip4/.../p2p/...
-//!
-//! # Run validator node
-//! mbongo-node --chain mainnet --validator --name "My Validator"
-//!
-//! # Run compute provider
-//! mbongo-node --chain mainnet --provider --gpu nvidia-rtx-4090
+//! # Run a node of another network, defined by its genesis file
+//! mbongo-node --genesis network.json --bootnodes /ip4/.../p2p/...
 //! ```
+//!
+//! Exactly one of `--dev` and `--genesis` is required (RFC 0006 §1). The
+//! genesis is validated, and the data directory checked against it
+//! (`genesis_dir`), before storage, P2P or RPC start.
 
 #[cfg(feature = "alloc-stats")]
 mod alloc_stats;
 mod backend;
+mod genesis_dir;
 mod mempool;
 mod sync_service;
 mod sync_tracker;
@@ -38,7 +37,6 @@ use backend::NodeBackend;
 use mbongo_network::{
     InboundBlock, P2PNode, RpcBackend, SyncCommand, SyncEvent, SyncResponse, MAX_RANGE,
 };
-use mbongo_storage::RocksDbStorage;
 use sync_tracker::{BatchOutcome, SyncTracker};
 
 #[derive(Parser, Debug)]
@@ -47,13 +45,8 @@ use sync_tracker::{BatchOutcome, SyncTracker};
 #[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "Mbongo Chain full node", long_about = None)]
 struct Args {
-    /// Run in development mode (single validator, instant finality)
-    #[arg(long)]
-    dev: bool,
-
-    /// Chain specification (dev, testnet, mainnet)
-    #[arg(long, default_value = "dev")]
-    chain: String,
+    #[command(flatten)]
+    genesis: GenesisSource,
 
     /// Enable validator mode
     #[arg(long)]
@@ -132,6 +125,31 @@ struct Args {
     data_dir: String,
 }
 
+/// Which genesis the node runs: exactly one of the two (RFC 0006 §1). There
+/// is no default, so a node never falls back to the dev genesis.
+#[derive(clap::Args, Debug)]
+#[group(required = true, multiple = false)]
+struct GenesisSource {
+    /// Run on the built-in dev genesis: public test keys only
+    #[arg(long)]
+    dev: bool,
+
+    /// Run on the network defined by this genesis file (mbongo-genesis:v1)
+    #[arg(long, value_name = "FILE")]
+    genesis: Option<std::path::PathBuf>,
+}
+
+impl GenesisSource {
+    fn load(&self) -> Result<genesis_dir::SelectedGenesis, String> {
+        match (&self.genesis, self.dev) {
+            (Some(path), false) => genesis_dir::SelectedGenesis::from_file(path),
+            (None, true) => Ok(genesis_dir::SelectedGenesis::dev()),
+            // clap enforces the group; this keeps the code total.
+            _ => Err("exactly one of --dev and --genesis is required".to_string()),
+        }
+    }
+}
+
 /// Resolves a bind address from a host string and a port.
 ///
 /// The host must be a literal IP address: `127.0.0.1` keeps the service
@@ -205,13 +223,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // storage or network side effect happens.
     let rpc_addr = resolve_bind_addr(&args.rpc_host, args.rpc_port, "--rpc-host")?;
     let rest_addr = resolve_bind_addr(&args.rest_host, args.rest_port, "--rest-host")?;
+    // The genesis is read and validated before anything else happens: an
+    // invalid or missing file stops the node with no side effect.
+    let selected = args.genesis.load()?;
 
     println!("Starting Mbongo Chain node...");
     // Operator version visibility (not a protocol field, not negotiated):
     // the authority this binary implements. See
     // docs/specs/PROTOCOL_LOCK_v0.4.md and docs/runbooks/DEVNET_V0.4_OPERATIONS.md.
     println!("  Protocol: {PROTOCOL_AUTHORITY} ({RPC_AUTHORITY}, storage schema {STORAGE_SCHEMA})");
-    println!("  Chain:    {}", args.chain);
+    println!("  Genesis:  {}", selected.source);
+    println!("  Chain id: {}", selected.genesis.chain_id);
     println!("  RPC:      http://{rpc_addr}");
     println!("  REST:     http://{rest_addr}");
     println!("  P2P:      0.0.0.0:{}", args.p2p_port);
@@ -226,17 +248,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let node_identity =
         args.node_key_file.as_deref().map(mbongo_network::load_node_key).transpose()?;
 
-    // Initialize storage
-    let storage =
-        RocksDbStorage::open(&args.data_dir).map_err(|e| format!("failed to open storage: {e}"))?;
+    // The data directory must be new, an interrupted initialization of this
+    // genesis, or this chain; anything else is refused unopened.
+    let (storage, opened) = genesis_dir::open(std::path::Path::new(&args.data_dir), &selected)
+        .map_err(|e| format!("data directory {}: {e}", args.data_dir))?;
 
     let mut backend = NodeBackend::with_mempool_config(storage, args.producer, mempool_config);
 
-    // Ensure genesis block exists (idempotent).
+    // Writes the genesis block and allocations in one batch, or checks the
+    // stored genesis block.
     backend
-        .ensure_genesis()
+        .ensure_genesis(&selected.genesis)
         .map_err(|e| format!("failed to create genesis block: {e}"))?;
 
+    println!(
+        "  Data dir: {} ({})",
+        args.data_dir,
+        match opened {
+            genesis_dir::Opened::Created => "new chain",
+            genesis_dir::Opened::Resumed => "interrupted initialization completed",
+            genesis_dir::Opened::Reopened => "existing chain",
+        }
+    );
     println!("  Genesis:  OK");
 
     // ── P2P ────────────────────────────────────────────────────────────
@@ -582,6 +615,53 @@ mod tests {
     use super::*;
     use mbongo_storage::InMemoryStorage;
 
+    // ── RFC 0006 §1: exactly one of --dev and --genesis (S1-4) ─────────
+
+    fn parse(args: &[&str]) -> Result<Args, clap::Error> {
+        Args::try_parse_from(std::iter::once("mbongo-node").chain(args.iter().copied()))
+    }
+
+    #[test]
+    fn dev_selects_the_built_in_genesis() {
+        let args = parse(&["--dev"]).unwrap();
+        let selected = args.genesis.load().unwrap();
+        assert_eq!(selected.bytes, mbongo_core::genesis::DEV_GENESIS_FILE);
+        assert_eq!(
+            selected.genesis.chain_id,
+            mbongo_core::Genesis::dev().chain_id
+        );
+    }
+
+    #[test]
+    fn genesis_selects_a_file() {
+        let args = parse(&["--genesis", "net.json"]).unwrap();
+        assert_eq!(
+            args.genesis.genesis.as_deref(),
+            Some(std::path::Path::new("net.json"))
+        );
+        assert!(!args.genesis.dev);
+    }
+
+    #[test]
+    fn a_genesis_source_is_required_and_there_is_no_default() {
+        let err = parse(&[]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+        let err = parse(&["--producer", "--data-dir", "x"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn dev_and_genesis_are_exclusive() {
+        let err = parse(&["--dev", "--genesis", "net.json"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn chain_is_removed() {
+        let err = parse(&["--dev", "--chain", "dev"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
+
     #[test]
     fn it_works() {
         assert_eq!(2 + 2, 4);
@@ -591,7 +671,7 @@ mod tests {
     fn rpc_and_rest_bind_to_loopback_by_default() {
         // Backward compatibility: with no new flags the node must bind
         // exactly where it always has.
-        let args = Args::parse_from(["mbongo-node"]);
+        let args = Args::parse_from(["mbongo-node", "--dev"]);
         assert_eq!(args.rpc_host, "127.0.0.1");
         assert_eq!(args.rest_host, "127.0.0.1");
         assert_eq!(
@@ -608,6 +688,7 @@ mod tests {
     fn explicit_wildcard_host_is_accepted() {
         let args = Args::parse_from([
             "mbongo-node",
+            "--dev",
             "--rpc-host",
             "0.0.0.0",
             "--rest-host",
@@ -636,6 +717,7 @@ mod tests {
     fn hosts_and_ports_stay_independent() {
         let args = Args::parse_from([
             "mbongo-node",
+            "--dev",
             "--rpc-host",
             "0.0.0.0",
             "--rpc-port",
@@ -651,30 +733,36 @@ mod tests {
     #[test]
     fn p2p_behaviour_is_untouched() {
         // P2P has no host flag: it keeps its own listen semantics.
-        let args = Args::parse_from(["mbongo-node"]);
+        let args = Args::parse_from(["mbongo-node", "--dev"]);
         assert_eq!(args.p2p_port, 30333);
     }
 
     #[test]
     fn mdns_stays_enabled_by_default() {
         // F-N2: the default node keeps mDNS discovery exactly as before.
-        let args = Args::parse_from(["mbongo-node"]);
+        let args = Args::parse_from(["mbongo-node", "--dev"]);
         assert!(!args.no_mdns);
         assert_eq!(args.p2p_host, std::net::Ipv4Addr::UNSPECIFIED);
     }
 
     #[test]
     fn no_mdns_flag_disables_mdns() {
-        let args = Args::parse_from(["mbongo-node", "--p2p-host", "127.0.0.1", "--no-mdns"]);
+        let args = Args::parse_from([
+            "mbongo-node",
+            "--dev",
+            "--p2p-host",
+            "127.0.0.1",
+            "--no-mdns",
+        ]);
         assert!(args.no_mdns);
         assert_eq!(args.p2p_host, std::net::Ipv4Addr::LOCALHOST);
         // The flag takes no value.
-        assert!(Args::try_parse_from(["mbongo-node", "--no-mdns", "true"]).is_err());
+        assert!(Args::try_parse_from(["mbongo-node", "--dev", "--no-mdns", "true"]).is_err());
     }
 
     #[test]
     fn mempool_flags_default_to_the_stated_bounds() {
-        let args = Args::parse_from(["mbongo-node"]);
+        let args = Args::parse_from(["mbongo-node", "--dev"]);
         assert_eq!(args.mempool_max_pending, 8192);
         assert_eq!(args.mempool_ttl_secs, 3600);
     }
@@ -713,7 +801,7 @@ mod tests {
 
         let build = || {
             let node = NodeBackend::new(mbongo_storage::InMemoryStorage::new(), true);
-            node.ensure_genesis().unwrap();
+            node.ensure_genesis(&mbongo_core::Genesis::dev()).unwrap();
             node.storage.put_account(&sender, &account).unwrap();
             node
         };
@@ -862,7 +950,7 @@ mod tests {
 
     fn harness() -> Harness {
         let node = NodeBackend::new(InMemoryStorage::new(), false);
-        node.ensure_genesis().unwrap();
+        node.ensure_genesis(&mbongo_core::Genesis::dev()).unwrap();
         let (blocks, block_rx) = tokio::sync::mpsc::channel(8);
         let (events, event_rx) = tokio::sync::mpsc::unbounded_channel();
         let (cmd_tx, commands) = tokio::sync::mpsc::unbounded_channel();
@@ -1071,7 +1159,7 @@ mod tests {
     async fn chain(count: u64) -> Vec<(mbongo_core::Hash, mbongo_core::Block)> {
         use mbongo_storage::Storage;
         let producer = NodeBackend::new(InMemoryStorage::new(), true);
-        producer.ensure_genesis().unwrap();
+        producer.ensure_genesis(&mbongo_core::Genesis::dev()).unwrap();
         let mut blocks = Vec::new();
         for height in 1..=count {
             producer.produce_block().await.unwrap();

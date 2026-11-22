@@ -334,6 +334,7 @@ fn spawn_producer(data_dir: &std::path::Path) -> Result<Child, String> {
             "--p2p-port",
             &P2P_PORT.to_string(),
         ])
+        .arg("--dev")
         .arg("--data-dir")
         .arg(data_dir)
         .stdout(Stdio::null())

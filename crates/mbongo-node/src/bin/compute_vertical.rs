@@ -186,6 +186,7 @@ async fn spawn_node(
         .arg(cfg.rest.to_string())
         .arg("--p2p-port")
         .arg(cfg.p2p.to_string())
+        .arg("--dev")
         .arg("--data-dir")
         .arg(data_dir.to_str().ok_or("data dir path")?);
     if cfg.producer {

@@ -7,7 +7,7 @@
 // auto-dials peers on any interface; it reaches its peers through
 // --bootnodes only.
 export function launchNodeArgs(n, dataDir) {
-  return ["--rpc-port", String(n.rpc), "--rest-port", String(n.rest), "--p2p-port", String(n.p2p), "--p2p-host", "127.0.0.1", "--no-mdns", "--data-dir", dataDir];
+  return ["--dev", "--rpc-port", String(n.rpc), "--rest-port", String(n.rest), "--p2p-port", String(n.p2p), "--p2p-host", "127.0.0.1", "--no-mdns", "--data-dir", dataDir];
 }
 
 export const MDNS_PORT = 5353;

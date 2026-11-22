@@ -23,6 +23,9 @@ const healthy = () => [
 test("launch tooling starts every node with --p2p-host 127.0.0.1 --no-mdns", () => {
   const args = launchNodeArgs({ rpc: 39944, rest: 38080, p2p: 40333 }, "d");
   assert.deepEqual(args.slice(args.indexOf("--p2p-host"), args.indexOf("--p2p-host") + 3), ["--p2p-host", "127.0.0.1", "--no-mdns"]);
+  // RFC 0006 §1 (S1-4): the node needs exactly one genesis source; the launch runs the dev genesis.
+  assert.equal(args.filter((a) => a === "--dev" || a === "--genesis").length, 1);
+  assert.ok(args.includes("--dev"));
   // mvp-launch.mjs builds its node arguments with launchNodeArgs, not by hand.
   const src = fs.readFileSync(new URL("./mvp-launch.mjs", import.meta.url), "utf8");
   assert.match(src, /launchNodeArgs\(n, path\.join\(dataRoot, n\.name\)\)/);

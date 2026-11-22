@@ -24,6 +24,7 @@ const HARNESSES = [
   { file: "crates/mbongo-network/tests/resource_guard.rs", pattern: CONST, count: 9 },
   { file: "crates/mbongo-network/tests/resource_guard_trace.rs", pattern: CONST, count: 1 },
   { file: "crates/mbongo-node/tests/a1_flood_convergence.rs", pattern: CONST, count: 6 },
+  { file: "crates/mbongo-node/tests/genesis_startup.rs", pattern: CONST, count: 3 },
 ];
 
 const ports = [];

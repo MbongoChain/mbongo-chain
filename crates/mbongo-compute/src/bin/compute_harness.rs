@@ -80,6 +80,7 @@ fn spawn_producer(data_dir: &std::path::Path) -> Result<Child, String> {
         .arg(REST_PORT.to_string())
         .arg("--p2p-port")
         .arg(P2P_PORT.to_string())
+        .arg("--dev")
         .arg("--data-dir")
         .arg(data_dir.to_str().unwrap())
         .stdout(Stdio::piped())
