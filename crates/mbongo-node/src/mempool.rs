@@ -75,6 +75,9 @@ pub enum EvictionReason {
     Expired,
     /// Something it depends on was evicted.
     Dependent,
+    /// It failed when this node executed it for a block it produced, and
+    /// was left out of that block (RFC 0006 §3, plan D-5).
+    Failed,
 }
 
 /// One transaction removed from the mempool, and why.
@@ -522,6 +525,29 @@ impl Mempool {
         }
         evicted.extend(self.remove_with_dependents(removals, &task_registered));
         evicted
+    }
+
+    /// Evicts transactions that failed when this node executed them for a
+    /// block it produced, with their dependents: the sender's higher nonces,
+    /// and a pending receipt bound to a failed task that is not registered.
+    ///
+    /// Blocks follow insertion order, so a failing entry left in the pool
+    /// would be selected, and fail, for every block (plan D-5). Unknown
+    /// hashes are ignored.
+    pub fn evict_failed(
+        &mut self,
+        hashes: &[Hash],
+        task_registered: impl Fn(&[u8; 32]) -> bool,
+    ) -> Vec<Eviction> {
+        let removals = hashes
+            .iter()
+            .map(|hash| Removal {
+                hash: *hash,
+                reason: EvictionReason::Failed,
+                with_suffix: true,
+            })
+            .collect();
+        self.remove_with_dependents(removals, &task_registered)
     }
 
     /// Evicts every entry older than the configured time, with its dependents.

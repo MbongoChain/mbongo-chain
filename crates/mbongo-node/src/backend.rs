@@ -10,9 +10,10 @@ use mbongo_api::rest::{
     Transaction as RestTransaction, Validator,
 };
 use mbongo_core::{
-    compute_transactions_root, Account, Address, Block, BlockBody, BlockHeader, ChainId,
-    ComputeTask, Genesis, Hash, Receipt, Transaction, TransactionPayload, TransactionType,
-    COMPUTE_TASK_VERSION, MAX_EXECUTION_SPEC_BYTES, MAX_TRANSACTION_NONCE,
+    compute_transactions_root, genesis_state_root, next_state_root, Account, Address, Block,
+    BlockBody, BlockHeader, ChainId, ComputeTask, Genesis, Hash, Receipt, StateChanges,
+    Transaction, TransactionPayload, TransactionType, COMPUTE_TASK_VERSION,
+    MAX_EXECUTION_SPEC_BYTES, MAX_TRANSACTION_NONCE,
 };
 use mbongo_network::rpc::{BackendError, RpcBackend};
 use mbongo_network::BlockBroadcaster;
@@ -369,9 +370,12 @@ impl<S: Storage> NodeBackend<S> {
     /// 3. `transactions_root` matches re-computed commitment.
     /// 4. Every transaction has a valid signature.
     /// 5. Nonce and balance rules pass for every transaction (re-executed).
+    /// 6. Rule (w): `state_root` equals the root computed from the parent's
+    ///    and from what the block changes (RFC 0006 §4, §5).
     ///
     /// On success the block, its transactions, and all account updates are
-    /// committed atomically via [`Storage::write_batch`].
+    /// committed atomically via [`Storage::write_batch`]. On any failure,
+    /// including a `state_root` mismatch, nothing is written.
     ///
     /// Used by both `produce_block` (after building the block locally) and
     /// the follower sync path (applying blocks received from peers).
@@ -415,290 +419,28 @@ impl<S: Storage> NodeBackend<S> {
         }
 
         // ── Re-execute transactions ────────────────────────────────────
-        let mut ops: Vec<BatchOp> = Vec::new();
-        let mut account_cache: std::collections::HashMap<Address, Account> =
-            std::collections::HashMap::new();
-
-        // Transaction-sequence baseline: read ONCE before the loop and
-        // advanced locally. The persistent counter is committed only in
-        // the final atomic batch (SetTxSeq + SetLastIncludedTxSeq below).
-        let mut last_seq = storage
-            .get_last_included_tx_seq()
-            .map_err(|e| ApplyBlockError::Storage(e.to_string()))?;
-
-        // Transient set of task_ids anchored earlier in THIS block, in body
-        // order (RFC 0002 §4). Discarded when validation ends — success or
-        // failure; rule (j) consults it, and it never touches storage.
-        let mut pending_task_ids: std::collections::HashSet<[u8; 32]> =
-            std::collections::HashSet::new();
-
-        // Transient map of the tasks committed by ComputeTask transactions
-        // earlier in THIS block, keyed by task_id (RFC 0005 rule p,
-        // same-block half; rules q–s, same-block half). Separate from the
-        // receipt set above: a task and its receipt may legitimately share
-        // one id within a block, in that order.
-        let mut pending_tasks: std::collections::HashMap<[u8; 32], ComputeTask> =
-            std::collections::HashMap::new();
-
+        // On a view of the parent's state (RFC 0006 §3, §6): each one is
+        // executed against what the earlier ones left, in body order, and
+        // nothing reaches storage before the final atomic batch. A received
+        // block is held to every rule: the first transaction that fails
+        // rejects the whole block, and none is skipped for failing.
+        let mut view = BlockView::new(self)?;
         for (i, tx) in block.body.transactions.iter().enumerate() {
-            // (a)/(k) Type/form (RFC 0002 §2, RFC 0005 §3): AnchorReceipt
-            // requires an AnchorReceipt payload, ComputeTask a ComputeTask
-            // payload; every other type requires None.
-            let Ok(typed) = check_type_payload(tx) else {
-                return Err(ApplyBlockError::TypePayloadMismatch(i));
-            };
-
-            // (b)/(l) Field constraints: unused fields are pinned to
-            // canonical values so two encodings of the same anchoring or
-            // task commitment cannot differ, and neither can move money.
-            let canonical_fields = tx.amount == 0 && tx.receiver == Address::zero();
-            match typed {
-                TypedPayload::Anchor(_) if !canonical_fields => {
-                    return Err(ApplyBlockError::AnchorFieldConstraint(i));
-                }
-                TypedPayload::Task(_) if !canonical_fields => {
-                    return Err(ApplyBlockError::TaskFieldConstraint(i));
-                }
-                TypedPayload::Plain | TypedPayload::Anchor(_) | TypedPayload::Task(_) => {}
-            }
-
-            // (c) Transaction signature, for this node's network.
-            if !self.signature_is_valid(tx) {
-                return Err(ApplyBlockError::InvalidSignature(i));
-            }
-
-            let tx_hash = compute_tx_hash(tx);
-
-            // Already-stored transaction handling. For plain types this is
-            // the v0.2 idempotent skip (unchanged). An AnchorReceipt must
-            // NOT take the skip path: a stored anchor transaction implies
-            // its receipt is anchored (both commit in one atomic batch), so
-            // re-including it — even byte-identically — violates global
-            // task_id uniqueness and is rejected with the same verdict rule
-            // (i) would produce. A stored ComputeTask transaction likewise
-            // implies its task is registered, and rule (p) gives the same
-            // verdict.
-            let already_stored = storage
-                .get_transaction(&tx_hash)
-                .map_err(|e| ApplyBlockError::Storage(e.to_string()))?
-                .is_some();
-            if already_stored {
-                match typed {
-                    TypedPayload::Anchor(_) => {
-                        return Err(ApplyBlockError::TaskIdAlreadyAnchored(i));
-                    }
-                    TypedPayload::Task(_) => {
-                        return Err(ApplyBlockError::TaskAlreadyRegistered(i));
-                    }
-                    TypedPayload::Plain => continue,
-                }
-            }
-
-            if let TypedPayload::Task(task) = typed {
-                // ── ComputeTask path (RFC 0005 §3 rules m–p, with the
-                // generic nonce rule d in its v0.3 position) ────────────
-                // (d) Nonce: the sender account must exist and the nonce
-                // must match; the nonce is consumed. No balance movement
-                // (§2.8: a task commitment is not a transfer).
-                let sender_addr = tx.sender;
-                let mut sender = match account_cache.get(&sender_addr) {
-                    Some(acc) => acc.clone(),
-                    None => storage
-                        .get_account(&sender_addr)
-                        .map_err(|e| ApplyBlockError::Storage(e.to_string()))?
-                        .ok_or(ApplyBlockError::SenderAccountMissing(i))?,
-                };
-                sender
-                    .validate_and_increment_nonce(tx.nonce)
-                    .map_err(|_| ApplyBlockError::InvalidNonce(i))?;
-
-                // (m) version, (n) bound, (o) submitter identity, in that
-                // order; the task_id is derived only once the bound holds.
-                let task_id = check_task_envelope(tx, task).map_err(|why| match why {
-                    TaskRuleViolation::Version => ApplyBlockError::TaskVersionUnsupported(i),
-                    TaskRuleViolation::SpecTooLarge => ApplyBlockError::ExecutionSpecTooLarge(i),
-                    TaskRuleViolation::SubmitterMismatch => {
-                        ApplyBlockError::SenderSubmitterMismatch(i)
-                    }
-                })?;
-
-                // (p) Uniqueness: prior chain state first, then tasks
-                // committed earlier in this block. First-registered-wins;
-                // the task_id is content-derived, so a byte-identical
-                // envelope under a fresh nonce is the same task (§2.6).
-                if storage
-                    .has_task(&task_id)
-                    .map_err(|e| ApplyBlockError::Storage(e.to_string()))?
-                {
-                    return Err(ApplyBlockError::TaskAlreadyRegistered(i));
-                }
-                if pending_tasks.contains_key(&task_id) {
-                    return Err(ApplyBlockError::TaskRepeatedInBlock(i));
-                }
-                pending_tasks.insert(task_id, task.clone());
-
-                // Effects: accumulated only; committed in the final atomic
-                // batch. The stored task is its canonical SCALE encoding,
-                // keyed by task_id, and storage never decodes it (§4). No
-                // status is written: "submitted" is the presence of this
-                // key (§4.1).
-                last_seq += 1;
-                ops.push(BatchOp::PutTransaction(tx_hash, tx.clone()));
-                ops.push(BatchOp::PutTxSeqIndex(last_seq, tx_hash));
-                ops.push(BatchOp::PutTask(task_id, task.encode()));
-                account_cache.insert(sender_addr, sender);
-            } else if let TypedPayload::Anchor(receipt) = typed {
-                // ── AnchorReceipt path (RFC 0002 §2 rules d–j) ──────────
-                // (d) Nonce: the sender account must exist and the nonce
-                // must match; the nonce is consumed. No balance movement.
-                let sender_addr = tx.sender;
-                let mut sender = match account_cache.get(&sender_addr) {
-                    Some(acc) => acc.clone(),
-                    None => storage
-                        .get_account(&sender_addr)
-                        .map_err(|e| ApplyBlockError::Storage(e.to_string()))?
-                        .ok_or(ApplyBlockError::SenderAccountMissing(i))?,
-                };
-                sender
-                    .validate_and_increment_nonce(tx.nonce)
-                    .map_err(|_| ApplyBlockError::InvalidNonce(i))?;
-
-                // (e) Metadata size cap (consensus parameter, RFC 0002 §3).
-                if receipt.metadata.len() > MAX_RECEIPT_METADATA_BYTES {
-                    return Err(ApplyBlockError::ReceiptMetadataTooLarge(i));
-                }
-                // (f) Receipt version.
-                if receipt.version != RECEIPT_VERSION {
-                    return Err(ApplyBlockError::ReceiptVersionUnsupported(i));
-                }
-                // (g) Submitter identity: transaction-level anchoring rule
-                // orchestrated here, not intrinsic receipt validity.
-                if tx.sender != receipt.executor {
-                    return Err(ApplyBlockError::SenderExecutorMismatch(i));
-                }
-                // (h) Receipt signature over the raw 32-byte receipt hash.
-                if !verify_receipt_signature(receipt) {
-                    return Err(ApplyBlockError::InvalidReceiptSignature(i));
-                }
-                // (i)+(j) Duplicates via the composite index: prior chain
-                // state first, then earlier receipts in this block.
-                let index = CompositeReceiptIndex {
-                    storage: storage.as_ref(),
-                    pending: &pending_task_ids,
-                };
-                match index
-                    .locate(&receipt.task_id)
-                    .map_err(|e| ApplyBlockError::Storage(e.to_string()))?
-                {
-                    Some(DuplicateSource::PriorState) => {
-                        return Err(ApplyBlockError::TaskIdAlreadyAnchored(i));
-                    }
-                    Some(DuplicateSource::CurrentBlock) => {
-                        return Err(ApplyBlockError::TaskIdRepeatedInBlock(i));
-                    }
-                    None => {}
-                }
-
-                // (q)+(r)+(s) Binding to the registered task (RFC 0005
-                // §3): the task exists in prior chain state or earlier in
-                // this block, the receipt carries its input_commitment,
-                // and the receipt's executor is the one the task named.
-                // Rule (g) above already proved the anchoring sender IS
-                // receipt.executor, so (s) makes the sender the authorised
-                // party. Corrupt stored task bytes are a storage failure,
-                // not an unknown task.
-                let stored_task = load_task(storage.as_ref(), &receipt.task_id)
-                    .map_err(ApplyBlockError::Storage)?;
-                let registered =
-                    stored_task.as_ref().or_else(|| pending_tasks.get(&receipt.task_id));
-                check_receipt_binding(receipt, registered).map_err(|why| match why {
-                    BindingViolation::TaskNotRegistered => ApplyBlockError::TaskNotRegistered(i),
-                    BindingViolation::InputCommitmentMismatch => {
-                        ApplyBlockError::ReceiptInputCommitmentMismatch(i)
-                    }
-                    BindingViolation::ExecutorNotAuthorised => {
-                        ApplyBlockError::ReceiptExecutorNotAuthorised(i)
-                    }
-                })?;
-                pending_task_ids.insert(receipt.task_id);
-
-                // Effects: accumulated only; committed in the final atomic
-                // batch. Stored bytes are the canonical SCALE encoding;
-                // storage never decodes them. The sequence number comes
-                // from the local counter — no persistent mutation here.
-                last_seq += 1;
-                ops.push(BatchOp::PutTransaction(tx_hash, tx.clone()));
-                ops.push(BatchOp::PutTxSeqIndex(last_seq, tx_hash));
-                ops.push(BatchOp::PutReceipt(receipt.task_id, receipt.encode()));
-                account_cache.insert(sender_addr, sender);
-            } else {
-                // ── Transfer path: unchanged v0.2 semantics. Stake
-                // deliberately still falls through here (RFC 0002
-                // Non-Goals); the ComputeTask fall-through ended with
-                // RFC 0005 §5.1 and is rejected by rule (k) above. ──────
-
-                // Load sender (from cache or storage).
-                let sender_addr = tx.sender;
-                let mut sender = match account_cache.get(&sender_addr) {
-                    Some(acc) => acc.clone(),
-                    None => storage
-                        .get_account(&sender_addr)
-                        .map_err(|e| ApplyBlockError::Storage(e.to_string()))?
-                        .ok_or(ApplyBlockError::InsufficientBalance(i))?,
-                };
-
-                sender
-                    .validate_and_increment_nonce(tx.nonce)
-                    .map_err(|_| ApplyBlockError::InvalidNonce(i))?;
-
-                // Sender and receiver may be one account. It then has one
-                // view of its state: nothing moves, and the same balance
-                // check applies.
-                let receiver_addr = tx.receiver;
-                if receiver_addr == sender_addr {
-                    if sender.balance < tx.amount {
-                        return Err(ApplyBlockError::InsufficientBalance(i));
-                    }
-                } else {
-                    // Load receiver (from cache or storage).
-                    let mut receiver = match account_cache.get(&receiver_addr) {
-                        Some(acc) => acc.clone(),
-                        None => storage
-                            .get_account(&receiver_addr)
-                            .map_err(|e| ApplyBlockError::Storage(e.to_string()))?
-                            .unwrap_or_else(|| Account::new(receiver_addr)),
-                    };
-
-                    Account::transfer(&mut sender, &mut receiver, tx.amount)
-                        .map_err(|_| ApplyBlockError::InsufficientBalance(i))?;
-                    account_cache.insert(receiver_addr, receiver);
-                }
-
-                // Allocate the sequence number from the local counter —
-                // no persistent mutation during validation.
-                last_seq += 1;
-
-                ops.push(BatchOp::PutTransaction(tx_hash, tx.clone()));
-                ops.push(BatchOp::PutTxSeqIndex(last_seq, tx_hash));
-
-                account_cache.insert(sender_addr, sender);
-            }
+            let executed = view.execute(i, tx)?;
+            view.commit(executed);
         }
 
-        // Flush modified accounts.
-        for (addr, account) in &account_cache {
-            ops.push(BatchOp::PutAccount(*addr, account.clone()));
+        // (w) State commitment (RFC 0006 §4, §5): after every transaction,
+        // before the atomic write, so a mismatch writes nothing.
+        let expected_state_root = next_state_root(&parent_block.header.state_root, &view.changes());
+        if block.header.state_root != expected_state_root {
+            return Err(ApplyBlockError::StateRootMismatch {
+                expected: expected_state_root,
+                got: block.header.state_root,
+            });
         }
 
-        if !block.body.transactions.is_empty() {
-            // Persist the sequence state only now, in the same atomic
-            // batch as everything else: the counter baseline was read once
-            // before the loop and advanced locally, so a rejected block
-            // leaves both meta keys byte-for-byte unchanged, and sequence
-            // values are a pure function of accepted chain history.
-            ops.push(BatchOp::SetTxSeq(last_seq));
-            ops.push(BatchOp::SetLastIncludedTxSeq(last_seq));
-        }
+        let mut ops = view.into_ops(!block.body.transactions.is_empty());
 
         let block_hash = compute_block_hash(block);
         ops.push(BatchOp::PutBlock(block_hash, block.clone()));
@@ -781,6 +523,42 @@ impl<S: Storage> NodeBackend<S> {
         log_evictions(&evicted);
     }
 
+    /// Evicts transactions that failed when this node executed them for a
+    /// block it produced, and everything that depends on them (plan D-5).
+    async fn evict_failed(&self, failed: &[Hash]) {
+        if failed.is_empty() {
+            return;
+        }
+        let storage = &self.storage;
+        let evicted = self
+            .mempool
+            .write()
+            .await
+            .evict_failed(failed, |task_id| Self::task_registered(storage, task_id));
+        log_evictions(&evicted);
+    }
+
+    /// The `state_root` a block holding `txs` on top of the tip must carry,
+    /// when every one of them applies. For tests that build blocks by hand.
+    #[cfg(test)]
+    pub(crate) fn state_root_for(&self, txs: &[Transaction]) -> Result<Hash, ApplyBlockError> {
+        let height = self
+            .storage
+            .get_latest_height()
+            .map_err(|e| ApplyBlockError::Storage(e.to_string()))?;
+        let parent = self
+            .storage
+            .get_block_by_height(height)
+            .map_err(|e| ApplyBlockError::Storage(e.to_string()))?
+            .ok_or_else(|| ApplyBlockError::Storage("parent block not found".to_string()))?;
+        let mut view = BlockView::new(self)?;
+        for (i, tx) in txs.iter().enumerate() {
+            let executed = view.execute(i, tx)?;
+            view.commit(executed);
+        }
+        Ok(next_state_root(&parent.header.state_root, &view.changes()))
+    }
+
     /// Evicts what has stayed pending too long.
     pub async fn sweep_mempool(&self) {
         let storage = &self.storage;
@@ -812,6 +590,395 @@ fn log_evictions(evicted: &[Eviction]) {
                 eviction.hash, eviction.reason
             );
         }
+    }
+}
+
+/// One transaction executed on a [`BlockView`], not yet part of it.
+enum Executed {
+    /// A stored `Transfer` or `Stake`: skipped, as Lock §5 defines. It
+    /// changes nothing and contributes nothing to `state_root` (RFC 0006
+    /// §4, §6).
+    Skipped,
+    /// Applied: what committing it to the view changes.
+    Applied(Box<Effect>),
+}
+
+/// What one applied transaction changes, computed without changing
+/// anything. Committing it is infallible, so a transaction either has all
+/// of its effects on the view or none of them.
+struct Effect {
+    tx_hash: Hash,
+    tx: Transaction,
+    /// The sender, and the receiver of a `Transfer` or `Stake` when it is
+    /// another account, each after this transaction.
+    accounts: Vec<(Address, Account)>,
+    record: Record,
+}
+
+/// The task or receipt an applied transaction adds, if any.
+enum Record {
+    None,
+    Task([u8; 32], ComputeTask),
+    Receipt(Receipt),
+}
+
+/// The state a block builds on, plus the effects of the transactions
+/// committed to it so far, never written to storage by itself.
+///
+/// Block validation ([`NodeBackend::apply_block`]) and block production
+/// ([`RpcBackend::produce_block`]) execute transactions through this one
+/// type, so a producer cannot build a block its own validation computes
+/// differently. Validation rejects the block on the first failure;
+/// production leaves the failing transaction out, which the split between
+/// [`Self::execute`] (reads only) and [`Self::commit`] (cannot fail) makes
+/// free of any partial effect.
+struct BlockView<'a, S: Storage> {
+    backend: &'a NodeBackend<S>,
+    /// Every account an applied transaction touched, after it: senders, and
+    /// receivers of a `Transfer` or `Stake`. Exactly the account entries of
+    /// the state commitment.
+    accounts: std::collections::HashMap<Address, Account>,
+    /// Tasks registered by this block, keyed by `task_id` (RFC 0005 rule
+    /// p, same-block half; rules q–s, same-block half).
+    tasks: std::collections::HashMap<[u8; 32], ComputeTask>,
+    /// `task_id`s anchored by this block (RFC 0002 §4 rule j). Separate
+    /// from `tasks`: a task and its receipt may share one id within a
+    /// block, in that order.
+    anchored: std::collections::HashSet<[u8; 32]>,
+    /// Receipts anchored by this block, in body order.
+    receipts: Vec<Receipt>,
+    /// Transaction, sequence, task and receipt writes, in body order.
+    ops: Vec<BatchOp>,
+    /// Transaction-sequence counter: read once from storage and advanced
+    /// locally. The persistent counter is written only in the final batch.
+    last_seq: u64,
+}
+
+impl<'a, S: Storage> BlockView<'a, S> {
+    /// A view of the committed tip of `backend`, with nothing executed.
+    fn new(backend: &'a NodeBackend<S>) -> Result<Self, ApplyBlockError> {
+        let last_seq = backend
+            .storage
+            .get_last_included_tx_seq()
+            .map_err(|e| ApplyBlockError::Storage(e.to_string()))?;
+        Ok(Self {
+            backend,
+            accounts: std::collections::HashMap::new(),
+            tasks: std::collections::HashMap::new(),
+            anchored: std::collections::HashSet::new(),
+            receipts: Vec::new(),
+            ops: Vec::new(),
+            last_seq,
+        })
+    }
+
+    /// The account at `address` in this view: as an earlier transaction of
+    /// the block left it, or else as stored.
+    fn account(&self, address: &Address) -> Result<Option<Account>, ApplyBlockError> {
+        if let Some(account) = self.accounts.get(address) {
+            return Ok(Some(account.clone()));
+        }
+        self.backend
+            .storage
+            .get_account(address)
+            .map_err(|e| ApplyBlockError::Storage(e.to_string()))
+    }
+
+    /// Executes transaction `i` of a block on this view, changing nothing.
+    ///
+    /// The rules and their order are those of `apply_block`: type and form
+    /// (a, k), field constraints (b, l), signature (c), the stored-copy
+    /// rule, then the path of the transaction's type.
+    #[allow(clippy::too_many_lines)] // one consensus rule sequence, kept in normative order
+    fn execute(&self, i: usize, tx: &Transaction) -> Result<Executed, ApplyBlockError> {
+        let storage = self.backend.storage.as_ref();
+
+        // (a)/(k) Type/form (RFC 0002 §2, RFC 0005 §3): AnchorReceipt
+        // requires an AnchorReceipt payload, ComputeTask a ComputeTask
+        // payload; every other type requires None.
+        let Ok(typed) = check_type_payload(tx) else {
+            return Err(ApplyBlockError::TypePayloadMismatch(i));
+        };
+
+        // (b)/(l) Field constraints: unused fields are pinned to
+        // canonical values so two encodings of the same anchoring or
+        // task commitment cannot differ, and neither can move money.
+        let canonical_fields = tx.amount == 0 && tx.receiver == Address::zero();
+        match typed {
+            TypedPayload::Anchor(_) if !canonical_fields => {
+                return Err(ApplyBlockError::AnchorFieldConstraint(i));
+            }
+            TypedPayload::Task(_) if !canonical_fields => {
+                return Err(ApplyBlockError::TaskFieldConstraint(i));
+            }
+            TypedPayload::Plain | TypedPayload::Anchor(_) | TypedPayload::Task(_) => {}
+        }
+
+        // (c) Transaction signature, for this node's network.
+        if !self.backend.signature_is_valid(tx) {
+            return Err(ApplyBlockError::InvalidSignature(i));
+        }
+
+        let tx_hash = compute_tx_hash(tx);
+
+        // Already-stored transaction handling. For plain types this is
+        // the v0.2 idempotent skip (unchanged). An AnchorReceipt must
+        // NOT take the skip path: a stored anchor transaction implies
+        // its receipt is anchored (both commit in one atomic batch), so
+        // re-including it — even byte-identically — violates global
+        // task_id uniqueness and is rejected with the same verdict rule
+        // (i) would produce. A stored ComputeTask transaction likewise
+        // implies its task is registered, and rule (p) gives the same
+        // verdict. "Stored" is committed by an earlier block, never this
+        // view (RFC 0006 §6).
+        let already_stored = storage
+            .get_transaction(&tx_hash)
+            .map_err(|e| ApplyBlockError::Storage(e.to_string()))?
+            .is_some();
+        if already_stored {
+            return match typed {
+                TypedPayload::Anchor(_) => Err(ApplyBlockError::TaskIdAlreadyAnchored(i)),
+                TypedPayload::Task(_) => Err(ApplyBlockError::TaskAlreadyRegistered(i)),
+                TypedPayload::Plain => Ok(Executed::Skipped),
+            };
+        }
+
+        match typed {
+            TypedPayload::Task(task) => {
+                // ── ComputeTask path (RFC 0005 §3 rules m–p, with the
+                // generic nonce rule d in its v0.3 position) ────────────
+                // (d) Nonce: the sender account must exist and the nonce
+                // must match; the nonce is consumed. No balance movement
+                // (§2.8: a task commitment is not a transfer).
+                let sender_addr = tx.sender;
+                let mut sender =
+                    self.account(&sender_addr)?.ok_or(ApplyBlockError::SenderAccountMissing(i))?;
+                sender
+                    .validate_and_increment_nonce(tx.nonce)
+                    .map_err(|_| ApplyBlockError::InvalidNonce(i))?;
+
+                // (m) version, (n) bound, (o) submitter identity, in that
+                // order; the task_id is derived only once the bound holds.
+                let task_id = check_task_envelope(tx, task).map_err(|why| match why {
+                    TaskRuleViolation::Version => ApplyBlockError::TaskVersionUnsupported(i),
+                    TaskRuleViolation::SpecTooLarge => ApplyBlockError::ExecutionSpecTooLarge(i),
+                    TaskRuleViolation::SubmitterMismatch => {
+                        ApplyBlockError::SenderSubmitterMismatch(i)
+                    }
+                })?;
+
+                // (p) Uniqueness: prior chain state first, then tasks
+                // committed earlier in this block. First-registered-wins;
+                // the task_id is content-derived, so a byte-identical
+                // envelope under a fresh nonce is the same task (§2.6).
+                if storage
+                    .has_task(&task_id)
+                    .map_err(|e| ApplyBlockError::Storage(e.to_string()))?
+                {
+                    return Err(ApplyBlockError::TaskAlreadyRegistered(i));
+                }
+                if self.tasks.contains_key(&task_id) {
+                    return Err(ApplyBlockError::TaskRepeatedInBlock(i));
+                }
+
+                // The stored task is its canonical SCALE encoding, keyed
+                // by task_id, and storage never decodes it (§4). No status
+                // is written: "submitted" is the presence of this key
+                // (§4.1).
+                Ok(Executed::Applied(Box::new(Effect {
+                    tx_hash,
+                    tx: tx.clone(),
+                    accounts: vec![(sender_addr, sender)],
+                    record: Record::Task(task_id, task.clone()),
+                })))
+            }
+            TypedPayload::Anchor(receipt) => {
+                // ── AnchorReceipt path (RFC 0002 §2 rules d–j) ──────────
+                // (d) Nonce: the sender account must exist and the nonce
+                // must match; the nonce is consumed. No balance movement.
+                let sender_addr = tx.sender;
+                let mut sender =
+                    self.account(&sender_addr)?.ok_or(ApplyBlockError::SenderAccountMissing(i))?;
+                sender
+                    .validate_and_increment_nonce(tx.nonce)
+                    .map_err(|_| ApplyBlockError::InvalidNonce(i))?;
+
+                // (e) Metadata size cap (consensus parameter, RFC 0002 §3).
+                if receipt.metadata.len() > MAX_RECEIPT_METADATA_BYTES {
+                    return Err(ApplyBlockError::ReceiptMetadataTooLarge(i));
+                }
+                // (f) Receipt version.
+                if receipt.version != RECEIPT_VERSION {
+                    return Err(ApplyBlockError::ReceiptVersionUnsupported(i));
+                }
+                // (g) Submitter identity: transaction-level anchoring rule
+                // orchestrated here, not intrinsic receipt validity.
+                if tx.sender != receipt.executor {
+                    return Err(ApplyBlockError::SenderExecutorMismatch(i));
+                }
+                // (h) Receipt signature over the raw 32-byte receipt hash.
+                if !verify_receipt_signature(receipt) {
+                    return Err(ApplyBlockError::InvalidReceiptSignature(i));
+                }
+                // (i)+(j) Duplicates via the composite index: prior chain
+                // state first, then earlier receipts in this block.
+                let index = CompositeReceiptIndex {
+                    storage,
+                    pending: &self.anchored,
+                };
+                match index
+                    .locate(&receipt.task_id)
+                    .map_err(|e| ApplyBlockError::Storage(e.to_string()))?
+                {
+                    Some(DuplicateSource::PriorState) => {
+                        return Err(ApplyBlockError::TaskIdAlreadyAnchored(i));
+                    }
+                    Some(DuplicateSource::CurrentBlock) => {
+                        return Err(ApplyBlockError::TaskIdRepeatedInBlock(i));
+                    }
+                    None => {}
+                }
+
+                // (q)+(r)+(s) Binding to the registered task (RFC 0005
+                // §3): the task exists in prior chain state or earlier in
+                // this block, the receipt carries its input_commitment,
+                // and the receipt's executor is the one the task named.
+                // Rule (g) above already proved the anchoring sender IS
+                // receipt.executor, so (s) makes the sender the authorised
+                // party. Corrupt stored task bytes are a storage failure,
+                // not an unknown task.
+                let stored_task =
+                    load_task(storage, &receipt.task_id).map_err(ApplyBlockError::Storage)?;
+                let registered = stored_task.as_ref().or_else(|| self.tasks.get(&receipt.task_id));
+                check_receipt_binding(receipt, registered).map_err(|why| match why {
+                    BindingViolation::TaskNotRegistered => ApplyBlockError::TaskNotRegistered(i),
+                    BindingViolation::InputCommitmentMismatch => {
+                        ApplyBlockError::ReceiptInputCommitmentMismatch(i)
+                    }
+                    BindingViolation::ExecutorNotAuthorised => {
+                        ApplyBlockError::ReceiptExecutorNotAuthorised(i)
+                    }
+                })?;
+
+                // Stored bytes are the canonical SCALE encoding; storage
+                // never decodes them.
+                Ok(Executed::Applied(Box::new(Effect {
+                    tx_hash,
+                    tx: tx.clone(),
+                    accounts: vec![(sender_addr, sender)],
+                    record: Record::Receipt(receipt.clone()),
+                })))
+            }
+            TypedPayload::Plain => {
+                // ── Transfer path (RFC 0006 §6 steps 1–5). Stake
+                // deliberately still falls through here (RFC 0002
+                // Non-Goals); the ComputeTask fall-through ended with
+                // RFC 0005 §5.1 and is rejected by rule (k) above. ──────
+
+                // 1. Read the sender; absent is InsufficientBalance.
+                let sender_addr = tx.sender;
+                let mut sender =
+                    self.account(&sender_addr)?.ok_or(ApplyBlockError::InsufficientBalance(i))?;
+
+                // 2. Nonce.
+                sender
+                    .validate_and_increment_nonce(tx.nonce)
+                    .map_err(|_| ApplyBlockError::InvalidNonce(i))?;
+
+                // Sender and receiver may be one account. It then has one
+                // view of its state: nothing moves, and the same balance
+                // check applies.
+                let receiver_addr = tx.receiver;
+                if receiver_addr == sender_addr {
+                    if sender.balance < tx.amount {
+                        return Err(ApplyBlockError::InsufficientBalance(i));
+                    }
+                    return Ok(Executed::Applied(Box::new(Effect {
+                        tx_hash,
+                        tx: tx.clone(),
+                        accounts: vec![(sender_addr, sender)],
+                        record: Record::None,
+                    })));
+                }
+
+                // 3–5. Debit, create the receiver if absent, credit.
+                let mut receiver =
+                    self.account(&receiver_addr)?.unwrap_or_else(|| Account::new(receiver_addr));
+                Account::transfer(&mut sender, &mut receiver, tx.amount)
+                    .map_err(|_| ApplyBlockError::InsufficientBalance(i))?;
+                Ok(Executed::Applied(Box::new(Effect {
+                    tx_hash,
+                    tx: tx.clone(),
+                    accounts: vec![(sender_addr, sender), (receiver_addr, receiver)],
+                    record: Record::None,
+                })))
+            }
+        }
+    }
+
+    /// Commits an executed transaction to the view. Cannot fail.
+    fn commit(&mut self, executed: Executed) {
+        let Executed::Applied(effect) = executed else {
+            return;
+        };
+        let effect = *effect;
+        // Allocate the sequence number from the local counter — no
+        // persistent mutation during validation.
+        self.last_seq += 1;
+        self.ops.push(BatchOp::PutTransaction(effect.tx_hash, effect.tx));
+        self.ops.push(BatchOp::PutTxSeqIndex(self.last_seq, effect.tx_hash));
+        match effect.record {
+            Record::None => {}
+            Record::Task(task_id, task) => {
+                self.ops.push(BatchOp::PutTask(task_id, task.encode()));
+                self.tasks.insert(task_id, task);
+            }
+            Record::Receipt(receipt) => {
+                self.ops.push(BatchOp::PutReceipt(receipt.task_id, receipt.encode()));
+                self.anchored.insert(receipt.task_id);
+                self.receipts.push(receipt);
+            }
+        }
+        for (address, account) in effect.accounts {
+            self.accounts.insert(address, account);
+        }
+    }
+
+    /// What the committed transactions change (RFC 0006 §4): every touched
+    /// account, every registered task and every anchored receipt, each with
+    /// its value after the whole block. A skipped transaction contributes
+    /// nothing, and an empty view has no changes.
+    fn changes(&self) -> StateChanges {
+        let mut changes = StateChanges::new();
+        for (address, account) in &self.accounts {
+            changes.account(address, account);
+        }
+        for (task_id, task) in &self.tasks {
+            changes.task(*task_id, task);
+        }
+        for receipt in &self.receipts {
+            changes.receipt(receipt);
+        }
+        changes
+    }
+
+    /// The storage writes of the committed transactions: their records,
+    /// every touched account and, when the block holds any transaction,
+    /// the sequence counters.
+    fn into_ops(mut self, block_has_transactions: bool) -> Vec<BatchOp> {
+        for (address, account) in &self.accounts {
+            self.ops.push(BatchOp::PutAccount(*address, account.clone()));
+        }
+        if block_has_transactions {
+            // Persist the sequence state only now, in the same atomic
+            // batch as everything else: the counter baseline was read once
+            // and advanced locally, so a rejected block leaves both meta
+            // keys byte-for-byte unchanged, and sequence values are a pure
+            // function of accepted chain history.
+            self.ops.push(BatchOp::SetTxSeq(self.last_seq));
+            self.ops.push(BatchOp::SetLastIncludedTxSeq(self.last_seq));
+        }
+        self.ops
     }
 }
 
@@ -911,6 +1078,15 @@ pub enum ApplyBlockError {
     /// (RFC 0005 rule s).
     #[error("receipt executor is not authorised by the task at index {0}")]
     ReceiptExecutorNotAuthorised(usize),
+    /// The block's `state_root` is not the one computed locally after its
+    /// transactions (RFC 0006 §5 rule w).
+    #[error("state_root mismatch: computed {expected}, block carries {got}")]
+    StateRootMismatch {
+        /// The root this node computed.
+        expected: Hash,
+        /// The root in the block header.
+        got: Hash,
+    },
     /// Storage error.
     #[error("storage error: {0}")]
     Storage(String),
@@ -926,16 +1102,16 @@ pub(crate) fn compute_tx_hash(tx: &Transaction) -> Hash {
 }
 
 /// The genesis block of `genesis`, derived and never received (RFC 0006
-/// §1): height 0, zero parent, the file's timestamp, an empty body and
-/// the `transactions_root` of an empty list. `state_root` stays zero until
-/// S1-6 defines the state commitment, and the producer fields arrive with
-/// S1-7.
+/// §1): height 0, zero parent, the file's timestamp, an empty body, the
+/// `transactions_root` of an empty list, and `state_root(0)` of the
+/// network's `chain_id` and allocations (RFC 0006 §4). The producer fields
+/// arrive with S1-7.
 pub(crate) fn genesis_block(genesis: &Genesis) -> Block {
     let txs: Vec<Transaction> = Vec::new();
     Block {
         header: BlockHeader {
             parent_hash: Hash::zero(),
-            state_root: Hash::zero(),
+            state_root: genesis_state_root(&genesis.chain_id, &genesis.allocations),
             transactions_root: compute_transactions_root(&txs),
             timestamp: genesis.timestamp,
             height: 0,
@@ -1317,29 +1493,67 @@ impl<S: Storage + Send + Sync + 'static> RpcBackend for NodeBackend<S> {
                 let pool = mempool.read().await;
                 pool.peek_for_block(MAX_TX_PER_BLOCK)
             };
-            let txs: Vec<Transaction> = selected.iter().map(|(_, tx)| tx.clone()).collect();
 
-            // Build the block.
+            // Execute the candidates on an uncommitted view of the tip, in
+            // selection order, through the same execution as apply_block
+            // (RFC 0006 §3). A candidate that fails is left out with no
+            // effect on the view, and the block stays valid without it. A
+            // storage failure is no verdict on any transaction: production
+            // stops and nothing changes.
+            let (txs, failed, state_root) = {
+                let mut view =
+                    BlockView::new(&backend).map_err(|e| BackendError::Internal(e.to_string()))?;
+                let mut txs: Vec<Transaction> = Vec::new();
+                let mut failed: Vec<Hash> = Vec::new();
+                for (hash, tx) in selected {
+                    match view.execute(txs.len(), &tx) {
+                        Ok(executed) => {
+                            view.commit(executed);
+                            txs.push(tx);
+                        }
+                        Err(ApplyBlockError::Storage(e)) => {
+                            return Err(BackendError::Internal(format!("storage error: {e}")));
+                        }
+                        Err(e) => {
+                            info!(
+                                "Leaving pending transaction {hash} out of block {new_height}: {e}"
+                            );
+                            failed.push(hash);
+                        }
+                    }
+                }
+                let state_root = next_state_root(&parent_block.header.state_root, &view.changes());
+                (txs, failed, state_root)
+            };
+
+            // Build the block: the root of the view, and a timestamp never
+            // below the parent's (RFC 0006 §3).
             let block = Block {
                 header: BlockHeader {
                     parent_hash,
-                    state_root: Hash::zero(),
+                    state_root,
                     transactions_root: compute_transactions_root(&txs),
-                    timestamp: now_secs(),
+                    timestamp: now_secs().max(parent_block.header.timestamp),
                     height: new_height,
                 },
                 body: BlockBody { transactions: txs },
             };
 
-            // Delegate to apply_block (shared validation + atomic commit).
-            // On failure this returns early and the mempool is untouched:
-            // every selected transaction is still pending.
+            // Delegate to apply_block, which validates the block as it
+            // would a peer's and commits it atomically. On failure this
+            // returns early and the mempool is untouched: every selected
+            // transaction is still pending.
             let block_hash =
                 backend.apply_block(&block).map_err(|e| BackendError::Internal(e.to_string()))?;
 
             // Applied and committed — only now do the included transactions
             // leave the mempool.
             backend.after_block_committed(&block).await;
+
+            // A candidate that failed would be selected for every later
+            // block and fail each time. It leaves the pool, with what
+            // depends on it (plan D-5).
+            backend.evict_failed(&failed).await;
 
             // Broadcast the newly produced block to connected peers.
             if let Some(ref broadcaster) = backend.broadcaster {
@@ -1489,7 +1703,7 @@ mod tests {
     use mbongo_storage::InMemoryStorage;
 
     /// Creates a backend with producer role enabled (default for most tests).
-    fn make_backend() -> NodeBackend<InMemoryStorage> {
+    pub(super) fn make_backend() -> NodeBackend<InMemoryStorage> {
         NodeBackend::new(InMemoryStorage::new(), true)
     }
 
@@ -1541,7 +1755,7 @@ mod tests {
     }
 
     /// Creates a properly signed transfer transaction from `sender_sk` to `receiver_addr`.
-    fn signed_transfer(
+    pub(super) fn signed_transfer(
         sender_sk: &SigningKey,
         receiver_addr: Address,
         amount: u128,
@@ -2190,15 +2404,22 @@ mod tests {
 
     // ── apply_block tests ──────────────────────────────────────────────
 
-    /// Build a valid block on top of the current chain tip.
-    fn build_valid_block<S: Storage>(backend: &NodeBackend<S>, txs: Vec<Transaction>) -> Block {
+    /// Build a block on top of the current chain tip. When every
+    /// transaction applies, it carries the `state_root` they give, so it is
+    /// valid; otherwise the root is zero, and the block is refused at the
+    /// failing transaction, before rule (w) is reached.
+    pub(super) fn build_valid_block<S: Storage>(
+        backend: &NodeBackend<S>,
+        txs: Vec<Transaction>,
+    ) -> Block {
         let current_height = backend.storage.get_latest_height().unwrap();
         let parent = backend.storage.get_block_by_height(current_height).unwrap().unwrap();
         let parent_hash = compute_block_hash(&parent);
+        let state_root = backend.state_root_for(&txs).unwrap_or_else(|_| Hash::zero());
         Block {
             header: BlockHeader {
                 parent_hash,
-                state_root: Hash::zero(),
+                state_root,
                 transactions_root: compute_transactions_root(&txs),
                 timestamp: now_secs(),
                 height: current_height + 1,
@@ -2209,7 +2430,7 @@ mod tests {
 
     /// Builds a receipt with the given fields, signed by `executor_sk`
     /// over the raw receipt hash (valid receipt signature).
-    fn signed_receipt_for(
+    pub(super) fn signed_receipt_for(
         executor_sk: &SigningKey,
         task_id: [u8; 32],
         metadata: Vec<u8>,
@@ -2231,7 +2452,7 @@ mod tests {
 
     /// Wraps a receipt in a canonically formed `AnchorReceipt` transaction
     /// (amount 0, zero receiver) signed by `sk`.
-    fn signed_anchor_tx(sk: &SigningKey, nonce: u64, receipt: Receipt) -> Transaction {
+    pub(super) fn signed_anchor_tx(sk: &SigningKey, nonce: u64, receipt: Receipt) -> Transaction {
         let sender = Address(sk.verifying_key().to_bytes());
         let mut tx = Transaction {
             tx_type: TransactionType::AnchorReceipt,
@@ -2281,7 +2502,11 @@ mod tests {
     }
 
     /// Funds an account for `sk` with the given balance.
-    fn fund(backend: &NodeBackend<InMemoryStorage>, sk: &SigningKey, balance: u128) -> Address {
+    pub(super) fn fund(
+        backend: &NodeBackend<InMemoryStorage>,
+        sk: &SigningKey,
+        balance: u128,
+    ) -> Address {
         let addr = Address(sk.verifying_key().to_bytes());
         let mut acc = Account::new(addr);
         acc.balance = balance;
@@ -4224,20 +4449,26 @@ mod tests {
 
     // ── Issue #100: drain/apply safety ─────────────────────────────────
 
-    /// Block production selects transactions without removing them, so a
-    /// failed application loses nothing. Without this, a rejected block
-    /// would silently discard the whole selected batch — one transaction
-    /// before #100, a sender's entire pending chain after it.
+    /// Block production selects transactions without removing them (#100),
+    /// and since S1-6 a candidate that cannot apply no longer fails the
+    /// block: it is left out, the rest of the selection is included, and
+    /// nothing valid is lost. The stale candidate leaves the pool as
+    /// `Failed` instead of being selected again for every block (D-5).
     #[tokio::test]
-    async fn failed_block_application_keeps_transactions_pending() {
+    async fn a_stale_candidate_is_left_out_and_the_rest_is_included() {
         let backend = make_backend();
         backend.ensure_genesis(&Genesis::dev()).unwrap();
         let sk = SigningKey::from_bytes(&[98u8; 32]);
         let addr = fund(&backend, &sk, 10_000);
+        let other_sk = SigningKey::from_bytes(&[99u8; 32]);
+        fund(&backend, &other_sk, 10_000);
 
         let pending_tx = signed_transfer(&sk, Address([1u8; 32]), 10, 0);
         let pending_hash = compute_tx_hash(&pending_tx);
         backend.submit_transaction(pending_tx).await.unwrap();
+        let valid_tx = signed_transfer(&other_sk, Address([3u8; 32]), 10, 0);
+        let valid_hash = compute_tx_hash(&valid_tx);
+        backend.submit_transaction(valid_tx).await.unwrap();
 
         // Consume nonce 0 through a different transaction applied outside
         // the mempool, exactly as an incoming block would. The pending
@@ -4250,27 +4481,19 @@ mod tests {
             1
         );
 
-        // Production now fails, because the selected transaction is stale.
-        let err = backend.produce_block().await.unwrap_err().to_string();
-        assert!(
-            err.contains("nonce"),
-            "expected a nonce failure, got: {err}"
-        );
+        let hash: Hash = backend.produce_block().await.unwrap().parse().unwrap();
+        let produced = backend.storage.get_block(&hash).unwrap().unwrap();
+        assert_eq!(produced.body.transactions.len(), 1);
+        assert_eq!(compute_tx_hash(&produced.body.transactions[0]), valid_hash);
+        // The stale transaction had no effect.
+        let account = backend.storage.get_account(&addr).unwrap().unwrap();
+        assert_eq!((account.nonce, account.balance), (1, 10_000 - 10));
 
-        // Nothing was lost, and every index is still consistent.
         let pool = backend.mempool.read().await;
-        assert_eq!(pool.len(), 1, "the transaction is still pending");
-        assert!(pool.contains_hash(&pending_hash));
-        assert_eq!(
-            pool.peek_for_block(10).len(),
-            1,
-            "order index still holds it"
-        );
-        // Committed nonce is 1, so the stale entry at 0 is below the walk.
-        let pending = pool.sender_pending(&addr, 1);
-        assert_eq!(pending.expected_nonce, Some(1));
-        assert_eq!(pending.len, 1, "still counted as a held resource");
-        assert_eq!(pending.pending_debit, 0, "a stale entry is not a debit");
+        assert!(!pool.contains_hash(&pending_hash), "the stale entry left");
+        assert!(!pool.contains_hash(&valid_hash), "the included entry left");
+        assert_eq!(pool.len(), 0);
+        assert!(pool.peek_for_block(10).is_empty(), "order index compacted");
     }
 
     // ── Issue #100: ordering ───────────────────────────────────────────
@@ -4766,7 +4989,7 @@ mod tests {
     use parity_scale_codec::Decode;
 
     /// A well-formed envelope naming `executor`, committed by `submitter`.
-    fn task_for(
+    pub(super) fn task_for(
         submitter: Address,
         executor: Address,
         salt: [u8; 32],
@@ -4784,7 +5007,7 @@ mod tests {
 
     /// Wraps a task in a canonically formed `ComputeTask` transaction
     /// (amount 0, zero receiver) signed by `sk`.
-    fn signed_task_tx(sk: &SigningKey, nonce: u64, task: ComputeTask) -> Transaction {
+    pub(super) fn signed_task_tx(sk: &SigningKey, nonce: u64, task: ComputeTask) -> Transaction {
         let sender = Address(sk.verifying_key().to_bytes());
         let mut tx = Transaction {
             tx_type: TransactionType::ComputeTask,
@@ -6983,7 +7206,7 @@ mod tests {
         .into_bytes()
     }
 
-    fn address_of(sk: &SigningKey) -> Address {
+    pub(super) fn address_of(sk: &SigningKey) -> Address {
         Address(sk.verifying_key().to_bytes())
     }
 
@@ -7192,14 +7415,24 @@ mod tests {
 
     #[test]
     fn a_node_runs_one_chain_for_its_whole_life() {
-        // Same timestamp, so the same genesis block: only the chain differs.
+        // Same timestamp and allocations, so only the chain differs. Since
+        // S1-6, state_root(0) covers the chain_id, so the genesis blocks
+        // differ too, and the stored one refuses the other chain first.
         let other = Genesis::from_file_bytes(&genesis_file("other", 0, &[])).unwrap();
-        assert_eq!(genesis_block(&other), genesis_block(&Genesis::dev()));
+        let dev_block = genesis_block(&Genesis::dev());
+        assert_ne!(genesis_block(&other), dev_block);
         let backend = make_backend();
         backend.ensure_genesis(&Genesis::dev()).unwrap();
         let err = backend.ensure_genesis(&other).unwrap_err().to_string();
+        assert!(err.contains("is not the genesis block"), "{err}");
+        // Behind that check, the binding itself refuses a second chain.
+        let err = backend.bind_chain(&other).unwrap_err().to_string();
         assert!(err.contains("this node runs chain"), "{err}");
         assert_eq!(backend.chain_id(), Some(Genesis::dev().chain_id));
+        assert_eq!(
+            backend.storage.get_block_by_height(0).unwrap(),
+            Some(dev_block)
+        );
     }
 
     #[test]
@@ -7268,3 +7501,9 @@ mod tests {
         ));
     }
 }
+
+/// S1-6: state commitment and view-based production. A top-level path,
+/// so it resolves alike when `replay_harness` includes this file.
+#[cfg(test)]
+#[path = "backend_state_tests.rs"]
+mod state_tests;

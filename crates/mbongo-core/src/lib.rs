@@ -40,6 +40,7 @@ pub mod crypto;
 pub mod genesis;
 mod primitives;
 pub mod receipt;
+pub mod state;
 
 pub use account::{Account, AccountError, MAX_TRANSACTION_NONCE};
 pub use compute_task::{
@@ -52,6 +53,7 @@ pub use primitives::{
     TransactionPayload, TransactionType, TX_SIGNING_DOMAIN,
 };
 pub use receipt::Receipt;
+pub use state::{genesis_state_root, next_state_root, StateChanges, STATE_DOMAIN};
 
 #[cfg(test)]
 mod tests {
