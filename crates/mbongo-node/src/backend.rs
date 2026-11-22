@@ -6746,4 +6746,162 @@ mod tests {
             "expected 9 blocks, 3 rejected"
         );
     }
+
+    // ── RFC 0006 §2–§3: strict signature verification (S1-2) ──────────
+
+    const STRICT_SIGNATURE_FIXTURE: &str =
+        include_str!("../../../test-vectors/signature/ed25519-strict-v1.json");
+
+    fn strict_case(name: &str) -> serde_json::Value {
+        let doc: serde_json::Value = serde_json::from_str(STRICT_SIGNATURE_FIXTURE).unwrap();
+        let found: Vec<serde_json::Value> = doc["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["name"] == name)
+            .cloned()
+            .collect();
+        assert_eq!(found.len(), 1, "exactly one strict case named {name}");
+        found.into_iter().next().unwrap()
+    }
+
+    fn hex_field<const N: usize>(v: &serde_json::Value) -> [u8; N] {
+        hex::decode(v.as_str().unwrap()).unwrap().try_into().unwrap()
+    }
+
+    /// The transaction of a strict case, with its fixture signature.
+    fn strict_transaction(name: &str) -> Transaction {
+        let c = strict_case(name);
+        let t = &c["transaction"];
+        Transaction {
+            tx_type: TransactionType::Transfer,
+            sender: Address(hex_field(&t["sender"])),
+            receiver: Address(hex_field(&t["receiver"])),
+            amount: t["amount"].as_str().unwrap().parse().unwrap(),
+            nonce: t["nonce"].as_str().unwrap().parse().unwrap(),
+            payload: TransactionPayload::None,
+            signature: hex_field(&c["signature"]),
+        }
+    }
+
+    /// Every strict transaction case: `apply_block` refuses the invalid ones
+    /// with `InvalidSignature` and writes nothing, and applies the valid ones.
+    #[test]
+    fn apply_block_follows_the_strict_signature_verdicts() {
+        let doc: serde_json::Value = serde_json::from_str(STRICT_SIGNATURE_FIXTURE).unwrap();
+        let names: Vec<String> = doc["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["kind"] == "transaction")
+            .map(|c| c["name"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(names.len(), 14, "expected 14 transaction cases");
+        let (mut applied, mut refused) = (0, 0);
+        for name in &names {
+            let tx = strict_transaction(name);
+            let backend = make_backend();
+            backend.ensure_genesis().unwrap();
+            let mut funded = Account::new(tx.sender);
+            funded.balance = 5_000;
+            funded.nonce = tx.nonce;
+            backend.storage.put_account(&tx.sender, &funded).unwrap();
+            let height = backend.storage.get_latest_height().unwrap();
+            let block = build_valid_block(&backend, vec![tx.clone()]);
+            if strict_case(name)["expected"] == "valid" {
+                backend.apply_block(&block).unwrap_or_else(|e| panic!("{name}: {e}"));
+                applied += 1;
+            } else {
+                let err = backend.apply_block(&block).unwrap_err();
+                assert!(
+                    matches!(err, ApplyBlockError::InvalidSignature(0)),
+                    "{name}: {err}"
+                );
+                assert_eq!(
+                    backend.storage.get_latest_height().unwrap(),
+                    height,
+                    "{name}"
+                );
+                assert_eq!(
+                    backend.storage.get_account(&tx.sender).unwrap(),
+                    Some(funded),
+                    "{name}"
+                );
+                assert!(
+                    backend.storage.get_account(&tx.receiver).unwrap().is_none(),
+                    "{name}"
+                );
+                refused += 1;
+            }
+        }
+        assert_eq!(
+            (applied, refused),
+            (3, 11),
+            "expected 3 applied and 11 refused"
+        );
+    }
+
+    #[tokio::test]
+    async fn admission_refuses_signatures_the_strict_definition_rejects() {
+        for name in [
+            "tx-key-identity",
+            "tx-r-identity",
+            "tx-cofactored-equation-only",
+        ] {
+            let tx = strict_transaction(name);
+            let backend = make_backend();
+            backend.ensure_genesis().unwrap();
+            let mut funded = Account::new(tx.sender);
+            funded.balance = 5_000;
+            backend.storage.put_account(&tx.sender, &funded).unwrap();
+            let err = backend.submit_transaction(tx).await.unwrap_err().to_string();
+            assert!(err.contains("invalid signature"), "{name}: {err}");
+            assert_eq!(backend.mempool.read().await.len(), 0, "{name}");
+        }
+    }
+
+    /// Rule (h): an anchor whose receipt signature satisfies only the
+    /// cofactored equation is refused before any task binding is consulted.
+    #[test]
+    fn apply_block_refuses_a_receipt_signature_the_strict_definition_rejects() {
+        let c = strict_case("receipt-cofactored-equation-only");
+        let receipt_doc: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../test-vectors/receipt/receipt-v1.json"
+        ))
+        .unwrap();
+        let seed: [u8; 32] = hex_field(&receipt_doc["test_key"]["ed25519_seed"]);
+        let sk = SigningKey::from_bytes(&seed);
+        assert_eq!(
+            sk.verifying_key().to_bytes(),
+            hex_field::<32>(&c["public_key"])
+        );
+        let r = &receipt_doc["valid"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["name"] == "empty-metadata")
+            .unwrap()["receipt"];
+        let receipt = Receipt {
+            version: u8::try_from(r["version"].as_u64().unwrap()).unwrap(),
+            task_id: hex_field(&r["task_id"]),
+            input_commitment: hex_field(&r["input_commitment"]),
+            output_commitment: hex_field(&r["output_commitment"]),
+            executor: Address(hex_field(&c["receipt"]["executor"])),
+            metadata: vec![],
+            signature: hex_field(&c["signature"]),
+        };
+        assert_eq!(receipt.receipt_hash().0, hex_field::<32>(&c["message"]));
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let addr = fund_with_nonce(&backend, &sk, 10, 0);
+        let height = backend.storage.get_latest_height().unwrap();
+        let block = build_valid_block(&backend, vec![signed_anchor_tx(&sk, 0, receipt)]);
+        let err = backend.apply_block(&block).unwrap_err();
+        assert!(
+            matches!(err, ApplyBlockError::InvalidReceiptSignature(0)),
+            "{err}"
+        );
+        assert_eq!(backend.storage.get_latest_height().unwrap(), height);
+        assert_eq!(account(&backend, addr).nonce, 0);
+    }
 }

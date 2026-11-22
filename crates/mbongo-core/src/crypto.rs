@@ -390,6 +390,89 @@ impl std::fmt::Display for HexError {
 
 impl std::error::Error for HexError {}
 
+// ============================================================================
+// Strict Ed25519 verification (RFC 0006 §3)
+// ============================================================================
+
+/// The Ed25519 group order `L = 2^252 + 27742317777372353535851937790883648493`,
+/// little-endian.
+const GROUP_ORDER_LE: [u8; 32] = [
+    0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
+];
+
+/// `y = 1`, the identity's `y`, little-endian with the sign bit clear.
+const Y_ONE: [u8; 32] = {
+    let mut y = [0u8; 32];
+    y[0] = 1;
+    y
+};
+
+/// `y = p - 1 = 2^255 - 20`, little-endian with the sign bit clear.
+const Y_P_MINUS_ONE: [u8; 32] = {
+    let mut y = [0xffu8; 32];
+    y[0] = 0xec;
+    y[31] = 0x7f;
+    y
+};
+
+/// Whether a 32-byte little-endian scalar is below the group order.
+fn scalar_is_canonical(s: &[u8; 32]) -> bool {
+    for i in (0..32).rev() {
+        if s[i] != GROUP_ORDER_LE[i] {
+            return s[i] < GROUP_ORDER_LE[i];
+        }
+    }
+    false // equal to L
+}
+
+/// Whether a point encoding is canonical (RFC 8032 §5.1.3): `y < p`, and
+/// the sign bit is not set when `x = 0`, which happens only for `y = 1` and
+/// `y = p - 1`.
+fn point_encoding_is_canonical(bytes: &[u8; 32]) -> bool {
+    let sign = bytes[31] >> 7;
+    let mut y = *bytes;
+    y[31] &= 0x7f;
+    // y >= p = 2^255 - 19 exactly when the top 31 bytes are all ones
+    // (bit 255 cleared) and the lowest byte is at least 0xed.
+    let at_least_p = y[31] == 0x7f && y[1..31].iter().all(|b| *b == 0xff) && y[0] >= 0xed;
+    if at_least_p {
+        return false;
+    }
+    !(sign == 1 && (y == Y_ONE || y == Y_P_MINUS_ONE))
+}
+
+/// Verifies an Ed25519 signature by the strict definition of RFC 0006 §3,
+/// which §2 applies to transaction and receipt signatures.
+///
+/// A signature is valid only if all of these hold:
+/// - `s` is below the group order;
+/// - the public key and `R` are canonical encodings;
+/// - neither the public key nor `R` is of small order;
+/// - the verification equation holds without the cofactor.
+///
+/// The last two checks are those of `ed25519-dalek`'s `verify_strict`. It
+/// does not check canonical encoding, so that check is made here first.
+/// Any malformed input is a `false` verdict, never a panic.
+#[must_use]
+pub fn verify_ed25519_strict(public_key: &[u8; 32], message: &[u8], signature: &[u8; 64]) -> bool {
+    let mut r = [0u8; 32];
+    r.copy_from_slice(&signature[..32]);
+    let mut s = [0u8; 32];
+    s.copy_from_slice(&signature[32..]);
+    if !scalar_is_canonical(&s)
+        || !point_encoding_is_canonical(public_key)
+        || !point_encoding_is_canonical(&r)
+    {
+        return false;
+    }
+    let Ok(key) = ed25519_dalek::VerifyingKey::from_bytes(public_key) else {
+        return false;
+    };
+    key.verify_strict(message, &ed25519_dalek::Signature::from_bytes(signature))
+        .is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -609,5 +692,90 @@ mod tests {
     fn hex_invalid_chars() {
         let invalid = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
         assert!(matches!(hex_to_hash(invalid), Err(HexError::InvalidHex)));
+    }
+
+    // ── Strict Ed25519: the encoding checks at their boundaries ────────
+
+    /// `2^255 - 19 + offset`, little-endian, sign bit clear, for `offset` in 0..19.
+    fn y_at_least_p(offset: u8) -> [u8; 32] {
+        let mut y = [0xffu8; 32];
+        y[0] = 0xed + offset;
+        y[31] = 0x7f;
+        y
+    }
+
+    #[test]
+    fn scalar_canonical_at_the_group_order() {
+        assert!(scalar_is_canonical(&[0u8; 32]));
+        let mut below = GROUP_ORDER_LE;
+        below[0] -= 1;
+        assert!(scalar_is_canonical(&below), "L - 1");
+        assert!(!scalar_is_canonical(&GROUP_ORDER_LE), "L");
+        let mut above = GROUP_ORDER_LE;
+        above[0] += 1;
+        assert!(!scalar_is_canonical(&above), "L + 1");
+        assert!(!scalar_is_canonical(&[0xffu8; 32]), "2^256 - 1");
+    }
+
+    #[test]
+    fn point_encoding_canonical_at_the_field_prime() {
+        // y = p - 1 is canonical with the sign bit clear.
+        assert!(point_encoding_is_canonical(&Y_P_MINUS_ONE));
+        // Every y in p ..= 2^255 - 1 is not, with either sign bit.
+        for offset in 0..19 {
+            let mut y = y_at_least_p(offset);
+            assert!(!point_encoding_is_canonical(&y), "p + {offset}");
+            y[31] |= 0x80;
+            assert!(
+                !point_encoding_is_canonical(&y),
+                "p + {offset}, sign bit set"
+            );
+        }
+    }
+
+    #[test]
+    fn point_encoding_refuses_a_sign_bit_on_x_zero() {
+        // x = 0 exactly for y = 1 and y = p - 1.
+        for y in [Y_ONE, Y_P_MINUS_ONE] {
+            assert!(point_encoding_is_canonical(&y));
+            let mut signed = y;
+            signed[31] |= 0x80;
+            assert!(!point_encoding_is_canonical(&signed));
+        }
+        // Any other y keeps its sign bit as part of a canonical encoding.
+        let mut y2 = [0u8; 32];
+        y2[0] = 2;
+        y2[31] = 0x80;
+        assert!(point_encoding_is_canonical(&y2));
+    }
+
+    #[test]
+    fn strict_verification_accepts_an_honest_signature_and_refuses_its_variants() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let sk = SigningKey::from_bytes(&[0x2au8; 32]);
+        let key = sk.verifying_key().to_bytes();
+        let sig = sk.sign(b"mbongo").to_bytes();
+        assert!(verify_ed25519_strict(&key, b"mbongo", &sig));
+        assert!(
+            !verify_ed25519_strict(&key, b"mbongO", &sig),
+            "another message"
+        );
+        let mut flipped = sig;
+        flipped[0] ^= 1;
+        assert!(
+            !verify_ed25519_strict(&key, b"mbongo", &flipped),
+            "another R"
+        );
+        let mut high = sig;
+        high[63] |= 0x80;
+        assert!(!verify_ed25519_strict(&key, b"mbongo", &high), "s >= L");
+        assert!(
+            !verify_ed25519_strict(&[0u8; 32], b"mbongo", &sig),
+            "small-order key"
+        );
+        assert!(
+            !verify_ed25519_strict(&y_at_least_p(0), b"mbongo", &sig),
+            "key y = p"
+        );
     }
 }
