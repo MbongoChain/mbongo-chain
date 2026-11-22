@@ -49,7 +49,7 @@ pub use compute_task::{
 pub use genesis::{chain_id, ChainId, Genesis, GenesisError};
 pub use primitives::{
     compute_transactions_root, Address, Block, BlockBody, BlockHeader, Hash, Transaction,
-    TransactionPayload, TransactionType,
+    TransactionPayload, TransactionType, TX_SIGNING_DOMAIN,
 };
 pub use receipt::Receipt;
 
@@ -143,11 +143,11 @@ mod tests {
             payload: TransactionPayload::None,
             signature: [0u8; 64],
         };
-        let payload = tx.signing_payload();
+        let payload = tx.signing_payload(&chain());
         let sig = sk.sign(&payload);
         let mut tx_signed = tx;
         tx_signed.signature = sig.to_bytes();
-        assert!(tx_signed.verify_signature());
+        assert!(tx_signed.verify_signature(&chain()));
     }
 
     #[test]
@@ -165,11 +165,11 @@ mod tests {
             payload: TransactionPayload::None,
             signature: [0u8; 64],
         };
-        let sig = sk.sign(&tx.signing_payload());
+        let sig = sk.sign(&tx.signing_payload(&chain()));
         let mut tampered = tx.clone();
         tampered.amount = 11; // change payload after signing
         tampered.signature = sig.to_bytes();
-        assert!(!tampered.verify_signature());
+        assert!(!tampered.verify_signature(&chain()));
     }
 
     #[test]
@@ -347,7 +347,7 @@ mod tests {
         // The signing payload is the strict prefix before the signature,
         // and the task bytes begin at the same fixed offset as a receipt
         // would: 1 + 32 + 32 + 16 + 8 + 1 = 90.
-        let payload = tx.signing_payload();
+        let payload = tx.signed_fields();
         assert_eq!(&enc[..payload.len()], payload.as_slice());
         assert_eq!(payload[0], 0x01);
         assert_eq!(payload[89], 0x02);
@@ -390,7 +390,10 @@ mod tests {
         tx_anchor.payload = TransactionPayload::AnchorReceipt(Box::new(sample_receipt()));
 
         // The payload is covered by the signing payload...
-        assert_ne!(tx_none.signing_payload(), tx_anchor.signing_payload());
+        assert_ne!(
+            tx_none.signing_payload(&chain()),
+            tx_anchor.signing_payload(&chain())
+        );
         // ...and by the transaction hash (BLAKE3 over the full encoding).
         assert_ne!(
             crypto::blake3_hash(&tx_none.encode()),
@@ -404,12 +407,12 @@ mod tests {
         let sender = Address(sk.verifying_key().to_bytes());
         let mut tx = sample_transfer();
         tx.sender = sender;
-        tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
-        assert!(tx.verify_signature());
+        tx.signature = sk.sign(&tx.signing_payload(&chain())).to_bytes();
+        assert!(tx.verify_signature(&chain()));
 
         // Swapping the payload after signing must invalidate the signature.
         tx.payload = TransactionPayload::AnchorReceipt(Box::new(sample_receipt()));
-        assert!(!tx.verify_signature());
+        assert!(!tx.verify_signature(&chain()));
     }
 
     #[test]
@@ -511,5 +514,71 @@ mod tests {
         let ra = compute_transactions_root(&a);
         let rb = compute_transactions_root(&b);
         assert_ne!(ra, rb);
+    }
+
+    // ── RFC 0006 §2: the transaction signing domain (S1-5) ─────────────
+
+    /// The network these tests sign for: the dev chain.
+    fn chain() -> ChainId {
+        Genesis::dev().chain_id
+    }
+
+    /// Another network.
+    fn other_chain() -> ChainId {
+        ChainId([0x5Au8; 32])
+    }
+
+    fn signed_transfer(chain_id: &ChainId) -> (SigningKey, Transaction) {
+        let sk = SigningKey::from_bytes(&[0x21u8; 32]);
+        let mut tx = sample_transfer();
+        tx.sender = Address(sk.verifying_key().to_bytes());
+        tx.signature = sk.sign(&tx.signing_payload(chain_id)).to_bytes();
+        (sk, tx)
+    }
+
+    #[test]
+    fn the_signing_payload_is_the_domain_the_chain_id_and_the_fields() {
+        let (_, tx) = signed_transfer(&chain());
+        let payload = tx.signing_payload(&chain());
+        assert_eq!(TX_SIGNING_DOMAIN, b"mbongo-tx:v2");
+        assert_eq!(&payload[..12], b"mbongo-tx:v2");
+        assert_eq!(&payload[12..44], &chain().0);
+        assert_eq!(&payload[44..], tx.signed_fields().as_slice());
+        assert_eq!(payload.len(), 12 + 32 + 90);
+    }
+
+    #[test]
+    fn a_signature_for_one_chain_does_not_verify_on_another() {
+        let (_, tx) = signed_transfer(&chain());
+        assert!(tx.verify_signature(&chain()));
+        assert!(!tx.verify_signature(&other_chain()));
+        let (_, other) = signed_transfer(&other_chain());
+        assert!(other.verify_signature(&other_chain()));
+        assert!(!other.verify_signature(&chain()));
+        // Same key, same fields: only the domain differs.
+        assert_eq!(tx.signed_fields(), other.signed_fields());
+        assert_ne!(tx.signature, other.signature);
+    }
+
+    #[test]
+    fn a_v0_4_signature_over_the_bare_fields_does_not_verify() {
+        let (sk, mut tx) = signed_transfer(&chain());
+        tx.signature = sk.sign(&tx.signed_fields()).to_bytes();
+        assert!(!tx.verify_signature(&chain()));
+        // Nor a signature over the domain without the chain, or the chain
+        // without the domain.
+        tx.signature = sk.sign(&[TX_SIGNING_DOMAIN, &tx.signed_fields()].concat()).to_bytes();
+        assert!(!tx.verify_signature(&chain()));
+        tx.signature = sk.sign(&[&chain().0[..], &tx.signed_fields()].concat()).to_bytes();
+        assert!(!tx.verify_signature(&chain()));
+    }
+
+    #[test]
+    fn the_encoding_and_hash_do_not_include_the_domain() {
+        let (_, tx) = signed_transfer(&chain());
+        let enc = tx.encode();
+        assert_eq!(enc, [tx.signed_fields(), tx.signature.to_vec()].concat());
+        assert_eq!(enc.len(), 154);
+        assert!(!enc.windows(12).any(|w| w == TX_SIGNING_DOMAIN));
     }
 }

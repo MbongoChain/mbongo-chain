@@ -1,8 +1,12 @@
 //! A provider service: one per independently operated provider. Loopback only.
 //!
 //! ```text
-//! provider_service --config <file>
+//! provider_service --config <file> <--dev | --genesis <file>>
 //! ```
+//!
+//! `--dev | --genesis <file>`, exactly one, names the network every
+//! transaction is signed for (RFC 0006 §2). It is this binary's own
+//! configuration: no endpoint chooses it.
 //!
 //! The configuration names the node, the executor key file, the artifact
 //! directory, the runtimes and the isolation mode, which has no default.
@@ -22,12 +26,14 @@ use mbongo_compute::chain::RpcChainClient;
 use mbongo_compute::clock::SystemClock;
 use mbongo_compute::job::{JobSource, MeteringSink, RuntimeAdapter, RuntimeIdentity};
 use mbongo_compute::mvp::client::{load_key_file, parse_hex32, random_bytes};
+use mbongo_compute::network::NetworkArgs;
 use mbongo_compute::provider::containment::{Containment, ContainmentConfig};
 use mbongo_compute::provider::durable::DurableStore;
 use mbongo_compute::provider::runner::{RunnerConfig, SubprocessRuntime, RUNNER_CONTRACT};
 use mbongo_compute::provider::service::{
     MeteringLog, ProviderConfig, ProviderParts, ProviderService, ProviderStore,
 };
+use mbongo_core::ChainId;
 use serde::Deserialize;
 
 #[derive(Parser)]
@@ -39,6 +45,9 @@ struct Cli {
     /// Configuration file (JSON).
     #[arg(long)]
     config: PathBuf,
+    /// The network the anchoring transactions are signed for.
+    #[command(flatten)]
+    network: NetworkArgs,
 }
 
 #[derive(Deserialize)]
@@ -182,7 +191,7 @@ async fn stop_signal() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
-async fn serve(config: Config) -> Result<(), String> {
+async fn serve(config: Config, chain_id: ChainId) -> Result<(), String> {
     if !config.bind.ip().is_loopback() {
         return Err(format!(
             "refusing to bind {}: this service binds loopback only",
@@ -229,6 +238,7 @@ async fn serve(config: Config) -> Result<(), String> {
         Arc::new(SystemClock),
         random_bytes::<32>(),
         executor,
+        chain_id,
         ProviderParts {
             store,
             runtimes,
@@ -290,9 +300,9 @@ async fn main() -> ExitCode {
     let config = std::fs::read(&cli.config)
         .map_err(|e| format!("config: {}", e.kind()))
         .and_then(|b| serde_json::from_slice(&b).map_err(|e| format!("config: {e}")));
-    let result = match config {
-        Ok(c) => serve(c).await,
-        Err(e) => Err(e),
+    let result = match (config, cli.network.chain_id()) {
+        (Ok(c), Ok(chain_id)) => serve(c, chain_id).await,
+        (Err(e), _) | (_, Err(e)) => Err(e),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

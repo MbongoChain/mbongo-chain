@@ -1,7 +1,7 @@
 // TypeScript side of the shared cross-language ComputeTask vectors.
 //
 // Every expected value is read from test-vectors/compute-task/compute-task-v1
-// .json and test-vectors/rpc/compute-task-rpc-v1.json. Nothing is copied into
+// .json and test-vectors/rpc/compute-task-rpc-v2.json. Nothing is copied into
 // this file: a copied constant would only prove the copy was faithful. Rust
 // reads the same files, so agreement here is real interoperability.
 
@@ -20,6 +20,7 @@ import {
   computeTaskId,
   computeTaskIdPreimage,
   computeTaskSigningPayload,
+  computeTaskTransactionFields,
   computeTaskToWire,
   computeTaskTransactionHash,
   computeTaskTransactionToWire,
@@ -34,11 +35,13 @@ import { stringifyExact } from "../dist/json-exact.js";
 
 const load = (rel) => JSON.parse(readFileSync(new URL(rel, import.meta.url), "utf8"));
 
-const CT = load("../../../test-vectors/compute-task/compute-task-v1.json");
-const RPC = load("../../../test-vectors/rpc/compute-task-rpc-v1.json");
+const CT = load("../../../test-vectors/compute-task/compute-task-v2.json");
+const RPC = load("../../../test-vectors/rpc/compute-task-rpc-v2.json");
+// The network the v2 fixtures sign for (RFC 0006 section 2).
+const CHAIN = Uint8Array.from(Buffer.from(CT.chain.chain_id, "hex"));
 const RX = load("../../../test-vectors/receipt/receipt-v1.json");
 for (const [name, doc] of [["compute-task", CT], ["rpc", RPC], ["receipt", RX]]) {
-  assert.equal(doc.fixture_version, 1, `${name} fixture: unsupported schema version`);
+  assert.equal(doc.fixture_version, doc.supersedes ? 2 : 1, `${name} fixture: unsupported schema version`);
 }
 
 const unhex = (s) => {
@@ -175,7 +178,7 @@ test("execution_spec: 0 and 1024 bytes are accepted, 1025 is rejected before any
   for (const f of [encodeComputeTask, computeTaskId, computeTaskToWire]) {
     assert.throws(() => f(over), (e) => e instanceof MbongoComputeTaskError && e.field === "executionSpec", f.name);
   }
-  assert.throws(() => signComputeTaskTransaction(over, 0, SUBMITTER_SEED), MbongoComputeTaskError);
+  assert.throws(() => signComputeTaskTransaction(over, 0, SUBMITTER_SEED, CHAIN), MbongoComputeTaskError);
 });
 
 // ── byte safety ─────────────────────────────────────────────────────────
@@ -230,16 +233,16 @@ test("every valid vector reproduces the signing payload, signature, encoding and
   assert.equal(CT.valid.length, 3, "transaction vector cardinality");
   for (const v of CT.valid) {
     const task = taskFrom(taskVector(v.task_vector));
-    const payload = computeTaskSigningPayload(task, v.transaction.nonce);
-    assert.equal(hex(payload), v.expected.signing_payload, `${v.name}: signing payload`);
-    assert.equal(payload.length, v.expected.signing_payload_length, `${v.name}: length`);
+    const payload = computeTaskTransactionFields(task, v.transaction.nonce);
+    assert.equal(hex(payload), v.expected.transaction_fields, `${v.name}: signing payload`);
+    assert.equal(payload.length, v.expected.transaction_fields_length, `${v.name}: length`);
     assert.equal(payload[0], 0x01, `${v.name}: TransactionType::ComputeTask`);
     assert.equal(payload[89], 0x02, `${v.name}: TransactionPayload::ComputeTask`);
     assert.equal(v.expected.task_offset, COMPUTE_TASK_PAYLOAD_PREFIX_BYTES);
     assert.equal(hex(payload.subarray(90)), hex(encodeComputeTask(task)), `${v.name}: task suffix`);
     assert.equal(hex(payload.subarray(81, 89)), v.expected.nonce_u64_le, `${v.name}: nonce LE`);
 
-    const tx = signComputeTaskTransaction(task, v.transaction.nonce, SUBMITTER_SEED);
+    const tx = signComputeTaskTransaction(task, v.transaction.nonce, SUBMITTER_SEED, CHAIN);
     assert.equal(hex(tx.signature), v.expected.transaction_signature, `${v.name}: signature`);
     assert.equal(hex(tx.sender), hex(task.submitter), `${v.name}: sender is the submitter`);
     assert.equal(tx.amount, 0n);
@@ -251,17 +254,17 @@ test("every valid vector reproduces the signing payload, signature, encoding and
 test("a key that does not derive the submitter cannot sign the task", () => {
   const other = new Uint8Array(32).fill(0x2b);
   assert.throws(
-    () => signComputeTaskTransaction(CANONICAL, 0, other),
+    () => signComputeTaskTransaction(CANONICAL, 0, other, CHAIN),
     (e) => e instanceof MbongoComputeTaskError && e.field === "secretKey",
   );
-  assert.throws(() => signComputeTaskTransaction(CANONICAL, 0, new Uint8Array(31)), MbongoComputeTaskError);
+  assert.throws(() => signComputeTaskTransaction(CANONICAL, 0, new Uint8Array(31, CHAIN)), MbongoComputeTaskError);
 });
 
 test("the wire object is exactly what the RPC fixture pins, and it round-trips", () => {
   assert.equal(RPC.transactions.length, 3);
   for (const entry of RPC.transactions) {
     const task = taskFrom(taskVector(entry.task_vector));
-    const tx = signComputeTaskTransaction(task, entry.object.nonce, SUBMITTER_SEED);
+    const tx = signComputeTaskTransaction(task, entry.object.nonce, SUBMITTER_SEED, CHAIN);
     const wire = computeTaskTransactionToWire(tx);
     // Compared through the exact serialiser: nonce is a bigint here and a
     // JSON integer on the wire.
@@ -277,7 +280,7 @@ test("the wire object is exactly what the RPC fixture pins, and it round-trips",
 test("submitComputeTask sends the pinned object through submit_transaction", async () => {
   const entry = RPC.transactions.find((t) => t.name === "maximal");
   const task = taskFrom(taskVector(entry.task_vector));
-  const tx = signComputeTaskTransaction(task, entry.object.nonce, SUBMITTER_SEED);
+  const tx = signComputeTaskTransaction(task, entry.object.nonce, SUBMITTER_SEED, CHAIN);
   const sent = [];
   const fetchImpl = async (_url, init) => {
     sent.push(init.body);
@@ -296,7 +299,7 @@ test("a node rejection becomes a typed reason", async () => {
     status: 500,
     text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32603, message } }),
   });
-  const tx = signComputeTaskTransaction(CANONICAL, 0, SUBMITTER_SEED);
+  const tx = signComputeTaskTransaction(CANONICAL, 0, SUBMITTER_SEED, CHAIN);
   for (const [message, reason] of [
     ["internal backend error: task_id already registered", "duplicate-task"],
     ["internal backend error: compute task already pending", "task-pending"],

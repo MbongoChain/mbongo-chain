@@ -1,5 +1,5 @@
 // TypeScript side of the shared strict Ed25519 vectors
-// (test-vectors/signature/ed25519-strict-v1.json). Rust reads the same file.
+// (test-vectors/signature/ed25519-strict-v2.json). Rust reads the same file.
 //
 // Every case goes through the SDK's strict verifier. The receipt cases also go
 // through the public verifyReceiptSignature, the check a client runs before
@@ -13,10 +13,10 @@ import { verifyReceiptSignature } from "../dist/index.js";
 import { verifyEd25519Strict } from "../dist/ed25519-strict.js";
 
 const load = (rel) => JSON.parse(readFileSync(new URL(rel, import.meta.url), "utf8"));
-const SX = load("../../../test-vectors/signature/ed25519-strict-v1.json");
+const SX = load("../../../test-vectors/signature/ed25519-strict-v2.json");
 const RX = load("../../../test-vectors/receipt/receipt-v1.json");
 for (const [name, doc] of [["strict", SX], ["receipt", RX]]) {
-  assert.equal(doc.fixture_version, 1, `${name} fixture: unsupported schema version`);
+  assert.equal(doc.fixture_version, doc.supersedes ? 2 : 1, `${name} fixture: unsupported schema version`);
 }
 
 const unhex = (s) => {

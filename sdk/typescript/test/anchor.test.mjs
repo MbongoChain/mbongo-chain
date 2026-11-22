@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 
 import {
   anchorReceiptSigningPayload,
+  anchorReceiptTransactionFields,
   signAnchorReceiptTransaction,
   anchorReceiptTransactionHash,
   anchorReceiptTransactionToWire,
@@ -29,14 +30,15 @@ import { stringifyExact } from "../dist/json-exact.js";
 const load = (rel) =>
   JSON.parse(readFileSync(new URL(rel, import.meta.url), "utf8"));
 
-const TX = load("../../../test-vectors/transaction/anchor-receipt-v1.json");
+const TX = load("../../../test-vectors/transaction/anchor-receipt-v2.json");
+// The network the v2 fixtures sign for (RFC 0006 section 2).
+const CHAIN = Uint8Array.from(Buffer.from(TX.chain.chain_id, "hex"));
 const RX = load("../../../test-vectors/receipt/receipt-v1.json");
 
-const SUPPORTED_FIXTURE_VERSION = 1;
-for (const [name, doc] of [["transaction", TX], ["receipt", RX]]) {
+for (const [name, doc, version] of [["transaction", TX, 2], ["receipt", RX, 1]]) {
   assert.equal(
     doc.fixture_version,
-    SUPPORTED_FIXTURE_VERSION,
+    version,
     `${name} fixture: unsupported schema version`,
   );
 }
@@ -92,16 +94,16 @@ test("every valid vector reproduces the pinned signing payload", () => {
   assert.ok(TX.valid.length > 0, "no valid vectors");
   for (const v of TX.valid) {
     const { receipt } = receiptFrom(v.transaction.receipt_vector);
-    const payload = anchorReceiptSigningPayload(receipt, v.transaction.nonce);
-    assert.equal(hex(payload), v.expected.signing_payload, `${v.name}: bytes`);
-    assert.equal(payload.length, v.expected.signing_payload_length, `${v.name}: length`);
+    const payload = anchorReceiptTransactionFields(receipt, v.transaction.nonce);
+    assert.equal(hex(payload), v.expected.transaction_fields, `${v.name}: bytes`);
+    assert.equal(payload.length, v.expected.transaction_fields_length, `${v.name}: length`);
   }
 });
 
 test("the receipt bytes sit contiguously at the pinned offset", () => {
   for (const v of TX.valid) {
     const { receipt, expected } = receiptFrom(v.transaction.receipt_vector);
-    const payload = anchorReceiptSigningPayload(receipt, v.transaction.nonce);
+    const payload = anchorReceiptTransactionFields(receipt, v.transaction.nonce);
     const offset = v.expected.receipt_offset;
 
     assert.equal(offset, ANCHOR_RECEIPT_PAYLOAD_PREFIX_BYTES, `${v.name}: offset constant`);
@@ -116,7 +118,7 @@ test("the receipt bytes sit contiguously at the pinned offset", () => {
 test("the nonce is encoded little-endian and fixed-width", () => {
   for (const v of TX.valid) {
     const { receipt } = receiptFrom(v.transaction.receipt_vector);
-    const payload = anchorReceiptSigningPayload(receipt, v.transaction.nonce);
+    const payload = anchorReceiptTransactionFields(receipt, v.transaction.nonce);
     const at = 1 + 32 + 32 + 16;
     assert.equal(hex(payload.subarray(at, at + 8)), v.expected.nonce_u64_le, `${v.name}`);
   }
@@ -134,7 +136,7 @@ test("the amount occupies sixteen bytes, not eight and not a compact prefix", ()
   // goes wrong. The fixture's non-zero u128 diagnostic has no public surface
   // in this package and is exercised by the Rust consumer instead.
   const { receipt } = receiptFrom(CANONICAL.transaction.receipt_vector);
-  const payload = anchorReceiptSigningPayload(receipt, CANONICAL.transaction.nonce);
+  const payload = anchorReceiptTransactionFields(receipt, CANONICAL.transaction.nonce);
   const at = 1 + 32 + 32;
   assert.equal(hex(payload.subarray(at, at + 16)), CANONICAL.expected.amount_u128_le);
   assert.equal(CANONICAL.expected.amount_u128_le, "0".repeat(32));
@@ -143,7 +145,7 @@ test("the amount occupies sixteen bytes, not eight and not a compact prefix", ()
 test("every valid vector reproduces the pinned transaction signature", () => {
   for (const v of TX.valid) {
     const { receipt } = receiptFrom(v.transaction.receipt_vector);
-    const tx = signAnchorReceiptTransaction(receipt, v.transaction.nonce, SEED);
+    const tx = signAnchorReceiptTransaction(receipt, v.transaction.nonce, SEED, CHAIN);
     assert.equal(hex(tx.signature), v.expected.transaction_signature, v.name);
     assert.equal(tx.amount, 0n);
     assert.equal(tx.nonce, BigInt(v.transaction.nonce));
@@ -155,8 +157,8 @@ test("every valid vector reproduces the pinned transaction signature", () => {
 test("the full encoding and the transaction hash match", () => {
   for (const v of TX.valid) {
     const { receipt } = receiptFrom(v.transaction.receipt_vector);
-    const tx = signAnchorReceiptTransaction(receipt, v.transaction.nonce, SEED);
-    const payload = anchorReceiptSigningPayload(receipt, v.transaction.nonce);
+    const tx = signAnchorReceiptTransaction(receipt, v.transaction.nonce, SEED, CHAIN);
+    const payload = anchorReceiptTransactionFields(receipt, v.transaction.nonce);
 
     // The signature is the final SCALE field, so the payload is a strict prefix.
     assert.equal(
@@ -179,7 +181,7 @@ test("the full encoding and the transaction hash match", () => {
 
 test("the two signature domains stay separate", () => {
   const { receipt, expected } = receiptFrom(CANONICAL.transaction.receipt_vector);
-  const tx = signAnchorReceiptTransaction(receipt, CANONICAL.transaction.nonce, SEED);
+  const tx = signAnchorReceiptTransaction(receipt, CANONICAL.transaction.nonce, SEED, CHAIN);
 
   // One key, because consensus requires sender == executor.
   assert.equal(hex(tx.sender), hex(receipt.executor));
@@ -198,7 +200,7 @@ test("the transaction signature is over the raw payload, never a digest of it", 
   // sign(blake3(payload)) — applying the receipt's scheme to a transaction —
   // the pinned signature stops matching and this fails.
   const { receipt } = receiptFrom(CANONICAL.transaction.receipt_vector);
-  const tx = signAnchorReceiptTransaction(receipt, CANONICAL.transaction.nonce, SEED);
+  const tx = signAnchorReceiptTransaction(receipt, CANONICAL.transaction.nonce, SEED, CHAIN);
   const prehashed = TX.invalid.find(
     (v) => v.name === "transaction-signature-over-prehashed-payload",
   );
@@ -209,7 +211,7 @@ test("the transaction signature is over the raw payload, never a digest of it", 
 
 test("the implementation never produces a domain-confused signature", () => {
   const { receipt } = receiptFrom(CANONICAL.transaction.receipt_vector);
-  const tx = signAnchorReceiptTransaction(receipt, CANONICAL.transaction.nonce, SEED);
+  const tx = signAnchorReceiptTransaction(receipt, CANONICAL.transaction.nonce, SEED, CHAIN);
   for (const bad of TX.invalid) {
     assert.equal(bad.expected.transaction_signature_verifies, false, bad.name);
     assert.notEqual(hex(tx.signature), bad.transaction_signature, bad.name);
@@ -227,7 +229,7 @@ test("the wire object matches the pinned serde representation exactly", () => {
   const pinned = TX.serialized_transaction;
   const v = TX.valid.find((x) => x.name === pinned.vector);
   const { receipt } = receiptFrom(v.transaction.receipt_vector);
-  const tx = signAnchorReceiptTransaction(receipt, v.transaction.nonce, SEED);
+  const tx = signAnchorReceiptTransaction(receipt, v.transaction.nonce, SEED, CHAIN);
   const wire = anchorReceiptTransactionToWire(tx);
 
   // Compared as serialised JSON rather than as objects: the pinned fixture
@@ -281,19 +283,19 @@ test("a key that does not derive the receipt executor is refused", () => {
   const { receipt } = receiptFrom(CANONICAL.transaction.receipt_vector);
   const otherSeed = new Uint8Array(32).fill(0x99);
   assert.throws(
-    () => signAnchorReceiptTransaction(receipt, 0, otherSeed),
+    () => signAnchorReceiptTransaction(receipt, 0, otherSeed, CHAIN),
     (err) => err instanceof MbongoAnchorError && err.field === "secretKey",
   );
   // Wrong width, too.
   for (const len of [0, 31, 33, 64]) {
     assert.throws(
-      () => signAnchorReceiptTransaction(receipt, 0, new Uint8Array(len)),
+      () => signAnchorReceiptTransaction(receipt, 0, new Uint8Array(len, CHAIN)),
       MbongoAnchorError,
       `${len}-byte key`,
     );
   }
   assert.throws(
-    () => signAnchorReceiptTransaction(receipt, 0, "not bytes"),
+    () => signAnchorReceiptTransaction(receipt, 0, "not bytes", CHAIN),
     MbongoAnchorError,
   );
 });
@@ -315,12 +317,12 @@ test("an unusable nonce fails before anything is signed", () => {
 
   for (const nonce of bad) {
     assert.throws(
-      () => anchorReceiptSigningPayload(receipt, nonce),
+      () => anchorReceiptTransactionFields(receipt, nonce),
       MbongoNumericRangeError,
       `nonce ${String(nonce)}`,
     );
     assert.throws(
-      () => signAnchorReceiptTransaction(receipt, nonce, SEED),
+      () => signAnchorReceiptTransaction(receipt, nonce, SEED, CHAIN),
       MbongoNumericRangeError,
       `signing with nonce ${String(nonce)}`,
     );
@@ -333,8 +335,8 @@ test("a bigint nonce is accepted across the whole u64 domain", () => {
   // A safe number and the same value as a bigint must be indistinguishable:
   // the migration must not change bytes for values the old SDK could express.
   assert.deepEqual(
-    anchorReceiptSigningPayload(receipt, 7),
-    anchorReceiptSigningPayload(receipt, 7n),
+    anchorReceiptTransactionFields(receipt, 7),
+    anchorReceiptTransactionFields(receipt, 7n),
     "7 and 7n must encode identically",
   );
 
@@ -342,7 +344,7 @@ test("a bigint nonce is accepted across the whole u64 domain", () => {
   for (const decimal of ["9007199254740993", "18446744073709551615"]) {
     const intended = BigInt(decimal);
     assert.equal(intended.toString(), decimal, "harness: intended value preserved");
-    const tx = signAnchorReceiptTransaction(receipt, intended, SEED);
+    const tx = signAnchorReceiptTransaction(receipt, intended, SEED, CHAIN);
     assert.equal(tx.nonce, intended);
     assert.equal(tx.nonce.toString(), decimal);
   }
@@ -359,7 +361,7 @@ test("a receipt that cannot be canonically encoded is refused", () => {
   ];
   for (const [label, r] of cases) {
     assert.throws(
-      () => anchorReceiptSigningPayload(r, 0),
+      () => anchorReceiptTransactionFields(r, 0),
       MbongoReceiptError,
       `receipt with bad ${label}`,
     );
@@ -376,7 +378,7 @@ test("caller-owned buffers are never mutated and never aliased", () => {
   };
   const seedCopy = Uint8Array.from(SEED);
 
-  const tx = signAnchorReceiptTransaction(receipt, CANONICAL.transaction.nonce, seedCopy);
+  const tx = signAnchorReceiptTransaction(receipt, CANONICAL.transaction.nonce, seedCopy, CHAIN);
   anchorReceiptTransactionHash(tx);
   anchorReceiptTransactionToWire(tx);
 
@@ -393,7 +395,7 @@ test("caller-owned buffers are never mutated and never aliased", () => {
 
 test("submission reuses the existing client and types anchoring rejections", async () => {
   const { receipt } = receiptFrom(CANONICAL.transaction.receipt_vector);
-  const tx = signAnchorReceiptTransaction(receipt, CANONICAL.transaction.nonce, SEED);
+  const tx = signAnchorReceiptTransaction(receipt, CANONICAL.transaction.nonce, SEED, CHAIN);
 
   // Success: the exact wire object reaches submit_transaction, and no second
   // RPC method is invented.
@@ -446,7 +448,7 @@ test("submission reuses the existing client and types anchoring rejections", asy
 
 test("a duplicate task id is reported as such and cannot say who anchored it", async () => {
   const { receipt } = receiptFrom(CANONICAL.transaction.receipt_vector);
-  const tx = signAnchorReceiptTransaction(receipt, CANONICAL.transaction.nonce, SEED);
+  const tx = signAnchorReceiptTransaction(receipt, CANONICAL.transaction.nonce, SEED, CHAIN);
   const client = new MbongoClient("http://node.invalid/rpc", {
     fetch: async () =>
       new Response(
@@ -473,7 +475,7 @@ test("a duplicate task id is reported as such and cannot say who anchored it", a
 
   // Replaying the identical signed transaction is byte-identical, which is
   // what makes retry safe before the task is anchored.
-  const again = signAnchorReceiptTransaction(receipt, CANONICAL.transaction.nonce, SEED);
+  const again = signAnchorReceiptTransaction(receipt, CANONICAL.transaction.nonce, SEED, CHAIN);
   assert.equal(hex(again.signature), hex(tx.signature));
   assert.deepEqual(anchorReceiptTransactionToWire(again), anchorReceiptTransactionToWire(tx));
 });

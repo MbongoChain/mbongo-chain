@@ -414,7 +414,7 @@ fn build_task_tx(nonce: u64, salt: [u8; 32]) -> (Value, [u8; 32]) {
         payload: TransactionPayload::ComputeTask(Box::new(task)),
         signature: [0u8; 64],
     };
-    tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+    tx.signature = sk.sign(&tx.signing_payload(&mbongo_core::Genesis::dev().chain_id)).to_bytes();
     (
         serde_json::to_value(&tx).expect("transaction serializes"),
         task_id,
@@ -452,7 +452,7 @@ fn build_anchor_tx(nonce: u64, task_id: [u8; 32]) -> Value {
         payload: TransactionPayload::AnchorReceipt(Box::new(receipt)),
         signature: [0u8; 64],
     };
-    tx.signature = sk.sign(&tx.signing_payload()).to_bytes();
+    tx.signature = sk.sign(&tx.signing_payload(&mbongo_core::Genesis::dev().chain_id)).to_bytes();
     serde_json::to_value(&tx).expect("transaction serializes")
 }
 

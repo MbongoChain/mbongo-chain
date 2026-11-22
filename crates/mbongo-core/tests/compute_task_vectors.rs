@@ -1,7 +1,7 @@
 //! Rust side of the shared cross-language `ComputeTask` vectors
 //! (RFC 0005 §12).
 //!
-//! The expected values in `test-vectors/compute-task/compute-task-v1.json`
+//! The expected values in `test-vectors/compute-task/compute-task-v2.json`
 //! were **not** produced by this crate. The canonical task bytes were laid
 //! out by hand from the field rules — a SCALE struct is its fields
 //! concatenated in declaration order, `execution_spec` behind a compact
@@ -24,20 +24,38 @@ use mbongo_core::{
 use parity_scale_codec::{Decode, Encode};
 use serde_json::Value;
 
-const TASK_FIXTURE: &str = include_str!("../../../test-vectors/compute-task/compute-task-v1.json");
+const TASK_FIXTURE: &str = include_str!("../../../test-vectors/compute-task/compute-task-v2.json");
 const RECEIPT_FIXTURE: &str = include_str!("../../../test-vectors/receipt/receipt-v1.json");
 
 /// The fixture schema this test understands.
-const SUPPORTED_FIXTURE_VERSION: u64 = 1;
+const SUPPORTED_FIXTURE_VERSION: u64 = 2;
 
 fn doc(name: &str, raw: &str) -> Value {
+    doc_at(name, raw, SUPPORTED_FIXTURE_VERSION)
+}
+
+/// The network a v2 fixture signs for: its `chain.chain_id`.
+fn chain_of(v: &Value) -> mbongo_core::ChainId {
+    let id: [u8; 32] = hex::decode(v["chain"]["chain_id"].as_str().expect("chain.chain_id"))
+        .expect("chain.chain_id: hex")
+        .try_into()
+        .expect("chain.chain_id: 32 bytes");
+    assert_eq!(
+        id,
+        mbongo_core::Genesis::dev().chain_id.0,
+        "the fixture signs for the dev chain"
+    );
+    mbongo_core::ChainId(id)
+}
+
+fn doc_at(name: &str, raw: &str, supported: u64) -> Value {
     let v: Value =
         serde_json::from_str(raw).unwrap_or_else(|e| panic!("{name}: invalid JSON: {e}"));
     let version = v["fixture_version"]
         .as_u64()
         .unwrap_or_else(|| panic!("{name}: fixture_version missing or not a number"));
     assert_eq!(
-        version, SUPPORTED_FIXTURE_VERSION,
+        version, supported,
         "{name}: unsupported fixture schema version"
     );
     v
@@ -48,7 +66,7 @@ fn tasks_doc() -> Value {
 }
 
 fn receipts_doc() -> Value {
-    doc("receipt fixture", RECEIPT_FIXTURE)
+    doc_at("receipt fixture", RECEIPT_FIXTURE, 1)
 }
 
 /// Decodes lowercase hex without a `0x` prefix, failing loudly.
@@ -517,13 +535,24 @@ fn transaction_signing_payload_signature_and_hash_match() {
     for entry in valid_vectors(&tdoc) {
         let name = entry["name"].as_str().unwrap_or("<unnamed>");
         let (tx, task) = transaction_from(&entry, &tdoc);
+        let chain = chain_of(&tdoc);
         let expected_payload = hex_bytes(
             "expected.signing_payload",
             &entry["expected"]["signing_payload"],
         );
+        // The fields, which the encoding holds; the signed bytes add the
+        // domain and the chain_id in front (RFC 0006 §2).
+        let fields = hex_bytes(
+            "expected.transaction_fields",
+            &entry["expected"]["transaction_fields"],
+        );
+        assert_eq!(tx.signed_fields(), fields, "{name}: fields");
+        assert_eq!(&expected_payload[..12], b"mbongo-tx:v2", "{name}: domain");
+        assert_eq!(&expected_payload[12..44], &chain.0, "{name}: chain_id");
+        assert_eq!(&expected_payload[44..], fields.as_slice(), "{name}: fields");
 
         assert_eq!(
-            tx.signing_payload(),
+            tx.signing_payload(&chain),
             expected_payload,
             "{name}: production signing payload differs from the independently derived bytes"
         );
@@ -539,35 +568,29 @@ fn transaction_signing_payload_signature_and_hash_match() {
         let offset = u64_at("expected.task_offset", &entry["expected"]["task_offset"]) as usize;
         assert_eq!(offset, 90);
         assert_eq!(
-            &expected_payload[offset..],
+            &fields[offset..],
             task.encode().as_slice(),
             "{name}: task suffix"
         );
-        assert_eq!(
-            expected_payload[0], 0x01,
-            "{name}: TransactionType::ComputeTask"
-        );
-        assert_eq!(
-            expected_payload[89], 0x02,
-            "{name}: TransactionPayload::ComputeTask"
-        );
+        assert_eq!(fields[0], 0x01, "{name}: TransactionType::ComputeTask");
+        assert_eq!(fields[89], 0x02, "{name}: TransactionPayload::ComputeTask");
         let nonce_le = hex_bytes("expected.nonce_u64_le", &entry["expected"]["nonce_u64_le"]);
         assert_eq!(
             nonce_le,
             tx.nonce.to_le_bytes(),
             "{name}: nonce is little-endian"
         );
-        assert_eq!(
-            &expected_payload[81..89],
-            nonce_le.as_slice(),
-            "{name}: nonce offset"
-        );
+        assert_eq!(&fields[81..89], nonce_le.as_slice(), "{name}: nonce offset");
 
         // The pinned signature verifies, is what the test key produces,
         // and is over the raw payload (no prehash).
         assert!(
-            tx.verify_signature(),
+            tx.verify_signature(&chain),
             "{name}: pinned signature must verify"
+        );
+        assert!(
+            !tx.verify_signature(&mbongo_core::ChainId([0x5a; 32])),
+            "{name}: must not verify on another chain"
         );
         assert_eq!(
             sk.sign(&expected_payload).to_bytes(),

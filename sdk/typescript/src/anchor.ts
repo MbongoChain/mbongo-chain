@@ -33,6 +33,7 @@ import { ed25519 } from "@noble/curves/ed25519.js";
 import type { MbongoClient } from "./client.js";
 import { MbongoAnchorError, MbongoRpcError, type AnchorRejection } from "./errors.js";
 import { normalizeU64 } from "./numeric.js";
+import { CHAIN_ID_BYTES, transactionSigningPayload } from "./signing.js";
 import { encodeReceipt, type Receipt } from "./receipt.js";
 import type { Hash, Transaction, WireReceipt } from "./types.js";
 
@@ -123,7 +124,8 @@ function requireBytes(field: string, value: unknown, length: number): Uint8Array
 }
 
 /**
- * The bytes an `AnchorReceipt` transaction is signed over.
+ * The fields of an `AnchorReceipt` transaction: what its encoding holds
+ * before the signature.
  *
  * ```
  * 0x03 || sender[32] || receiver[32] || amount_u128_le[16]
@@ -139,7 +141,7 @@ function requireBytes(field: string, value: unknown, length: number): Uint8Array
  * @throws {MbongoReceiptError} the receipt cannot be canonically encoded.
  * @throws {MbongoNumericRangeError} `nonce` is not a safe non-negative integer.
  */
-export function anchorReceiptSigningPayload(
+export function anchorReceiptTransactionFields(
   receipt: Receipt,
   nonce: number | bigint,
 ): Uint8Array {
@@ -162,7 +164,27 @@ export function anchorReceiptSigningPayload(
 }
 
 /**
- * Builds and signs an `AnchorReceipt` transaction.
+ * The bytes an `AnchorReceipt` transaction is signed over on the network
+ * `chainId` (RFC 0006 section 2): `"mbongo-tx:v2" || chainId ||`
+ * {@link anchorReceiptTransactionFields}.
+ *
+ * @throws {MbongoAnchorError} `chainId` is not 32 bytes.
+ * @throws {MbongoReceiptError} the receipt cannot be canonically encoded.
+ * @throws {MbongoNumericRangeError} `nonce` is not a safe non-negative integer.
+ */
+export function anchorReceiptSigningPayload(
+  receipt: Receipt,
+  nonce: number | bigint,
+  chainId: Uint8Array,
+): Uint8Array {
+  requireBytes("chainId", chainId, CHAIN_ID_BYTES);
+  return transactionSigningPayload(anchorReceiptTransactionFields(receipt, nonce), chainId);
+}
+
+/**
+ * Builds and signs an `AnchorReceipt` transaction for the network
+ * `chainId`: the `chain_id` of the genesis the caller signs for, from its
+ * own configuration (RFC 0006 sections 2 and 7).
  *
  * `secretKey` is the 32-byte Ed25519 seed of the **executor**: consensus
  * requires `sender == receipt.executor`, so a key that does not derive the
@@ -182,10 +204,11 @@ export function signAnchorReceiptTransaction(
   receipt: Receipt,
   nonce: number | bigint,
   secretKey: Uint8Array,
+  chainId: Uint8Array,
 ): AnchorReceiptTransaction {
   requireBytes("secretKey", secretKey, SECRET_KEY_BYTES);
   const exactNonce = normalizeU64("nonce", nonce);
-  const payload = anchorReceiptSigningPayload(receipt, exactNonce);
+  const payload = anchorReceiptSigningPayload(receipt, exactNonce, chainId);
 
   let publicKey: Uint8Array;
   try {
@@ -201,8 +224,9 @@ export function signAnchorReceiptTransaction(
     );
   }
 
-  // Signed over the RAW payload. Hashing it first would be the receipt's
-  // scheme, not this one, and the node would reject the result.
+  // Signed over the RAW payload, domain and chainId included. Hashing it
+  // first would be the receipt's scheme, not this one, and the node would
+  // reject the result.
   const signature = ed25519.sign(payload, secretKey);
 
   return {
@@ -218,7 +242,7 @@ export function signAnchorReceiptTransaction(
 
 /** Full canonical SCALE: the signing payload followed by the signature. */
 function encodeAnchorReceiptTransaction(tx: AnchorReceiptTransaction): Uint8Array {
-  const payload = anchorReceiptSigningPayload(tx.receipt, tx.nonce);
+  const payload = anchorReceiptTransactionFields(tx.receipt, tx.nonce);
   return concat([payload, requireBytes("signature", tx.signature, SIGNATURE_BYTES)]);
 }
 

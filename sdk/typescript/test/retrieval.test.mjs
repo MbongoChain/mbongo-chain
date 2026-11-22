@@ -1,7 +1,7 @@
 // Reading anchored receipts back out of a block.
 //
 // The central proof is the round trip: the exact wire receipt pinned by
-// test-vectors/transaction/anchor-receipt-v1.json must convert back to the
+// test-vectors/transaction/anchor-receipt-v2.json must convert back to the
 // canonical receipt pinned by test-vectors/receipt/receipt-v1.json, with its
 // hash and signature intact. No expected value is copied into this file.
 
@@ -22,10 +22,10 @@ import {
 const load = (rel) =>
   JSON.parse(readFileSync(new URL(rel, import.meta.url), "utf8"));
 
-const TX = load("../../../test-vectors/transaction/anchor-receipt-v1.json");
+const TX = load("../../../test-vectors/transaction/anchor-receipt-v2.json");
 const RX = load("../../../test-vectors/receipt/receipt-v1.json");
 for (const [name, doc] of [["transaction", TX], ["receipt", RX]]) {
-  assert.equal(doc.fixture_version, 1, `${name} fixture: unsupported schema version`);
+  assert.equal(doc.fixture_version, doc.supersedes ? 2 : 1, `${name} fixture: unsupported schema version`);
 }
 
 const hex = (u8) => Array.from(u8, (b) => b.toString(16).padStart(2, "0")).join("");

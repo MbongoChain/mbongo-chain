@@ -111,7 +111,7 @@ proptest! {
     fn compute_task_transaction_roundtrip(tx in arb_task_tx()) {
         let bytes = tx.encode();
         prop_assert_eq!(Transaction::decode(&mut &bytes[..]).unwrap(), tx.clone());
-        let payload = tx.signing_payload();
+        let payload = tx.signed_fields();
         prop_assert_eq!(&bytes[..payload.len()], payload.as_slice());
         prop_assert_eq!(&bytes[payload.len()..], &tx.signature[..]);
         prop_assert_eq!(bytes[89], 0x02);

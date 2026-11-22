@@ -151,6 +151,9 @@ prepare() {
 
 run() {
   local base=$1 service=$2 config=$3
+  # What follows is the network the service signs for: --dev or
+  # --genesis <file> (RFC 0006 section 2), passed through unchanged.
+  shift 3
   case "$RUNNER_NETWORK" in
   denied | open) ;;
   *) die "MBONGO_RUNNER_NETWORK must be denied or open" ;;
@@ -167,7 +170,7 @@ run() {
     --inh-caps=-all,+setuid,+setgid \
     --ambient-caps=-all,+setuid,+setgid \
     --no-new-privs \
-    "$service" --config "$config"
+    "$service" --config "$config" "$@"
 }
 
 case "${1:-}" in
@@ -176,8 +179,10 @@ prepare)
   prepare "$2"
   ;;
 run)
-  [ $# = 4 ] || die "usage: $0 run <base> <service> <config>"
-  run "$2" "$3" "$4"
+  [ $# -ge 5 ] || die "usage: $0 run <base> <service> <config> --dev|--genesis <file>"
+  # Everything after `run`: base, service, config, then the network arguments.
+  shift
+  run "$@"
   ;;
 *)
   die "usage: $0 prepare|run ..."

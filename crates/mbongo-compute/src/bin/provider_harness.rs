@@ -221,11 +221,13 @@ fn service_command(contained: Option<&Contained>, config_file: &Path) -> Command
             .arg("run")
             .arg(&c.base)
             .arg(&c.service)
-            .arg(config_file);
+            .arg(config_file)
+            .arg("--dev");
         return command;
     }
     let mut command = Command::new(sibling("provider_service"));
-    command.arg("--config").arg(config_file);
+    // The node of this harness runs the dev genesis (RFC 0006 §2).
+    command.arg("--config").arg(config_file).arg("--dev");
     command
 }
 
@@ -284,7 +286,7 @@ async fn fund(
         payload: TransactionPayload::None,
         signature: [0u8; 64],
     };
-    tx.signature = from.sign(&tx.signing_payload());
+    tx.signature = from.sign(&tx.signing_payload(&mbongo_core::Genesis::dev().chain_id));
     chain.submit_transaction(&tx).await.map_err(|e| e.to_string())?;
     for _ in 0..200 {
         if chain.account_nonce(&from.address()).await.ok() > Some(nonce) {
@@ -330,7 +332,8 @@ impl Stack {
             .arg(self.base.join("client.key"))
             .args(["--rpc-url", &format!("http://127.0.0.1:{RPC_PORT}/rpc")])
             .args(["--rest-url", &format!("http://127.0.0.1:{REST_PORT}")])
-            .args(["--timeout-secs", "90"]);
+            .args(["--timeout-secs", "90"])
+            .arg("--dev");
         Ok(command)
     }
 }
@@ -811,7 +814,7 @@ fn prove_refusals(c: &Contained, config: &Value) -> Result<(), String> {
         let direct = format!(
             "{enter}; exec setpriv --reuid={provider} --regid={provider} --clear-groups \
              --bounding-set=-all,+setuid,+setgid --inh-caps=-all,+setuid,+setgid \
-             --ambient-caps=-all,+setuid,+setgid --no-new-privs {service} --config {shown}"
+             --ambient-caps=-all,+setuid,+setgid --no-new-privs {service} --config {shown} --dev"
         );
         let mut command = match start {
             Start::Launcher => service_command(Some(c), &file),
@@ -819,13 +822,13 @@ fn prove_refusals(c: &Contained, config: &Value) -> Result<(), String> {
                 let mut command = Command::new("sh");
                 command.arg("-c").arg(format!(
                     "{enter}; exec setpriv --reuid={provider} --regid={provider} --clear-groups \
-                     {service} --config {shown}"
+                     {service} --config {shown} --dev"
                 ));
                 command
             }
             Start::AsRoot => {
                 let mut command = Command::new("sh");
-                command.arg("-c").arg(format!("{enter}; exec {service} --config {shown}"));
+                command.arg("-c").arg(format!("{enter}; exec {service} --config {shown} --dev"));
                 command
             }
             Start::Direct => {
@@ -1607,7 +1610,8 @@ fn remote_job(
         .arg(stack.base.join("client.key"))
         .args(["--rpc-url", &format!("http://{HOST_IP}:{RPC_PORT}/rpc")])
         .args(["--rest-url", &format!("http://{HOST_IP}:{REST_PORT}")])
-        .args(["--timeout-secs", "90"]);
+        .args(["--timeout-secs", "90"])
+        .arg("--dev");
     Ok(command)
 }
 

@@ -4,7 +4,12 @@
 //! ```text
 //! job_client --provider-endpoint <file> --job-spec <file> --input <file>
 //!            --key-file <file> [--rpc-url …] [--rest-url …] [--timeout-secs n]
+//!            <--dev | --genesis <file>>
 //! ```
+//!
+//! `--dev | --genesis <file>`, exactly one, names the network every
+//! transaction is signed for (RFC 0006 §2). It is this binary's own
+//! configuration: no endpoint chooses it.
 //!
 //! `--provider-endpoint` names a `provider-endpoint-v1` file: TLS 1.3, against
 //! that provider's own trust anchors. `--provider <url> --executor <hex>` is
@@ -21,6 +26,7 @@ use std::time::Duration;
 use clap::Parser;
 use mbongo_compute::chain::RpcChainClient;
 use mbongo_compute::mvp::client::{load_key_file, parse_hex32};
+use mbongo_compute::network::NetworkArgs;
 use mbongo_compute::provider::client::{run_job, ProviderClient, WaitPolicy};
 use mbongo_compute::provider::endpoint::ProviderEndpoint;
 use mbongo_core::Address;
@@ -56,9 +62,13 @@ struct Cli {
     /// Give up after this long.
     #[arg(long, default_value_t = 180)]
     timeout_secs: u64,
+    /// The network the ComputeTask is signed for.
+    #[command(flatten)]
+    network: NetworkArgs,
 }
 
 async fn run(cli: Cli) -> Result<String, String> {
+    let chain_id = cli.network.chain_id()?;
     let key = load_key_file(&cli.key_file)?;
     let read = |p: &PathBuf| std::fs::read(p).map_err(|e| format!("read: {}", e.kind()));
     let (job_spec, input) = (read(&cli.job_spec)?, read(&cli.input)?);
@@ -77,7 +87,7 @@ async fn run(cli: Cli) -> Result<String, String> {
         timeout: Duration::from_secs(cli.timeout_secs),
         poll: Duration::from_millis(300),
     };
-    let report = run_job(&client, &chain, &key, &job_spec, &input, wait)
+    let report = run_job(&client, &chain, &key, &chain_id, &job_spec, &input, wait)
         .await
         .map_err(|e| e.to_string())?;
     serde_json::to_string(&report).map_err(|e| e.to_string())

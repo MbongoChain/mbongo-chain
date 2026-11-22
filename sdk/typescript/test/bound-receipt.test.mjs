@@ -15,6 +15,7 @@ import {
   MbongoComputeTaskError,
   MbongoReceiptBindingError,
   anchorReceiptSigningPayload,
+  anchorReceiptTransactionFields,
   anchorReceiptTransactionHash,
   anchorReceiptTransactionToWire,
   assertReceiptBoundToTask,
@@ -29,12 +30,14 @@ import {
 
 const load = (rel) => JSON.parse(readFileSync(new URL(rel, import.meta.url), "utf8"));
 
-const BIND = load("../../../test-vectors/compute-task/anchor-binding-v1.json");
-const CT = load("../../../test-vectors/compute-task/compute-task-v1.json");
+const BIND = load("../../../test-vectors/compute-task/anchor-binding-v2.json");
+const CT = load("../../../test-vectors/compute-task/compute-task-v2.json");
 const RX = load("../../../test-vectors/receipt/receipt-v1.json");
-const RPC = load("../../../test-vectors/rpc/compute-task-rpc-v1.json");
+// The network the v2 fixtures sign for (RFC 0006 section 2).
+const CHAIN = Uint8Array.from(Buffer.from(BIND.chain.chain_id, "hex"));
+const RPC = load("../../../test-vectors/rpc/compute-task-rpc-v2.json");
 for (const [name, doc] of [["binding", BIND], ["compute-task", CT], ["receipt", RX], ["rpc", RPC]]) {
-  assert.equal(doc.fixture_version, 1, `${name} fixture: unsupported schema version`);
+  assert.equal(doc.fixture_version, doc.supersedes ? 2 : 1, `${name} fixture: unsupported schema version`);
 }
 
 const unhex = (s) => Uint8Array.from(s.match(/../g) ?? [], (b) => parseInt(b, 16));
@@ -104,8 +107,8 @@ test("signBoundReceipt reproduces the bound vectors byte for byte", () => {
 
     // Anchored by the executor: the existing anchor builder, unchanged,
     // reproduces the pinned transaction.
-    const tx = signAnchorReceiptTransaction(receipt, v.transaction.nonce, EXECUTOR_SEED);
-    assert.equal(hex(anchorReceiptSigningPayload(receipt, v.transaction.nonce)), v.expected.signing_payload, `${v.name}: signing payload`);
+    const tx = signAnchorReceiptTransaction(receipt, v.transaction.nonce, EXECUTOR_SEED, CHAIN);
+    assert.equal(hex(anchorReceiptTransactionFields(receipt, v.transaction.nonce)), v.expected.transaction_fields, `${v.name}: signing payload`);
     assert.equal(hex(tx.signature), v.expected.transaction_signature, `${v.name}: tx signature`);
     assert.equal(hex(tx.sender), hex(task.executor), `${v.name}: sender is the named executor`);
     assert.equal(hex(anchorReceiptTransactionHash(tx)), v.expected.transaction_hash, `${v.name}: tx hash`);
@@ -187,7 +190,7 @@ test("the executor-not-named receipt is well formed and still cannot be bound", 
   const v = vector("executor-not-named");
   const receipt = receiptFrom(v);
   assert.ok(verifyReceiptSignature(receipt));
-  const tx = signAnchorReceiptTransaction(receipt, v.transaction.nonce, SUBMITTER_SEED);
+  const tx = signAnchorReceiptTransaction(receipt, v.transaction.nonce, SUBMITTER_SEED, CHAIN);
   assert.equal(hex(tx.signature), v.expected.transaction_signature);
   assert.throws(() => assertReceiptBoundToTask(receipt, CANONICAL), MbongoReceiptBindingError);
   assert.equal(v.consensus.rule, "s");
@@ -195,7 +198,7 @@ test("the executor-not-named receipt is well formed and still cannot be bound", 
 
 test("node rejections for rules q, r and s become typed anchor reasons", async () => {
   const receipt = receiptFrom(vector("bound-named-executor"));
-  const tx = signAnchorReceiptTransaction(receipt, 0, EXECUTOR_SEED);
+  const tx = signAnchorReceiptTransaction(receipt, 0, EXECUTOR_SEED, CHAIN);
   const reject = (message) => async () => ({
     status: 500,
     text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32603, message } }),
@@ -220,7 +223,7 @@ test("the anchored receipt in the RPC block is the bound vector, carried unchang
   // exactly the AnchorReceipt object the RPC fixture pins inside its block.
   const v = vector("bound-named-executor");
   const receipt = receiptFrom(v);
-  const tx = signAnchorReceiptTransaction(receipt, v.transaction.nonce, EXECUTOR_SEED);
+  const tx = signAnchorReceiptTransaction(receipt, v.transaction.nonce, EXECUTOR_SEED, CHAIN);
   const wire = anchorReceiptTransactionToWire(tx);
   const pinned = RPC.block.object.body.transactions[2];
   assert.equal(JSON.stringify({ ...wire, amount: 0, nonce: Number(wire.nonce) }), JSON.stringify(pinned));

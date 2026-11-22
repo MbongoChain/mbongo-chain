@@ -329,6 +329,7 @@ async fn start(seed: u8) -> Stack {
         Arc::new(SystemClock),
         [seed; 32],
         LocalKey::from_seed(&[seed; 32]),
+        mbongo_core::Genesis::dev().chain_id,
         ProviderParts {
             store,
             runtimes: vec![Arc::new(runtime) as Arc<dyn RuntimeAdapter>],
@@ -406,7 +407,16 @@ impl Stack {
         wait: WaitPolicy,
     ) -> Result<JobReport, JobClientError> {
         let key = LocalKey::from_seed(&CLIENT_SEED);
-        run_job(client, &self.chain, &key, &job_spec(), b"[2,3]", wait).await
+        run_job(
+            client,
+            &self.chain,
+            &key,
+            &mbongo_core::Genesis::dev().chain_id,
+            &job_spec(),
+            b"[2,3]",
+            wait,
+        )
+        .await
     }
 
     async fn tasks_on_chain(&self) -> usize {

@@ -168,11 +168,16 @@ pub struct Transaction {
     pub signature: [u8; 64],
 }
 
+/// The domain of every transaction signature (RFC 0006 §2).
+pub const TX_SIGNING_DOMAIN: &[u8] = b"mbongo-tx:v2";
+
 impl Transaction {
-    /// Returns SCALE-encoded signing payload (all fields except signature,
-    /// in canonical order — including `payload`).
+    /// SCALE encoding of every field except the signature, in canonical
+    /// order, `payload` included. The transaction encoding holds exactly
+    /// these bytes before its signature. They name no network: the
+    /// signature covers [`Transaction::signing_payload`].
     #[must_use]
-    pub fn signing_payload(&self) -> Vec<u8> {
+    pub fn signed_fields(&self) -> Vec<u8> {
         #[derive(Encode)]
         struct SigningFields<'a> {
             tx_type: TransactionType,
@@ -193,13 +198,28 @@ impl Transaction {
         .encode()
     }
 
-    /// Verifies the signature by the sender's public key, under the strict
+    /// The bytes a transaction signature covers on the network `chain_id`
+    /// (RFC 0006 §2):
+    /// `"mbongo-tx:v2" || chain_id || signed_fields`. A signature made for
+    /// one network does not verify on another.
+    #[must_use]
+    pub fn signing_payload(&self, chain_id: &crate::ChainId) -> Vec<u8> {
+        let fields = self.signed_fields();
+        let mut out = Vec::with_capacity(TX_SIGNING_DOMAIN.len() + 32 + fields.len());
+        out.extend_from_slice(TX_SIGNING_DOMAIN);
+        out.extend_from_slice(&chain_id.0);
+        out.extend_from_slice(&fields);
+        out
+    }
+
+    /// Verifies the signature by the sender's public key over
+    /// [`Transaction::signing_payload`] for `chain_id`, under the strict
     /// definition of RFC 0006 §3 ([`crate::crypto::verify_ed25519_strict`]).
     #[must_use]
-    pub fn verify_signature(&self) -> bool {
+    pub fn verify_signature(&self, chain_id: &crate::ChainId) -> bool {
         crate::crypto::verify_ed25519_strict(
             &self.sender.0,
-            &self.signing_payload(),
+            &self.signing_payload(chain_id),
             &self.signature,
         )
     }

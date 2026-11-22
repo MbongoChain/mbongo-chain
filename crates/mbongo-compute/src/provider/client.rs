@@ -11,7 +11,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use mbongo_core::{Address, ComputeTask, Receipt, COMPUTE_TASK_VERSION};
+use mbongo_core::{Address, ChainId, ComputeTask, Receipt, COMPUTE_TASK_VERSION};
 use mbongo_verification::verify_receipt_signature;
 use reqwest::redirect::Policy;
 use reqwest::{Method, Url};
@@ -436,6 +436,7 @@ pub async fn run_job<C: ChainClient>(
     client: &ProviderClient,
     chain: &C,
     key: &LocalKey,
+    chain_id: &ChainId,
     job_spec: &[u8],
     input: &[u8],
     wait: WaitPolicy,
@@ -470,7 +471,7 @@ pub async fn run_job<C: ChainClient>(
     })
     .await?;
     within(wait, started, async {
-        submit_task(chain, key, &task).await.map_err(chain_error)
+        submit_task(chain, key, chain_id, &task).await.map_err(chain_error)
     })
     .await?;
     let task_height = loop {

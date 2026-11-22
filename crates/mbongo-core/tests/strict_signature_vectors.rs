@@ -1,5 +1,5 @@
 //! Rust side of the shared strict Ed25519 vectors,
-//! `test-vectors/signature/ed25519-strict-v1.json`.
+//! `test-vectors/signature/ed25519-strict-v2.json`.
 //!
 //! The verdicts were derived by an Ed25519 implementation written
 //! independently of `ed25519-dalek` and of the SDK's library, reading the
@@ -14,18 +14,29 @@ use mbongo_core::{Address, Transaction, TransactionPayload, TransactionType};
 use parity_scale_codec::DecodeAll;
 use serde_json::Value;
 
-const STRICT_FIXTURE: &str = include_str!("../../../test-vectors/signature/ed25519-strict-v1.json");
+const STRICT_FIXTURE: &str = include_str!("../../../test-vectors/signature/ed25519-strict-v2.json");
 const ANCHOR_FIXTURE: &str =
-    include_str!("../../../test-vectors/transaction/anchor-receipt-v1.json");
+    include_str!("../../../test-vectors/transaction/anchor-receipt-v2.json");
 
 fn fixture(raw: &str) -> Value {
     let v: Value = serde_json::from_str(raw).expect("valid JSON");
     assert_eq!(
         v["fixture_version"].as_u64(),
-        Some(1),
+        Some(2),
         "unsupported fixture version"
     );
     v
+}
+
+/// The network a v2 fixture signs for: its `chain.chain_id`.
+fn chain_of(v: &Value) -> mbongo_core::ChainId {
+    let id: [u8; 32] = bytes("chain.chain_id", &v["chain"]["chain_id"]).try_into().unwrap();
+    assert_eq!(
+        id,
+        mbongo_core::Genesis::dev().chain_id.0,
+        "the fixture signs for the dev chain"
+    );
+    mbongo_core::ChainId(id)
 }
 
 fn bytes(field: &str, v: &Value) -> Vec<u8> {
@@ -104,12 +115,17 @@ fn transaction_cases_through_verify_signature() {
             "{name}: sender is the key"
         );
         assert_eq!(
-            tx.signing_payload(),
+            tx.signing_payload(&chain_of(&v)),
             bytes("message", &c["message"]),
             "{name}: message is the payload"
         );
         assert_eq!(
-            tx.verify_signature(),
+            tx.signed_fields(),
+            bytes("transaction_fields", &c["transaction_fields"]),
+            "{name}: fields"
+        );
+        assert_eq!(
+            tx.verify_signature(&chain_of(&v)),
             expected_valid(c),
             "{name} ({})",
             c["rule"]
@@ -144,6 +160,10 @@ fn existing_signed_transactions_still_verify() {
     for a in valid {
         let full = bytes("full_transaction", &a["expected"]["full_transaction"]);
         let tx = Transaction::decode_all(&mut &full[..]).unwrap();
-        assert!(tx.verify_signature(), "{} must stay valid", a["name"]);
+        assert!(
+            tx.verify_signature(&chain_of(&v)),
+            "{} must stay valid",
+            a["name"]
+        );
     }
 }

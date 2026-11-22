@@ -43,6 +43,7 @@ import {
   type ComputeTaskRejection,
 } from "./errors.js";
 import { normalizeU64 } from "./numeric.js";
+import { CHAIN_ID_BYTES, transactionSigningPayload } from "./signing.js";
 import { receiptHash, type Receipt } from "./receipt.js";
 import type { Hash, Transaction, WireComputeTask } from "./types.js";
 
@@ -304,7 +305,7 @@ export function computeTaskId(task: ComputeTask): Uint8Array {
  * @throws {MbongoComputeTaskError} the task cannot be canonically encoded.
  * @throws {MbongoNumericRangeError} `nonce` is not a safe non-negative integer.
  */
-export function computeTaskSigningPayload(
+export function computeTaskTransactionFields(
   task: ComputeTask,
   nonce: number | bigint,
 ): Uint8Array {
@@ -321,6 +322,24 @@ export function computeTaskSigningPayload(
   ]);
 }
 
+/**
+ * The bytes a `ComputeTask` transaction is signed over on the network
+ * `chainId` (RFC 0006 section 2): `"mbongo-tx:v2" || chainId ||`
+ * {@link computeTaskTransactionFields}.
+ *
+ * @throws {MbongoComputeTaskError} `chainId` is not 32 bytes, or the task
+ * cannot be canonically encoded.
+ * @throws {MbongoNumericRangeError} `nonce` is not a safe non-negative integer.
+ */
+export function computeTaskSigningPayload(
+  task: ComputeTask,
+  nonce: number | bigint,
+  chainId: Uint8Array,
+): Uint8Array {
+  requireBytes("chainId", chainId, CHAIN_ID_BYTES);
+  return transactionSigningPayload(computeTaskTransactionFields(task, nonce), chainId);
+}
+
 function publicKeyOf(field: string, secretKey: Uint8Array): Uint8Array {
   requireBytes(field, secretKey, SECRET_KEY_BYTES);
   try {
@@ -331,7 +350,9 @@ function publicKeyOf(field: string, secretKey: Uint8Array): Uint8Array {
 }
 
 /**
- * Builds and signs a `ComputeTask` transaction.
+ * Builds and signs a `ComputeTask` transaction for the network `chainId`:
+ * the `chain_id` of the genesis the caller signs for, from its own
+ * configuration (RFC 0006 sections 2 and 7).
  *
  * `secretKey` is the 32-byte Ed25519 seed of the **submitter**: consensus
  * requires `sender == task.submitter` (rule o), so a key that does not derive
@@ -350,10 +371,11 @@ export function signComputeTaskTransaction(
   task: ComputeTask,
   nonce: number | bigint,
   secretKey: Uint8Array,
+  chainId: Uint8Array,
 ): ComputeTaskTransaction {
   const publicKey = publicKeyOf("secretKey", secretKey);
   const exactNonce = normalizeU64("nonce", nonce);
-  const payload = computeTaskSigningPayload(task, exactNonce);
+  const payload = computeTaskSigningPayload(task, exactNonce, chainId);
   if (!equalBytes(publicKey, task.submitter)) {
     throw new MbongoComputeTaskError(
       "secretKey",
@@ -361,7 +383,7 @@ export function signComputeTaskTransaction(
         "sender == task.submitter, so this transaction could never be committed",
     );
   }
-  // Signed over the RAW payload; no prehash.
+  // Signed over the RAW payload, domain and chainId included; no prehash.
   const signature = ed25519.sign(payload, secretKey);
   return {
     txType: "ComputeTask",
@@ -374,9 +396,9 @@ export function signComputeTaskTransaction(
   };
 }
 
-/** Full canonical SCALE: the signing payload followed by the signature. */
+/** Full canonical SCALE: the transaction fields followed by the signature. */
 function encodeComputeTaskTransaction(tx: ComputeTaskTransaction): Uint8Array {
-  const payload = computeTaskSigningPayload(tx.task, tx.nonce);
+  const payload = computeTaskTransactionFields(tx.task, tx.nonce);
   return concat([payload, requireBytes("signature", tx.signature, SIGNATURE_BYTES)]);
 }
 

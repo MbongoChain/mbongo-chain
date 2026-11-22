@@ -85,6 +85,7 @@ async fn rig(backend: FakeBackend) -> Rig {
         Arc::new(clock.clone()) as Arc<dyn Clock>,
         [0x42u8; 32],
         executor.clone(),
+        mbongo_core::Genesis::dev().chain_id,
         Arc::new(profile),
         Some(observations),
         FrontConfig::default(),
@@ -127,7 +128,14 @@ async fn registered(r: &Rig, salt: u8) -> [u8; 32] {
     );
     let id = task.task_id();
     let up = r.client.upload(id, CV).await.unwrap();
-    submit_task(&r.chain, &r.key, &task).await.unwrap();
+    submit_task(
+        &r.chain,
+        &r.key,
+        &mbongo_core::Genesis::dev().chain_id,
+        &task,
+    )
+    .await
+    .unwrap();
     r.chain.produce_block();
     r.client.register(id, &up.object_ref, r.executor.address()).await.unwrap();
     id
@@ -143,6 +151,7 @@ fn ctx(r: &Rig) -> Context<'_, FakeChain> {
         chain: &r.chain,
         front: &r.client,
         key: &r.key,
+        chain_id: mbongo_core::Genesis::dev().chain_id,
         executor: Some(r.executor.address()),
         reference_usd_per_hour: None,
         poll: Duration::from_millis(10),
@@ -305,6 +314,7 @@ async fn restart(r: &Rig) -> (Front<FakeChain>, FrontClient, Arc<FakeBackend>) {
         Arc::new(r.clock.clone()) as Arc<dyn Clock>,
         [0x43u8; 32],
         r.executor.clone(),
+        mbongo_core::Genesis::dev().chain_id,
         Arc::new(profile),
         Some(observations),
         FrontConfig::default(),
@@ -388,6 +398,7 @@ async fn o08_verify_after_restart_needs_the_result() {
         chain: &r.chain,
         front: &client,
         key: &r.key,
+        chain_id: mbongo_core::Genesis::dev().chain_id,
         executor: Some(r.executor.address()),
         reference_usd_per_hour: None,
         poll: Duration::from_millis(10),

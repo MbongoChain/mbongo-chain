@@ -224,13 +224,13 @@ async function start() {
     for (const [role, keyFile] of [["executor", cfg.MBONGO_MVP_EXECUTOR_KEY_FILE], ["client", cfg.MBONGO_MVP_KEY_FILE]]) {
       const saved = ENV.MBONGO_MVP_EXECUTOR_KEY_FILE;
       ENV.MBONGO_MVP_EXECUTOR_KEY_FILE = keyFile;
-      const f = await run(BIN("mvp_service"), ["fund-executor", "--amount", "1000"]);
+      const f = await run(BIN("mvp_service"), ["--dev", "fund-executor", "--amount", "1000"]);
       ENV.MBONGO_MVP_EXECUTOR_KEY_FILE = saved;
       if (f.code !== 0) die(`funding the ${role} account failed`);
       log(`${role} account funded`);
     }
   }
-  state.service = spawnDetached("mvp_service", BIN("mvp_service"), ["serve", "--bind", cfg.MBONGO_MVP_BIND || "127.0.0.1:8740"]);
+  state.service = spawnDetached("mvp_service", BIN("mvp_service"), ["--dev", "serve", "--bind", cfg.MBONGO_MVP_BIND || "127.0.0.1:8740"]);
   writeState(state);
   for (let i = 0; i < 600; i++) {
     const t = fs.readFileSync(path.join(STATE, "mvp_service.out"), "utf8");
@@ -353,14 +353,14 @@ async function smoke() {
     die(`environment not healthy before the smoke: ${JSON.stringify(h0.alerts)}`, 1);
   const job = async (name, text) => {
     const t = Date.now();
-    const r = await run(BIN("mbongo-mvp"), ["submit", "-", "--wait", "--json"], { stdin: text });
+    const r = await run(BIN("mbongo-mvp"), ["--dev", "submit", "-", "--wait", "--json"], { stdin: text });
     fs.writeFileSync(path.join(out, `${name}.stderr`), r.stderr);
     fs.writeFileSync(path.join(out, `${name}.stdout`), r.stdout);
     let rec = null;
     try {
       rec = JSON.parse(r.stdout.trim().split(/\r?\n/).pop());
     } catch {}
-    const res = rec ? await run(BIN("mbongo-mvp"), ["result", rec.task_id, "--out", path.join(out, `${name}.result.json`)]) : null;
+    const res = rec ? await run(BIN("mbongo-mvp"), ["--dev", "result", rec.task_id, "--out", path.join(out, `${name}.result.json`)]) : null;
     return { exit: r.code, wall_ms: Date.now() - t, rec, result_exit: res?.code };
   };
   // 1. Synthetic launch job.
@@ -501,14 +501,14 @@ async function adversarial() {
   const rows = [];
   for (const file of files) {
     for (const c of JSON.parse(fs.readFileSync(file, "utf8")).cases) {
-      const r = await run(BIN("mbongo-mvp"), ["submit", "-", "--wait", "--json"], { stdin: c.cv_text });
+      const r = await run(BIN("mbongo-mvp"), ["--dev", "submit", "-", "--wait", "--json"], { stdin: c.cv_text });
       fs.writeFileSync(path.join(out, `${c.id}.stderr`), r.stderr);
       let rec = null;
       try {
         rec = JSON.parse(r.stdout.trim().split(/\r?\n/).pop());
       } catch {}
       const resFile = path.join(out, `${c.id}.result.json`);
-      if (rec) await run(BIN("mbongo-mvp"), ["result", rec.task_id, "--out", resFile]);
+      if (rec) await run(BIN("mbongo-mvp"), ["--dev", "result", rec.task_id, "--out", resFile]);
       const text = fs.existsSync(resFile) ? fs.readFileSync(resFile, "utf8") : "";
       const lower = text.toLowerCase();
       const parsed = text ? JSON.parse(text) : {};

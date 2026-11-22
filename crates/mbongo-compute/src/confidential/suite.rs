@@ -35,6 +35,7 @@ use super::{
 use crate::chain::testing::FakeChain;
 use crate::chain::ChainClient;
 use crate::clock::{Clock, ManualClock};
+use crate::conformance::conformance_chain_id;
 use crate::control_plane::{
     AttemptEvent, ControlPlane, ControlPlaneConfig, ControlPlaneError, Lease, Session,
 };
@@ -509,7 +510,7 @@ impl Scenario {
             signature: [0u8; 64],
         };
         self.client_nonce += 1;
-        tx.signature = self.client.sign(&tx.signing_payload());
+        tx.signature = self.client.sign(&tx.signing_payload(&conformance_chain_id()));
         tx
     }
 
@@ -835,6 +836,7 @@ impl Scenario {
         let worker = Worker::new(
             &mut w_ids,
             self.executor.clone(),
+            conformance_chain_id(),
             Box::new(ReverseBytesProfile),
         );
         let receipt = worker.bound_receipt(&self.task, output_commitment);
@@ -1526,7 +1528,12 @@ fn k20(s: &mut Scenario) -> CaseOutcome {
 async fn k21(s: &mut Scenario) -> CaseOutcome {
     let task_id = s.public_task().await;
     let mut ids = IdSource::new([0x77u8; 32]);
-    let mut worker = Worker::new(&mut ids, s.executor.clone(), Box::new(ReverseBytesProfile));
+    let mut worker = Worker::new(
+        &mut ids,
+        s.executor.clone(),
+        conformance_chain_id(),
+        Box::new(ReverseBytesProfile),
+    );
     let outcome = worker
         .run_once(&mut s.cp, &mut s.dp, &s.chain)
         .await
@@ -1584,7 +1591,12 @@ async fn k23(s: &mut Scenario) -> CaseOutcome {
     );
     let task_id = s.public_task().await;
     let mut ids = IdSource::new([0x78u8; 32]);
-    let mut worker = Worker::new(&mut ids, s.executor.clone(), Box::new(ReverseBytesProfile));
+    let mut worker = Worker::new(
+        &mut ids,
+        s.executor.clone(),
+        conformance_chain_id(),
+        Box::new(ReverseBytesProfile),
+    );
     let outcome = worker
         .run_once(&mut s.cp, &mut s.dp, &s.chain)
         .await

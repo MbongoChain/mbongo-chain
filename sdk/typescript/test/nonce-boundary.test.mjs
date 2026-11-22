@@ -1,5 +1,5 @@
 // TypeScript side of the shared nonce-boundary and account vectors
-// (test-vectors/transaction/nonce-boundary-v1.json,
+// (test-vectors/transaction/nonce-boundary-v2.json,
 // test-vectors/account/account-v1.json).
 //
 // Every expected value is read from those files. Rust reads the same files.
@@ -20,6 +20,8 @@ import { ed25519 } from "@noble/curves/ed25519.js";
 
 import {
   anchorReceiptSigningPayload,
+  anchorReceiptTransactionFields,
+  transactionSigningPayload,
   signAnchorReceiptTransaction,
   anchorReceiptTransactionHash,
   MbongoNumericRangeError,
@@ -28,12 +30,14 @@ import {
 } from "../dist/index.js";
 
 const load = (rel) => JSON.parse(readFileSync(new URL(rel, import.meta.url), "utf8"));
-const NX = load("../../../test-vectors/transaction/nonce-boundary-v1.json");
+const NX = load("../../../test-vectors/transaction/nonce-boundary-v2.json");
 const AX = load("../../../test-vectors/account/account-v1.json");
+// The network the v2 fixtures sign for (RFC 0006 section 2).
+const CHAIN = Uint8Array.from(Buffer.from(NX.chain.chain_id, "hex"));
 const RX = load("../../../test-vectors/receipt/receipt-v1.json");
 
 for (const [name, doc] of [["nonce", NX], ["account", AX], ["receipt", RX]]) {
-  assert.equal(doc.fixture_version, 1, `${name} fixture: unsupported schema version`);
+  assert.equal(doc.fixture_version, doc.supersedes ? 2 : 1, `${name} fixture: unsupported schema version`);
 }
 
 const unhex = (s) => {
@@ -56,7 +60,7 @@ const TYPE_BY_BYTE = { 0x00: "Transfer", 0x02: "Stake" };
  * Returns null for anything that is not exactly that.
  */
 function readPlain(bytes) {
-  const o = NX.signing_formula.offsets;
+  const o = NX.signing_formula.offsets_in_the_full_transaction;
   if (bytes.length !== NX.signing_formula.plain_full_transaction_length) return null;
   const txType = TYPE_BY_BYTE[bytes[o.tx_type]];
   if (txType === undefined || bytes[o.payload] !== 0x00) return null;
@@ -89,10 +93,13 @@ test("plain transactions: every field, signature and hash read back as derived",
     assert.deepEqual(tx.receiver, resolve(v.transaction.receiver), v.name);
     assert.equal(tx.amount, BigInt(v.transaction.amount), `${v.name}: amount`);
     assert.equal(tx.nonce, BigInt(v.transaction.nonce), `${v.name}: nonce`);
-    assert.equal(hex(tx.payload), v.expected.signing_payload, `${v.name}: signing payload`);
+    assert.equal(hex(tx.payload), v.expected.transaction_fields, `${v.name}: signing payload`);
     assert.equal(hex(tx.signature), v.expected.transaction_signature, `${v.name}: signature`);
-    assert.ok(ed25519.verify(tx.signature, tx.payload, PUB), `${v.name}: signature verifies`);
-    assert.equal(hex(ed25519.sign(tx.payload, SEED)), v.expected.transaction_signature, `${v.name}: re-signed`);
+    const signed = transactionSigningPayload(tx.payload, CHAIN);
+    assert.equal(hex(signed), v.expected.signing_payload, `${v.name}: signed bytes`);
+    assert.ok(ed25519.verify(tx.signature, signed, PUB), `${v.name}: signature verifies`);
+    assert.equal(hex(ed25519.sign(signed, SEED)), v.expected.transaction_signature, `${v.name}: re-signed`);
+    assert.equal(ed25519.verify(tx.signature, tx.payload, PUB), false, `${v.name}: not over the bare fields`);
     assert.equal(hex(blake3(full)), v.expected.transaction_hash, `${v.name}: hash`);
     if (tx.nonce > MAX_TRANSACTION_NONCE) beyond += 1;
   }
@@ -121,10 +128,10 @@ test("AnchorReceipt at and beyond the bound: the SDK builds exactly the derived 
   for (const v of NX.anchor) {
     const receipt = receiptFrom(v.transaction.receipt_vector);
     const nonce = BigInt(v.transaction.nonce);
-    const payload = anchorReceiptSigningPayload(receipt, nonce);
-    assert.equal(payload.length, v.expected.signing_payload_length, v.name);
-    assert.equal(hex(payload), v.expected.signing_payload, `${v.name}: signing payload`);
-    const tx = signAnchorReceiptTransaction(receipt, nonce, SEED);
+    const payload = anchorReceiptTransactionFields(receipt, nonce);
+    assert.equal(payload.length, v.expected.transaction_fields_length, v.name);
+    assert.equal(hex(payload), v.expected.transaction_fields, `${v.name}: signing payload`);
+    const tx = signAnchorReceiptTransaction(receipt, nonce, SEED, CHAIN);
     assert.equal(tx.nonce, nonce, v.name);
     assert.equal(hex(tx.signature), v.expected.transaction_signature, `${v.name}: signature`);
     assert.equal(hex(anchorReceiptTransactionHash(tx)), v.expected.transaction_hash, `${v.name}: hash`);
@@ -135,8 +142,8 @@ test("nonces outside u64 are refused before anything is encoded", () => {
   assert.equal(NX.sdk_input_domain.length, 2, "expected 2 input-domain cases");
   const receipt = receiptFrom("empty-metadata");
   for (const c of NX.sdk_input_domain) {
-    assert.throws(() => anchorReceiptSigningPayload(receipt, BigInt(c.nonce)), MbongoNumericRangeError, c.name);
-    assert.throws(() => signAnchorReceiptTransaction(receipt, BigInt(c.nonce), SEED), MbongoNumericRangeError, c.name);
+    assert.throws(() => anchorReceiptTransactionFields(receipt, BigInt(c.nonce)), MbongoNumericRangeError, c.name);
+    assert.throws(() => signAnchorReceiptTransaction(receipt, BigInt(c.nonce, CHAIN), SEED), MbongoNumericRangeError, c.name);
   }
 });
 
@@ -150,11 +157,11 @@ test("malformed encodings are not plain transactions", () => {
 });
 
 test("signatures over the wrong message do not verify", () => {
-  assert.equal(NX.invalid_signatures.length, 2, "expected 2 invalid signatures");
+  assert.equal(NX.invalid_signatures.length, 4, "expected 4 invalid signatures");
   for (const s of NX.invalid_signatures) {
     const base = NX.plain.filter((p) => p.name === s.base_vector);
     assert.equal(base.length, 1, `${s.name}: exactly one base vector`);
-    const payload = unhex(base[0].expected.signing_payload);
+    const payload = unhex(base[0].expected.signing_payload); // the v2 signed bytes
     assert.ok(ed25519.verify(unhex(base[0].expected.transaction_signature), payload, PUB));
     assert.equal(ed25519.verify(unhex(s.transaction_signature), payload, PUB), false, `${s.name}: ${s.reason}`);
   }

@@ -362,7 +362,7 @@ fn signed(
         payload,
         signature: [0u8; 64],
     };
-    tx.signature = from_sign(&tx.signing_payload());
+    tx.signature = from_sign(&tx.signing_payload(&mbongo_core::Genesis::dev().chain_id));
     tx
 }
 
@@ -498,7 +498,12 @@ async fn run_e2e(chain: &RpcChainClient, scan: &mut Vec<String>) -> Result<(), S
     cp.register_input(task_id, object).map_err(|e| e.to_string())?;
 
     let dispatch = ProfileDispatch::new(vec![Box::new(ReverseBytesProfile), Box::new(profile)]);
-    let mut worker = Worker::new(&mut ids, executor.clone(), Box::new(dispatch));
+    let mut worker = Worker::new(
+        &mut ids,
+        executor.clone(),
+        mbongo_core::Genesis::dev().chain_id,
+        Box::new(dispatch),
+    );
 
     println!("Phase 3: in-flight crash drill — llama-server killed during the first attempt");
     let killer = {

@@ -315,6 +315,7 @@ async fn start(seed: u8, chain: FakeChain) -> Stack {
         Arc::new(SystemClock),
         [seed; 32],
         LocalKey::from_seed(&[seed; 32]),
+        mbongo_core::Genesis::dev().chain_id,
         ProviderParts {
             store,
             runtimes: vec![Arc::new(runtime) as Arc<dyn RuntimeAdapter>],
@@ -361,6 +362,7 @@ impl Stack {
             &self.client(&key),
             &self.chain,
             &key,
+            &mbongo_core::Genesis::dev().chain_id,
             &canon(spec),
             input,
             WAIT,
@@ -628,6 +630,7 @@ fn isolation_is_stated_and_refused_when_it_cannot_be_proven() {
         let out = std::process::Command::new(env!("CARGO_BIN_EXE_provider_service"))
             .arg("--config")
             .arg(&file)
+            .arg("--dev")
             .output()
             .unwrap();
         assert!(!out.status.success());

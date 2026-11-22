@@ -211,7 +211,7 @@ mod linux {
             payload: TransactionPayload::ComputeTask(Box::new(task.clone())),
             signature: [0u8; 64],
         };
-        tx.signature = client.sign(&tx.signing_payload());
+        tx.signature = client.sign(&tx.signing_payload(&mbongo_core::Genesis::dev().chain_id));
         rt.block_on(async {
             chain.submit_transaction(&tx).await.expect("chain double");
             chain.produce_block();
