@@ -532,6 +532,479 @@
       "decision": "Recorded at the 2026-11-06 baseline. Not assessed, not accepted."
     },
     {
+      "id": "RUSTSEC-2026-0486",
+      "kind": "unsound",
+      "package": "rustix",
+      "version": "1.1.2",
+      "scope": "compiled-runtime",
+      "reached_by": [
+        "mbongo-compute",
+        "mbongo-network",
+        "mbongo-node",
+        "mbongo-stress"
+      ],
+      "title": "xattr functions mark unwritten bytes as initialized when given a zero-length buffer",
+      "status": "open",
+      "decision": "Recorded on 2026-11-22 from the RustSec database at commit 8b75c83c (cargo-audit 0.22.2, dev 85818434). Not assessed, not accepted.",
+      "patched": [
+        ">= 1.1.6"
+      ],
+      "unaffected": [
+        "< 1.0.0"
+      ],
+      "aliases": [
+        "GHSA-jh2m-fhpj-3vr7"
+      ],
+      "path": "Unix targets only: rustix <- async-io 2.6.0 <- if-watch 3.2.1 <- libp2p-mdns 0.45.1, libp2p-tcp 0.41.0 <- libp2p 0.53.2 <- mbongo-network, mbongo-node, mbongo-stress; rustix <- tempfile 3.23.0 <- native-tls 0.2.16 <- reqwest 0.12.26 <- mbongo-compute"
+    },
+    {
+      "id": "RUSTSEC-2026-0487",
+      "kind": "vulnerability",
+      "package": "hickory-proto",
+      "version": "0.24.4",
+      "scope": "compiled-runtime",
+      "reached_by": [
+        "mbongo-network",
+        "mbongo-node",
+        "mbongo-stress"
+      ],
+      "title": "Panic on a malformed `alpn` value when parsing SVCB or HTTPS records from text",
+      "status": "open",
+      "decision": "Recorded on 2026-11-22 from the RustSec database at commit 8b75c83c (cargo-audit 0.22.2, dev 85818434). Not assessed, not accepted.",
+      "patched": [
+        ">= 0.26.2"
+      ],
+      "unaffected": [
+        "< 0.20.1"
+      ],
+      "aliases": [
+        "CVE-2026-123572",
+        "GHSA-hx8c-fjhc-hmf5"
+      ],
+      "path": "hickory-proto (feature mdns) <- libp2p-mdns 0.45.1 <- libp2p 0.53.2 (default features) <- mbongo-network, mbongo-node, mbongo-stress"
+    },
+    {
+      "id": "RUSTSEC-2026-0489",
+      "kind": "vulnerability",
+      "package": "hickory-proto",
+      "version": "0.24.4",
+      "scope": "compiled-runtime",
+      "reached_by": [
+        "mbongo-network",
+        "mbongo-node",
+        "mbongo-stress"
+      ],
+      "title": "Panic when an SVCB or HTTPS parameter value is a single quote character",
+      "status": "open",
+      "decision": "Recorded on 2026-11-22 from the RustSec database at commit 8b75c83c (cargo-audit 0.22.2, dev 85818434). Not assessed, not accepted.",
+      "patched": [
+        ">= 0.26.2"
+      ],
+      "unaffected": [
+        "< 0.20.1"
+      ],
+      "aliases": [
+        "CVE-2026-123573",
+        "GHSA-wgfr-mphw-j5g4"
+      ],
+      "path": "hickory-proto (feature mdns) <- libp2p-mdns 0.45.1 <- libp2p 0.53.2 (default features) <- mbongo-network, mbongo-node, mbongo-stress"
+    },
+    {
+      "id": "RUSTSEC-2026-0490",
+      "kind": "vulnerability",
+      "package": "hickory-proto",
+      "version": "0.24.4",
+      "scope": "compiled-runtime",
+      "reached_by": [
+        "mbongo-network",
+        "mbongo-node",
+        "mbongo-stress"
+      ],
+      "title": "Zone file lexer panics on a token of 4096 or more characters",
+      "status": "open",
+      "decision": "Recorded on 2026-11-22 from the RustSec database at commit 8b75c83c (cargo-audit 0.22.2, dev 85818434). Not assessed, not accepted.",
+      "patched": [
+        ">= 0.26.2"
+      ],
+      "unaffected": [
+        "< 0.24.0"
+      ],
+      "aliases": [
+        "CVE-2026-123574",
+        "GHSA-4rph-pmrw-mwpw"
+      ],
+      "path": "hickory-proto (feature mdns) <- libp2p-mdns 0.45.1 <- libp2p 0.53.2 (default features) <- mbongo-network, mbongo-node, mbongo-stress"
+    },
+    {
+      "id": "RUSTSEC-2026-0491",
+      "kind": "vulnerability",
+      "package": "hickory-proto",
+      "version": "0.24.4",
+      "scope": "compiled-runtime",
+      "reached_by": [
+        "mbongo-network",
+        "mbongo-node",
+        "mbongo-stress"
+      ],
+      "title": "Memory amplification from record counts in the DNS message header",
+      "status": "open",
+      "decision": "Recorded on 2026-11-22 from the RustSec database at commit 8b75c83c (cargo-audit 0.22.2, dev 85818434). Not assessed, not accepted.",
+      "patched": [
+        ">= 0.26.2"
+      ],
+      "unaffected": [
+        "< 0.18.0"
+      ],
+      "aliases": [
+        "CVE-2026-123570",
+        "GHSA-67wc-6jq8-ghrc"
+      ],
+      "path": "hickory-proto (feature mdns) <- libp2p-mdns 0.45.1 <- libp2p 0.53.2 (default features) <- mbongo-network, mbongo-node, mbongo-stress"
+    },
+    {
+      "id": "RUSTSEC-2026-0505",
+      "kind": "vulnerability",
+      "package": "hickory-proto",
+      "version": "0.24.4",
+      "scope": "compiled-runtime",
+      "reached_by": [
+        "mbongo-network",
+        "mbongo-node",
+        "mbongo-stress"
+      ],
+      "title": "NSEC3 owner names not checked against the zone in DNSSEC validation (hickory-proto)",
+      "status": "open",
+      "decision": "Recorded on 2026-11-22 from the RustSec database at commit 8b75c83c (cargo-audit 0.22.2, dev 85818434). Not assessed, not accepted.",
+      "patched": [],
+      "unaffected": [
+        ">= 0.26.0-beta.1"
+      ],
+      "aliases": [
+        "CVE-2026-123580",
+        "GHSA-p2jv-r3m3-7wf4"
+      ],
+      "path": "hickory-proto (feature mdns) <- libp2p-mdns 0.45.1 <- libp2p 0.53.2 (default features) <- mbongo-network, mbongo-node, mbongo-stress"
+    },
+    {
+      "id": "RUSTSEC-2026-0511",
+      "kind": "vulnerability",
+      "package": "hickory-proto",
+      "version": "0.24.4",
+      "scope": "compiled-runtime",
+      "reached_by": [
+        "mbongo-network",
+        "mbongo-node",
+        "mbongo-stress"
+      ],
+      "title": "NXDOMAIN accepted for a proven empty non-terminal (hickory-proto)",
+      "status": "open",
+      "decision": "Recorded on 2026-11-22 from the RustSec database at commit 8b75c83c (cargo-audit 0.22.2, dev 85818434). Not assessed, not accepted.",
+      "patched": [],
+      "unaffected": [
+        ">= 0.26.0-beta.1"
+      ],
+      "aliases": [
+        "CVE-2026-123594",
+        "GHSA-86vr-jm6c-7cpg"
+      ],
+      "path": "hickory-proto (feature mdns) <- libp2p-mdns 0.45.1 <- libp2p 0.53.2 (default features) <- mbongo-network, mbongo-node, mbongo-stress"
+    },
+    {
+      "id": "RUSTSEC-2026-0512",
+      "kind": "vulnerability",
+      "package": "hickory-proto",
+      "version": "0.24.4",
+      "scope": "compiled-runtime",
+      "reached_by": [
+        "mbongo-network",
+        "mbongo-node",
+        "mbongo-stress"
+      ],
+      "title": "DNSSEC validation accepted an unrelated signed RRset as the answer (hickory-proto)",
+      "status": "open",
+      "decision": "Recorded on 2026-11-22 from the RustSec database at commit 8b75c83c (cargo-audit 0.22.2, dev 85818434). Not assessed, not accepted.",
+      "patched": [],
+      "unaffected": [
+        ">= 0.26.0-beta.1"
+      ],
+      "aliases": [
+        "CVE-2026-123581",
+        "GHSA-929p-gjf6-5hqj"
+      ],
+      "path": "hickory-proto (feature mdns) <- libp2p-mdns 0.45.1 <- libp2p 0.53.2 (default features) <- mbongo-network, mbongo-node, mbongo-stress"
+    },
+    {
+      "id": "RUSTSEC-2026-0514",
+      "kind": "vulnerability",
+      "package": "hickory-resolver",
+      "version": "0.24.4",
+      "scope": "lock-only",
+      "reached_by": [],
+      "title": "`Resolver::lookup` and `lookup_ip` returned records that failed DNSSEC validation",
+      "status": "open",
+      "decision": "Recorded on 2026-11-22 from the RustSec database at commit 8b75c83c (cargo-audit 0.22.2, dev 85818434). Not assessed, not accepted.",
+      "patched": [
+        ">= 0.26.2"
+      ],
+      "unaffected": [],
+      "aliases": [
+        "CVE-2026-93657",
+        "GHSA-5j98-2g5x-46v6"
+      ],
+      "path": "listed by libp2p-dns 0.41.1, which nothing compiles: the dns feature of libp2p 0.53.2 is not enabled"
+    },
+    {
+      "id": "RUSTSEC-2026-0523",
+      "kind": "vulnerability",
+      "package": "quinn-proto",
+      "version": "0.11.13",
+      "scope": "lock-only",
+      "reached_by": [],
+      "title": "MAX_STREAM_DATA frame can open streams beyond the stream limit",
+      "status": "open",
+      "decision": "Recorded on 2026-11-22 from the RustSec database at commit 8b75c83c (cargo-audit 0.22.2, dev 85818434). Not assessed, not accepted.",
+      "patched": [
+        ">= 0.11.19"
+      ],
+      "unaffected": [
+        "< 0.11.0"
+      ],
+      "aliases": [
+        "GHSA-53rm-773f-4q8c"
+      ],
+      "path": "listed by quinn 0.11.9 <- libp2p-quic 0.10.3, which nothing compiles"
+    },
+    {
+      "id": "RUSTSEC-2026-0524",
+      "kind": "vulnerability",
+      "package": "quinn-proto",
+      "version": "0.11.13",
+      "scope": "lock-only",
+      "reached_by": [],
+      "title": "Long Retry token can panic or exhaust memory in a QUIC client",
+      "status": "open",
+      "decision": "Recorded on 2026-11-22 from the RustSec database at commit 8b75c83c (cargo-audit 0.22.2, dev 85818434). Not assessed, not accepted.",
+      "patched": [
+        ">= 0.11.19"
+      ],
+      "unaffected": [
+        "< 0.11.0"
+      ],
+      "aliases": [
+        "GHSA-wppq-2f6r-wfvm"
+      ],
+      "path": "listed by quinn 0.11.9 <- libp2p-quic 0.10.3, which nothing compiles"
+    },
+    {
+      "id": "RUSTSEC-2026-0525",
+      "kind": "vulnerability",
+      "package": "libp2p-quic",
+      "version": "0.10.3",
+      "scope": "lock-only",
+      "reached_by": [],
+      "title": "Remote panic when a peer certificate expires during the QUIC handshake",
+      "status": "open",
+      "decision": "Recorded on 2026-11-22 from the RustSec database at commit 8b75c83c (cargo-audit 0.22.2, dev 85818434). Not assessed, not accepted.",
+      "patched": [
+        ">= 0.13.1"
+      ],
+      "unaffected": [],
+      "aliases": [
+        "CVE-2026-61544",
+        "GHSA-5hq8-qhww-jm7q"
+      ],
+      "path": "listed by libp2p 0.53.2 as an optional dependency of its quic feature, which is not enabled"
+    },
+    {
+      "id": "RUSTSEC-2026-0530",
+      "kind": "vulnerability",
+      "package": "hickory-proto",
+      "version": "0.24.4",
+      "scope": "compiled-runtime",
+      "reached_by": [
+        "mbongo-network",
+        "mbongo-node",
+        "mbongo-stress"
+      ],
+      "title": "Parent-side NSEC at a zone cut accepted as proof of nonexistence (hickory-proto)",
+      "status": "open",
+      "decision": "Recorded on 2026-11-22 from the RustSec database at commit 8b75c83c (cargo-audit 0.22.2, dev 85818434). Not assessed, not accepted.",
+      "patched": [],
+      "unaffected": [
+        ">= 0.26.0-beta.1"
+      ],
+      "aliases": [
+        "CVE-2026-123596",
+        "GHSA-3r6v-f3jh-vvqm"
+      ],
+      "path": "hickory-proto (feature mdns) <- libp2p-mdns 0.45.1 <- libp2p 0.53.2 (default features) <- mbongo-network, mbongo-node, mbongo-stress"
+    },
+    {
+      "id": "RUSTSEC-2026-0531",
+      "kind": "vulnerability",
+      "package": "hickory-proto",
+      "version": "0.24.4",
+      "scope": "compiled-runtime",
+      "reached_by": [
+        "mbongo-network",
+        "mbongo-node",
+        "mbongo-stress"
+      ],
+      "title": "Child-side NSEC or NSEC3 record accepted as proof that a delegation has no DS record (hickory-proto)",
+      "status": "open",
+      "decision": "Recorded on 2026-11-22 from the RustSec database at commit 8b75c83c (cargo-audit 0.22.2, dev 85818434). Not assessed, not accepted.",
+      "patched": [],
+      "unaffected": [
+        ">= 0.26.0-beta.1"
+      ],
+      "aliases": [
+        "CVE-2026-123591",
+        "GHSA-7php-9j59-g3ch"
+      ],
+      "path": "hickory-proto (feature mdns) <- libp2p-mdns 0.45.1 <- libp2p 0.53.2 (default features) <- mbongo-network, mbongo-node, mbongo-stress"
+    },
+    {
+      "id": "RUSTSEC-2026-0538",
+      "kind": "vulnerability",
+      "package": "quinn-udp",
+      "version": "0.5.14",
+      "scope": "lock-only",
+      "reached_by": [],
+      "title": "Receive loop can spin after a truncated datagram",
+      "status": "open",
+      "decision": "Recorded on 2026-11-22 from the RustSec database at commit 8b75c83c (cargo-audit 0.22.2, dev 85818434). Not assessed, not accepted.",
+      "patched": [
+        ">= 0.5.16, < 0.6.0",
+        ">= 0.6.3"
+      ],
+      "unaffected": [],
+      "aliases": [
+        "GHSA-6pp4-4cxf-xf88"
+      ],
+      "path": "listed by quinn 0.11.9 <- libp2p-quic 0.10.3, which nothing compiles"
+    },
+    {
+      "id": "RUSTSEC-2026-0545",
+      "kind": "vulnerability",
+      "package": "zip",
+      "version": "1.1.4",
+      "scope": "compiled-build-or-test",
+      "reached_by": [
+        "mbongo-api",
+        "mbongo-node"
+      ],
+      "title": "AES entries returned without checking their authentication code when the data ends early or is empty",
+      "status": "open",
+      "decision": "Recorded on 2026-11-22 from the RustSec database at commit 8b75c83c (cargo-audit 0.22.2, dev 85818434). Not assessed, not accepted.",
+      "patched": [
+        ">= 9.0.0"
+      ],
+      "unaffected": [
+        "< 0.6.0"
+      ],
+      "aliases": [
+        "CVE-2026-115906",
+        "GHSA-8hxf-qr8p-62x4"
+      ],
+      "path": "build-dependency of utoipa-swagger-ui 7.1.0 (its build script) <- mbongo-api <- mbongo-node"
+    },
+    {
+      "id": "RUSTSEC-2026-0548",
+      "kind": "vulnerability",
+      "package": "zip",
+      "version": "1.1.4",
+      "scope": "compiled-build-or-test",
+      "reached_by": [
+        "mbongo-api",
+        "mbongo-node"
+      ],
+      "title": "`ZipStreamReader` extracts entries under local-header names that can differ from the central directory",
+      "status": "open",
+      "decision": "Recorded on 2026-11-22 from the RustSec database at commit 8b75c83c (cargo-audit 0.22.2, dev 85818434). Not assessed, not accepted.",
+      "patched": [
+        ">= 9.0.5"
+      ],
+      "unaffected": [],
+      "aliases": [
+        "CVE-2026-115905",
+        "GHSA-m665-v7pm-7grj"
+      ],
+      "path": "build-dependency of utoipa-swagger-ui 7.1.0 (its build script) <- mbongo-api <- mbongo-node"
+    },
+    {
+      "id": "RUSTSEC-2026-0550",
+      "kind": "vulnerability",
+      "package": "hickory-proto",
+      "version": "0.24.4",
+      "scope": "compiled-runtime",
+      "reached_by": [
+        "mbongo-network",
+        "mbongo-node",
+        "mbongo-stress"
+      ],
+      "title": "Unsigned NSEC or NSEC3 record used in a nonexistence proof (hickory-proto)",
+      "status": "open",
+      "decision": "Recorded on 2026-11-22 from the RustSec database at commit 8b75c83c (cargo-audit 0.22.2, dev 85818434). Not assessed, not accepted.",
+      "patched": [],
+      "unaffected": [
+        ">= 0.26.0-beta.1"
+      ],
+      "aliases": [
+        "CVE-2026-123590",
+        "GHSA-57pw-897j-v4j6"
+      ],
+      "path": "hickory-proto (feature mdns) <- libp2p-mdns 0.45.1 <- libp2p 0.53.2 (default features) <- mbongo-network, mbongo-node, mbongo-stress"
+    },
+    {
+      "id": "RUSTSEC-2026-0551",
+      "kind": "vulnerability",
+      "package": "hickory-proto",
+      "version": "0.24.4",
+      "scope": "compiled-runtime",
+      "reached_by": [
+        "mbongo-network",
+        "mbongo-node",
+        "mbongo-stress"
+      ],
+      "title": "Records with a DNS class other than the query's marked secure without being validated (hickory-proto)",
+      "status": "open",
+      "decision": "Recorded on 2026-11-22 from the RustSec database at commit 8b75c83c (cargo-audit 0.22.2, dev 85818434). Not assessed, not accepted.",
+      "patched": [],
+      "unaffected": [
+        ">= 0.26.0-beta.1"
+      ],
+      "aliases": [
+        "CVE-2026-123599",
+        "GHSA-wjgj-fvg9-65w9"
+      ],
+      "path": "hickory-proto (feature mdns) <- libp2p-mdns 0.45.1 <- libp2p 0.53.2 (default features) <- mbongo-network, mbongo-node, mbongo-stress"
+    },
+    {
+      "id": "RUSTSEC-2026-0592",
+      "kind": "vulnerability",
+      "package": "url",
+      "version": "2.5.7",
+      "scope": "compiled-runtime",
+      "reached_by": [
+        "mbongo-api",
+        "mbongo-compute",
+        "mbongo-network",
+        "mbongo-node",
+        "mbongo-stress"
+      ],
+      "title": "Stack overflow in `Url::origin()` on nested `blob:` URLs",
+      "status": "open",
+      "decision": "Recorded on 2026-11-22 from the RustSec database at commit 8b75c83c (cargo-audit 0.22.2, dev 85818434). Not assessed, not accepted.",
+      "patched": [
+        ">= 2.5.9"
+      ],
+      "unaffected": [],
+      "aliases": [
+        "GHSA-hrj5-67jp-wqp9"
+      ],
+      "path": "url <- multiaddr 0.18.2 <- libp2p 0.53.2 <- mbongo-network, mbongo-node, mbongo-stress; url <- reqwest 0.12.26 <- mbongo-compute <- mbongo-node; mbongo-api reaches it only through the build script of utoipa-swagger-ui 7.1.0"
+    },
+    {
       "id": "YANKED",
       "kind": "yanked",
       "package": "core2",

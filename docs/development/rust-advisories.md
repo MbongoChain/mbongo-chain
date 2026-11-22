@@ -75,6 +75,15 @@ Neither is a subset of the other: GitHub reports advisories on `openssl` that Ru
 
 `compiled-runtime` says a package is built, not that a defect in it can be reached. `lock-only` findings stay in the register: enabling a feature would make them real.
 
+Entries recorded from 2026-11-22 also carry four informational fields, which the check does not read:
+
+| Field | Content |
+|---|---|
+| `patched` | The patched version ranges of the RustSec advisory, as published. Empty when none is published |
+| `unaffected` | Its unaffected ranges |
+| `aliases` | Its CVE and GHSA identifiers |
+| `path` | How `cargo tree` reaches the package from the workspace, or what lists it when nothing compiles it |
+
 ## Remediation plan
 
 Each step is its own pull request, and removes its entries from the register. Nothing here accepts a finding.
@@ -112,6 +121,24 @@ Each step is its own pull request, and removes its entries from the register. No
 | Unmaintained or unsound, no action yet | `anyhow`, `paste`, `pin-utils`, `proc-macro-error`, `rand`, `tokio` | Assess each advisory's condition against how the code uses it |
 
 These groups are a first reading from dependency paths, not assessments. Each finding stays `open` until one is recorded.
+
+## Recorded 2026-11-22
+
+The scheduled run of 2026-11-16 on `dev` (`90f3350b`) failed with 15 findings missing from the register. The run of 2026-11-22 on pull request #274 failed with the same 15 and 5 more. All 20 were published to the RustSec database after the register was last updated. The lock was not changed to produce them: `dev` `85818434` and that pull request hold the same 542 packages at the same versions. The 20 were recorded from database commit `8b75c83c`, with `cargo-audit` 0.22.2. All are `open`, and none is accepted.
+
+| Package | Advisories | Scope | Patched |
+|---|---|---|---|
+| `hickory-proto` 0.24.4 | RUSTSEC-2026-0487, 0489, 0490, 0491 | `compiled-runtime`, through mDNS | `>= 0.26.2` |
+| `hickory-proto` 0.24.4 | RUSTSEC-2026-0505, 0511, 0512, 0530, 0531, 0550, 0551 (DNSSEC validation) | `compiled-runtime`, through mDNS | none published; unaffected from `0.26.0-beta.1` |
+| `url` 2.5.7 | RUSTSEC-2026-0592 | `compiled-runtime` | `>= 2.5.9` |
+| `rustix` 1.1.2 | RUSTSEC-2026-0486 (unsound) | `compiled-runtime`, Unix targets | `>= 1.1.6` |
+| `zip` 1.1.4 | RUSTSEC-2026-0545, 0548 | `compiled-build-or-test`, the build script of `utoipa-swagger-ui` | `>= 9.0.0`, `>= 9.0.5` |
+| `hickory-resolver` 0.24.4 | RUSTSEC-2026-0514 | `lock-only` | `>= 0.26.2` |
+| `libp2p-quic` 0.10.3 | RUSTSEC-2026-0525 | `lock-only` | `>= 0.13.1` |
+| `quinn-proto` 0.11.13 | RUSTSEC-2026-0523, 0524 | `lock-only` | `>= 0.11.19` |
+| `quinn-udp` 0.5.14 | RUSTSEC-2026-0538 | `lock-only` | `>= 0.5.16, < 0.6.0`, `>= 0.6.3` |
+
+The `hickory-proto` entries join RUSTSEC-2026-0119 under "Held by `libp2p` 0.53" in the remediation plan. `url` and `rustix` have patches in the same line. No reachability is assessed here.
 
 ## Baseline
 
