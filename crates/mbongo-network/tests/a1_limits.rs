@@ -34,10 +34,12 @@ fn block(height: u64) -> Block {
             transactions_root: Hash::zero(),
             timestamp: 1_700_000_000,
             height,
+            producer: mbongo_core::Address::zero(),
         },
         body: BlockBody {
             transactions: vec![],
         },
+        producer_signature: [0u8; 64],
     }
 }
 

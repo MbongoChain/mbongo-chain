@@ -113,3 +113,32 @@ a signature for `other_chain_id`.
 - `crates/mbongo-core/tests/transaction_vectors.rs` and
   `sdk/typescript/test/signing-domain.test.mjs` also read
   `anchor-receipt-v1.json`, to prove that every v0.4 signature in it is refused.
+
+## Version 3: the block fields (RFC 0006 sections 3 and 7, S1-7)
+
+`compute-task-rpc-v3.json` supersedes `compute-task-rpc-v2.json`, which stays
+as the record of the block shape before S1-7. Every transaction and payload
+object is the one of version 2. Only the block result changes. It gains the
+two fields RFC 0006 §3 appends, in the `0x` hex of `rpc_v0.3` §1:
+
+- `header.producer`, the last header field: the dev authority;
+- `producer_signature`, the last block field: the dev authority's Ed25519
+  signature over `BLAKE3("mbongo-block:v1" || chain_id || SCALE(header))` for
+  the dev chain.
+
+`block.expected` adds the header encoding, the signing hash, the producer and
+the signature. RPC represents a block and validates nothing, so `parent_hash`
+and `state_root` stay zero. The node checks the signature; see
+`../block/README.md`.
+
+**Derivation.** The script `derive-compute-task-rpc-v3.mjs` uses no production
+code. It reads version 2 and signs the header with the S1-2 Ed25519, which
+gives the same bytes as OpenSSL. It uses the S1-5 BLAKE3 and lays the header
+SCALE out by hand.
+
+The observation of `@mbongo/sdk` 0.1.0 recorded under `old_client` in versions
+1 and 2 is not carried over, because it is not measured again here.
+
+**Consumers.** `crates/mbongo-network/tests/jsonrpc_tests.rs` and the SDK
+tests (`compute-task.test.mjs`, `bound-receipt.test.mjs`,
+`block-signature.test.mjs`) read version 3.

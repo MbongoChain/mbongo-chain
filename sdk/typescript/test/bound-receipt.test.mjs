@@ -35,9 +35,10 @@ const CT = load("../../../test-vectors/compute-task/compute-task-v2.json");
 const RX = load("../../../test-vectors/receipt/receipt-v1.json");
 // The network the v2 fixtures sign for (RFC 0006 section 2).
 const CHAIN = Uint8Array.from(Buffer.from(BIND.chain.chain_id, "hex"));
-const RPC = load("../../../test-vectors/rpc/compute-task-rpc-v2.json");
+const RPC = load("../../../test-vectors/rpc/compute-task-rpc-v3.json");
 for (const [name, doc] of [["binding", BIND], ["compute-task", CT], ["receipt", RX], ["rpc", RPC]]) {
-  assert.equal(doc.fixture_version, doc.supersedes ? 2 : 1, `${name} fixture: unsupported schema version`);
+  const version = name === "rpc" ? 3 : doc.supersedes ? 2 : 1;
+  assert.equal(doc.fixture_version, version, `${name} fixture: unsupported schema version`);
 }
 
 const unhex = (s) => Uint8Array.from(s.match(/../g) ?? [], (b) => parseInt(b, 16));

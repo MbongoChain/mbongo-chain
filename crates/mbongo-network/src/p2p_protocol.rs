@@ -91,7 +91,13 @@ pub struct BlockNotifyAck;
 /// encoding per write. libp2p moves a request from `send_request` to
 /// `write_request` without cloning it. Both forms put the same bytes on the
 /// wire.
+///
+/// `Decoded` holds the block inline, which RFC 0006 §3 made 96 bytes larger
+/// (`producer` and `producer_signature`). An announcement is moved, never
+/// copied, and lives for one read; boxing it would add an allocation to every
+/// inbound announcement for no saving.
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum Announcement {
     /// Decoded, as read from a peer.
     Decoded(SyncNotification),
@@ -492,6 +498,7 @@ mod tests {
                 transactions_root: Hash::zero(),
                 timestamp: 1_700_000_000,
                 height: 5,
+                producer: mbongo_core::Address::zero(),
             },
             body: BlockBody {
                 transactions: vec![Transaction {
@@ -504,6 +511,7 @@ mod tests {
                     signature: [0u8; 64],
                 }],
             },
+            producer_signature: [0u8; 64],
         };
         let hash = Hash([99u8; 32]);
         let resp = SyncResponse::Blocks(vec![(hash, block.clone())]);
@@ -560,10 +568,12 @@ mod tests {
                 transactions_root: Hash::zero(),
                 timestamp: 1_700_000_000,
                 height: 3,
+                producer: mbongo_core::Address::zero(),
             },
             body: BlockBody {
                 transactions: vec![],
             },
+            producer_signature: [0u8; 64],
         };
         let notif = SyncNotification::NewBlock {
             block: block.clone(),
@@ -739,6 +749,7 @@ mod tests {
                 transactions_root: Hash::zero(),
                 timestamp: 1_700_000_000,
                 height,
+                producer: mbongo_core::Address::zero(),
             },
             body: BlockBody {
                 transactions: (0..count)
@@ -753,6 +764,7 @@ mod tests {
                     })
                     .collect(),
             },
+            producer_signature: [0u8; 64],
         }
     }
 

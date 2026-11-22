@@ -88,3 +88,6 @@ path = "src/bin/compute_vertical.rs"
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 reqwest = { workspace = true }
+# Writes a data directory in the block format before S1-7, to test that it
+# is refused (genesis_dir tests).
+rocksdb = { workspace = true }

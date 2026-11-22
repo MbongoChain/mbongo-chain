@@ -232,10 +232,24 @@ pub struct NodeBackend<S: Storage> {
     broadcaster: Option<Arc<dyn BlockBroadcaster>>,
     /// Whether this node is configured as a block producer.
     is_producer: bool,
+    /// The key this node signs its blocks with (RFC 0006 §3). Only a
+    /// producer holds one, and it must be the authority's: production
+    /// refuses any other.
+    producer_key: Option<Arc<ed25519_dalek::SigningKey>>,
     /// The network this node runs, set once by [`Self::ensure_genesis`]
     /// from the genesis it was started with. Every transaction signature is
-    /// verified for it (RFC 0006 §2); before it is set, none verifies.
-    chain_id: Arc<std::sync::OnceLock<ChainId>>,
+    /// verified for its `chain_id` (RFC 0006 §2), and every block against its
+    /// authority and `chain_id` (§5 rules t and u). Before it is set, nothing
+    /// verifies.
+    chain: Arc<std::sync::OnceLock<BoundChain>>,
+}
+
+/// The network a backend runs, from its genesis: the `chain_id` signatures
+/// are bound to, and the only authority that may produce blocks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BoundChain {
+    chain_id: ChainId,
+    authority: Address,
 }
 
 impl<S: Storage> Clone for NodeBackend<S> {
@@ -245,7 +259,8 @@ impl<S: Storage> Clone for NodeBackend<S> {
             mempool: Arc::clone(&self.mempool),
             broadcaster: self.broadcaster.clone(),
             is_producer: self.is_producer,
-            chain_id: Arc::clone(&self.chain_id),
+            producer_key: self.producer_key.clone(),
+            chain: Arc::clone(&self.chain),
         }
     }
 }
@@ -267,30 +282,43 @@ impl<S: Storage> NodeBackend<S> {
             mempool: Arc::new(RwLock::new(Mempool::with_config(config))),
             broadcaster: None,
             is_producer,
-            chain_id: Arc::new(std::sync::OnceLock::new()),
+            producer_key: None,
+            chain: Arc::new(std::sync::OnceLock::new()),
         }
+    }
+
+    /// Sets the key this node signs its blocks with, from a 32-byte Ed25519
+    /// seed. Production refuses to sign unless its public key is the
+    /// authority of the bound genesis; the node checks that at start as
+    /// well, before opening anything.
+    pub fn set_producer_key(&mut self, seed: &[u8; 32]) {
+        self.producer_key = Some(Arc::new(ed25519_dalek::SigningKey::from_bytes(seed)));
     }
 
     /// The network this node runs, once [`Self::ensure_genesis`] succeeded.
     #[cfg(test)]
     pub fn chain_id(&self) -> Option<ChainId> {
-        self.chain_id.get().copied()
+        self.chain.get().map(|chain| chain.chain_id)
     }
 
     /// Whether `tx` carries a valid signature for this node's network. A
     /// node with no genesis yet accepts no signature.
     fn signature_is_valid(&self, tx: &Transaction) -> bool {
-        self.chain_id.get().is_some_and(|chain_id| tx.verify_signature(chain_id))
+        self.chain.get().is_some_and(|chain| tx.verify_signature(&chain.chain_id))
     }
 
-    /// Records the network of `genesis` as this node's. A backend runs one
-    /// network for its whole life.
+    /// Records the network of `genesis` as this node's: its `chain_id` and
+    /// its authority. A backend runs one network for its whole life.
     fn bind_chain(&self, genesis: &Genesis) -> Result<(), BackendError> {
-        let bound = *self.chain_id.get_or_init(|| genesis.chain_id);
-        if bound != genesis.chain_id {
+        let chain = BoundChain {
+            chain_id: genesis.chain_id,
+            authority: genesis.authority(),
+        };
+        let bound = *self.chain.get_or_init(|| chain);
+        if bound != chain {
             return Err(BackendError::Internal(format!(
-                "this node runs chain {bound}, not chain {}",
-                genesis.chain_id
+                "this node runs chain {}, not chain {}",
+                bound.chain_id, genesis.chain_id
             )));
         }
         Ok(())
@@ -368,8 +396,10 @@ impl<S: Storage> NodeBackend<S> {
     /// 1. `block.header.parent_hash` matches the current chain tip hash.
     /// 2. `block.header.height == current_height + 1`.
     /// 3. `transactions_root` matches re-computed commitment.
-    /// 4. Every transaction has a valid signature.
-    /// 5. Nonce and balance rules pass for every transaction (re-executed).
+    /// 4. Rules (t), (u), (v) of RFC 0006 §5: the producer is the authority,
+    ///    its signature is strictly valid for this `chain_id`, and the
+    ///    timestamp is not below the parent's.
+    /// 5. Every transaction passes every rule (re-executed on a view).
     /// 6. Rule (w): `state_root` equals the root computed from the parent's
     ///    and from what the block changes (RFC 0006 §4, §5).
     ///
@@ -416,6 +446,33 @@ impl<S: Storage> NodeBackend<S> {
         let recomputed_root = compute_transactions_root(&block.body.transactions);
         if block.header.transactions_root != recomputed_root {
             return Err(ApplyBlockError::TransactionsRootMismatch);
+        }
+
+        // ── Producer and timestamp (RFC 0006 §5 rules t, u, v) ─────────
+        // In that order, before any transaction is read.
+        let chain = self.chain.get().ok_or_else(|| {
+            ApplyBlockError::Storage("no genesis bound: ensure_genesis has not run".to_string())
+        })?;
+        // (t) The producer is the only authority of this genesis.
+        if block.header.producer != chain.authority {
+            return Err(ApplyBlockError::UnauthorizedProducer {
+                expected: chain.authority,
+                got: block.header.producer,
+            });
+        }
+        // (u) Its signature over the whole header, for this chain_id, is
+        // strictly valid. The block hash covers the signature, so a
+        // malleable one would give one block two hashes.
+        if !block.verify_producer_signature(&chain.chain_id) {
+            return Err(ApplyBlockError::InvalidBlockSignature);
+        }
+        // (v) Time never goes back. No upper bound: a wall-clock check
+        // would make validity depend on when a block is replayed.
+        if block.header.timestamp < parent_block.header.timestamp {
+            return Err(ApplyBlockError::InvalidTimestamp {
+                parent: parent_block.header.timestamp,
+                got: block.header.timestamp,
+            });
         }
 
         // ── Re-execute transactions ────────────────────────────────────
@@ -1004,6 +1061,27 @@ pub enum ApplyBlockError {
     /// The transactions_root commitment does not match the body.
     #[error("transactions_root mismatch")]
     TransactionsRootMismatch,
+    /// The block producer is not the network's authority (RFC 0006 §5
+    /// rule t).
+    #[error("unauthorized producer: the authority is {expected}, block names {got}")]
+    UnauthorizedProducer {
+        /// The authority of this node's genesis.
+        expected: Address,
+        /// The producer in the block header.
+        got: Address,
+    },
+    /// The producer signature does not verify under the strict definition,
+    /// for this node's `chain_id` (RFC 0006 §5 rule u).
+    #[error("invalid block signature")]
+    InvalidBlockSignature,
+    /// The block's timestamp is below its parent's (RFC 0006 §5 rule v).
+    #[error("invalid timestamp: {got} is below the parent's {parent}")]
+    InvalidTimestamp {
+        /// The parent block's timestamp.
+        parent: u64,
+        /// The timestamp in the block header.
+        got: u64,
+    },
     /// The payload variant does not match the transaction type (rule a).
     #[error("payload does not match transaction type at index {0}")]
     TypePayloadMismatch(usize),
@@ -1104,8 +1182,9 @@ pub(crate) fn compute_tx_hash(tx: &Transaction) -> Hash {
 /// The genesis block of `genesis`, derived and never received (RFC 0006
 /// §1): height 0, zero parent, the file's timestamp, an empty body, the
 /// `transactions_root` of an empty list, and `state_root(0)` of the
-/// network's `chain_id` and allocations (RFC 0006 §4). The producer fields
-/// arrive with S1-7.
+/// network's `chain_id` and allocations (RFC 0006 §4). Its producer and
+/// producer signature are zero: no one signs the genesis block, and rules (t)
+/// to (w) never apply to it, since it is derived (RFC 0006 §3).
 pub(crate) fn genesis_block(genesis: &Genesis) -> Block {
     let txs: Vec<Transaction> = Vec::new();
     Block {
@@ -1115,8 +1194,10 @@ pub(crate) fn genesis_block(genesis: &Genesis) -> Block {
             transactions_root: compute_transactions_root(&txs),
             timestamp: genesis.timestamp,
             height: 0,
+            producer: mbongo_core::Address::zero(),
         },
         body: BlockBody { transactions: txs },
+        producer_signature: [0u8; 64],
     }
 }
 
@@ -1451,6 +1532,24 @@ impl<S: Storage + Send + Sync + 'static> RpcBackend for NodeBackend<S> {
                 ));
             }
 
+            // Only the authority of this genesis signs (RFC 0006 §3, rule t).
+            // Checked before anything is read, so a misconfigured node
+            // produces nothing rather than blocks every peer refuses.
+            let chain = *backend
+                .chain
+                .get()
+                .ok_or_else(|| BackendError::Internal("genesis block required".to_string()))?;
+            let key = backend.producer_key.clone().ok_or_else(|| {
+                BackendError::Internal("no producer key: this node cannot sign blocks".to_string())
+            })?;
+            let producer = Address(key.verifying_key().to_bytes());
+            if producer != chain.authority {
+                return Err(BackendError::Internal(format!(
+                    "the producer key {producer} is not the authority {} of chain {}",
+                    chain.authority, chain.chain_id
+                )));
+            }
+
             // Ensure genesis exists.
             if storage
                 .get_block_by_height(0)
@@ -1526,17 +1625,25 @@ impl<S: Storage + Send + Sync + 'static> RpcBackend for NodeBackend<S> {
                 (txs, failed, state_root)
             };
 
-            // Build the block: the root of the view, and a timestamp never
-            // below the parent's (RFC 0006 §3).
+            // Build the block: the root of the view, a timestamp never
+            // below the parent's, then the signature over the whole header
+            // for this chain_id (RFC 0006 §3).
+            let header = BlockHeader {
+                parent_hash,
+                state_root,
+                transactions_root: compute_transactions_root(&txs),
+                timestamp: now_secs().max(parent_block.header.timestamp),
+                height: new_height,
+                producer,
+            };
+            let producer_signature = {
+                use ed25519_dalek::Signer;
+                key.sign(&header.signing_hash(&chain.chain_id)).to_bytes()
+            };
             let block = Block {
-                header: BlockHeader {
-                    parent_hash,
-                    state_root,
-                    transactions_root: compute_transactions_root(&txs),
-                    timestamp: now_secs().max(parent_block.header.timestamp),
-                    height: new_height,
-                },
+                header,
                 body: BlockBody { transactions: txs },
+                producer_signature,
             };
 
             // Delegate to apply_block, which validates the block as it
@@ -1702,9 +1809,27 @@ mod tests {
     };
     use mbongo_storage::InMemoryStorage;
 
-    /// Creates a backend with producer role enabled (default for most tests).
+    /// Creates a backend with producer role enabled (default for most tests),
+    /// holding the dev authority key: every test genesis here names the dev
+    /// authority.
     pub(super) fn make_backend() -> NodeBackend<InMemoryStorage> {
-        NodeBackend::new(InMemoryStorage::new(), true)
+        dev_producer(InMemoryStorage::new())
+    }
+
+    /// A producer on `storage` holding the public dev authority key, as
+    /// `--dev --producer` would.
+    pub(super) fn dev_producer<S: Storage>(storage: S) -> NodeBackend<S> {
+        let mut backend = NodeBackend::new(storage, true);
+        backend.set_producer_key(&mbongo_core::genesis::dev_authority_seed());
+        backend
+    }
+
+    /// Signs `block` as the authority of `seed` for `chain_id`: sets the
+    /// producer, then the signature over the whole header (RFC 0006 §3).
+    pub(super) fn sign_block(block: &mut Block, seed: &[u8; 32], chain_id: &ChainId) {
+        let sk = SigningKey::from_bytes(seed);
+        block.header.producer = Address(sk.verifying_key().to_bytes());
+        block.producer_signature = sk.sign(&block.header.signing_hash(chain_id)).to_bytes();
     }
 
     fn sample_block() -> (Hash, Block) {
@@ -1716,6 +1841,7 @@ mod tests {
                 transactions_root: Hash::zero(),
                 timestamp: 1_700_000_000,
                 height: 1,
+                producer: mbongo_core::Address::zero(),
             },
             body: BlockBody {
                 transactions: vec![Transaction {
@@ -1728,6 +1854,7 @@ mod tests {
                     signature: [0u8; 64],
                 }],
             },
+            producer_signature: [0u8; 64],
         };
         (hash, block)
     }
@@ -2404,28 +2531,44 @@ mod tests {
 
     // ── apply_block tests ──────────────────────────────────────────────
 
-    /// Build a block on top of the current chain tip. When every
-    /// transaction applies, it carries the `state_root` they give, so it is
-    /// valid; otherwise the root is zero, and the block is refused at the
-    /// failing transaction, before rule (w) is reached.
+    /// Build a block on top of the current chain tip, signed by the dev
+    /// authority. When every transaction applies, it carries the
+    /// `state_root` they give, so it is valid; otherwise the root is zero,
+    /// and the block is refused at the failing transaction, before rule (w)
+    /// is reached.
     pub(super) fn build_valid_block<S: Storage>(
         backend: &NodeBackend<S>,
         txs: Vec<Transaction>,
+    ) -> Block {
+        build_valid_block_by(backend, txs, &mbongo_core::genesis::dev_authority_seed())
+    }
+
+    /// [`build_valid_block`], signed by the authority of `seed` for the
+    /// backend's `chain_id`.
+    pub(super) fn build_valid_block_by<S: Storage>(
+        backend: &NodeBackend<S>,
+        txs: Vec<Transaction>,
+        seed: &[u8; 32],
     ) -> Block {
         let current_height = backend.storage.get_latest_height().unwrap();
         let parent = backend.storage.get_block_by_height(current_height).unwrap().unwrap();
         let parent_hash = compute_block_hash(&parent);
         let state_root = backend.state_root_for(&txs).unwrap_or_else(|_| Hash::zero());
-        Block {
+        let mut block = Block {
             header: BlockHeader {
                 parent_hash,
                 state_root,
                 transactions_root: compute_transactions_root(&txs),
-                timestamp: now_secs(),
+                timestamp: now_secs().max(parent.header.timestamp),
                 height: current_height + 1,
+                producer: mbongo_core::Address::zero(),
             },
             body: BlockBody { transactions: txs },
-        }
+            producer_signature: [0u8; 64],
+        };
+        let chain_id = backend.chain_id().expect("the backend has a genesis");
+        sign_block(&mut block, seed, &chain_id);
+        block
     }
 
     /// Builds a receipt with the given fields, signed by `executor_sk`
@@ -3380,10 +3523,12 @@ mod tests {
                 transactions_root: compute_transactions_root(&[]),
                 timestamp: now_secs(),
                 height: 1,
+                producer: mbongo_core::Address::zero(),
             },
             body: BlockBody {
                 transactions: vec![],
             },
+            producer_signature: [0u8; 64],
         };
 
         let err = backend.apply_block(&block).unwrap_err();
@@ -3408,10 +3553,12 @@ mod tests {
                 transactions_root: compute_transactions_root(&[]),
                 timestamp: now_secs(),
                 height: 5, // wrong height (expected 1)
+                producer: mbongo_core::Address::zero(),
             },
             body: BlockBody {
                 transactions: vec![],
             },
+            producer_signature: [0u8; 64],
         };
 
         let err = backend.apply_block(&block).unwrap_err();
@@ -3511,10 +3658,12 @@ mod tests {
                 transactions_root: Hash([0xBBu8; 32]), // wrong root
                 timestamp: now_secs(),
                 height: 1,
+                producer: mbongo_core::Address::zero(),
             },
             body: BlockBody {
                 transactions: vec![],
             },
+            producer_signature: [0u8; 64],
         };
 
         let err = backend.apply_block(&block).unwrap_err();
@@ -4012,7 +4161,7 @@ mod tests {
         let other = Address([97u8; 32]);
         let within = signed_transfer(&sk, addr, 700, 0);
         {
-            let backend = NodeBackend::new(RocksDbStorage::open(&dir).unwrap(), true);
+            let backend = dev_producer(RocksDbStorage::open(&dir).unwrap());
             backend.ensure_genesis(&Genesis::dev()).unwrap();
             let mut funded = Account::new(addr);
             funded.balance = 1000;
@@ -4021,7 +4170,7 @@ mod tests {
             backend.submit_transaction(signed_transfer(&sk, other, 10, 1)).await.unwrap();
             backend.produce_block().await.unwrap();
         }
-        let restarted = NodeBackend::new(RocksDbStorage::open(&dir).unwrap(), true);
+        let restarted = dev_producer(RocksDbStorage::open(&dir).unwrap());
         restarted.ensure_genesis(&Genesis::dev()).unwrap();
         assert_eq!(restarted.latest_height().unwrap(), 1);
         let held = |node: &NodeBackend<RocksDbStorage>| {
@@ -4733,7 +4882,7 @@ mod tests {
 
     #[tokio::test]
     async fn producer_can_produce_block() {
-        let backend = NodeBackend::new(InMemoryStorage::new(), true);
+        let backend = dev_producer(InMemoryStorage::new());
         backend.ensure_genesis(&Genesis::dev()).unwrap();
 
         let result = backend.produce_block().await;
@@ -6417,7 +6566,8 @@ mod tests {
 
     fn bounded_backend(max_pending: usize, ttl_secs: u64) -> NodeBackend<InMemoryStorage> {
         let config = MempoolConfig::new(max_pending, ttl_secs).unwrap();
-        let backend = NodeBackend::with_mempool_config(InMemoryStorage::new(), true, config);
+        let mut backend = NodeBackend::with_mempool_config(InMemoryStorage::new(), true, config);
+        backend.set_producer_key(&mbongo_core::genesis::dev_authority_seed());
         backend.ensure_genesis(&Genesis::dev()).unwrap();
         backend
     }
@@ -6811,7 +6961,7 @@ mod tests {
         let included = signed_transfer(&sk, Address([1u8; 32]), 10, 0);
         let pending = signed_transfer(&sk, Address([1u8; 32]), 10, 1);
         {
-            let backend = NodeBackend::new(RocksDbStorage::open(&dir).unwrap(), true);
+            let backend = dev_producer(RocksDbStorage::open(&dir).unwrap());
             backend.ensure_genesis(&Genesis::dev()).unwrap();
             let mut funded = Account::new(addr);
             funded.balance = 1000;
@@ -6822,7 +6972,7 @@ mod tests {
             assert_eq!(backend.mempool.read().await.len(), 1);
         }
 
-        let restarted = NodeBackend::new(RocksDbStorage::open(&dir).unwrap(), true);
+        let restarted = dev_producer(RocksDbStorage::open(&dir).unwrap());
         restarted.ensure_genesis(&Genesis::dev()).unwrap();
         assert_eq!(restarted.latest_height().unwrap(), 1);
 
@@ -7507,3 +7657,7 @@ mod tests {
 #[cfg(test)]
 #[path = "backend_state_tests.rs"]
 mod state_tests;
+
+#[cfg(test)]
+#[path = "backend_block_tests.rs"]
+mod block_tests;

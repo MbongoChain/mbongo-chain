@@ -2746,6 +2746,7 @@ dependencies = [
  "mbongo-verification",
  "parity-scale-codec",
  "reqwest",
+ "rocksdb",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

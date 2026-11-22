@@ -170,6 +170,12 @@ export interface BlockHeader {
   transactions_root: Hash;
   timestamp: bigint;
   height: bigint;
+  /**
+   * The authority that produced and signed the block (RFC 0006 §3), the
+   * last header field. Zero in the genesis block. The node checks it; this
+   * decoder does not.
+   */
+  producer: Address;
 }
 
 /** Block body: the transactions included in the block, in order. */
@@ -184,6 +190,13 @@ export interface BlockBody {
 export interface Block {
   header: BlockHeader;
   body: BlockBody;
+  /**
+   * Ed25519 signature by `header.producer` over
+   * BLAKE3("mbongo-block:v1" || chain_id || SCALE(header)) (RFC 0006 §3), the
+   * last block field. Zero in the genesis block. The node verifies it; this
+   * decoder does not.
+   */
+  producer_signature: Signature;
 }
 
 /**

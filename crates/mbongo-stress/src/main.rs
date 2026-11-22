@@ -221,8 +221,10 @@ fn junk_block(height: u64, salt: u64, transactions: Vec<Transaction>) -> Block {
             transactions_root: Hash::zero(),
             timestamp: salt,
             height,
+            producer: mbongo_core::Address::zero(),
         },
         body: BlockBody { transactions },
+        producer_signature: [0u8; 64],
     }
 }
 

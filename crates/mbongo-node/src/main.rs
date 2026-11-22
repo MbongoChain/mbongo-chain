@@ -25,6 +25,7 @@ mod alloc_stats;
 mod backend;
 mod genesis_dir;
 mod mempool;
+mod producer_key;
 mod sync_service;
 mod sync_tracker;
 
@@ -112,9 +113,16 @@ struct Args {
     #[arg(long)]
     bootnodes: Vec<String>,
 
-    /// Enable automatic block production (single-producer devnet mode)
+    /// Enable automatic block production. Outside --dev it needs
+    /// --producer-key-file, and the key must be the genesis authority
     #[arg(long)]
     producer: bool,
+
+    /// File holding the authority's block-signing key: a 32-byte Ed25519
+    /// seed as 64 hex characters. Only with --producer, never with --dev,
+    /// which signs with the public dev authority key
+    #[arg(long, value_name = "FILE")]
+    producer_key_file: Option<std::path::PathBuf>,
 
     /// Block production interval in seconds (only used with --producer)
     #[arg(long, default_value = "5")]
@@ -226,6 +234,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The genesis is read and validated before anything else happens: an
     // invalid or missing file stops the node with no side effect.
     let selected = args.genesis.load()?;
+    // The producer key is checked against the genesis authority before
+    // anything is opened (RFC 0006 §3): a node that may not sign never starts.
+    let producer_seed = producer_key::producer_seed(
+        &producer_key::ProducerFlags {
+            producer: args.producer,
+            dev: args.genesis.dev,
+            key_file: args.producer_key_file.as_deref(),
+        },
+        &selected.genesis,
+    )?;
 
     println!("Starting Mbongo Chain node...");
     // Operator version visibility (not a protocol field, not negotiated):
@@ -254,6 +272,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("data directory {}: {e}", args.data_dir))?;
 
     let mut backend = NodeBackend::with_mempool_config(storage, args.producer, mempool_config);
+    if let Some(seed) = &producer_seed {
+        backend.set_producer_key(seed);
+    }
 
     // Writes the genesis block and allocations in one batch, or checks the
     // stored genesis block.
@@ -339,7 +360,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Timed block production ──────────────────────────────────────────
     let producer_handle = if args.producer {
         let block_time = args.block_time;
-        println!("  Producer: ON (block time: {block_time}s)");
+        println!(
+            "  Producer: ON (block time: {block_time}s, authority {})",
+            selected.genesis.authority()
+        );
         log::info!("Timed block production enabled. Block time: {block_time} seconds.");
         let producer_backend = backend.clone();
         Some(tokio::spawn(async move {
@@ -801,7 +825,8 @@ mod tests {
         account.balance = 100;
 
         let build = || {
-            let node = NodeBackend::new(mbongo_storage::InMemoryStorage::new(), true);
+            let mut node = NodeBackend::new(mbongo_storage::InMemoryStorage::new(), true);
+            node.set_producer_key(&mbongo_core::genesis::dev_authority_seed());
             node.ensure_genesis(&mbongo_core::Genesis::dev()).unwrap();
             node.storage.put_account(&sender, &account).unwrap();
             node
@@ -1159,7 +1184,8 @@ mod tests {
     /// Valid empty blocks 1 to `count`, from a chain with the same genesis.
     async fn chain(count: u64) -> Vec<(mbongo_core::Hash, mbongo_core::Block)> {
         use mbongo_storage::Storage;
-        let producer = NodeBackend::new(InMemoryStorage::new(), true);
+        let mut producer = NodeBackend::new(InMemoryStorage::new(), true);
+        producer.set_producer_key(&mbongo_core::genesis::dev_authority_seed());
         producer.ensure_genesis(&mbongo_core::Genesis::dev()).unwrap();
         let mut blocks = Vec::new();
         for height in 1..=count {
@@ -1293,10 +1319,12 @@ mod tests {
                 transactions_root: mbongo_core::Hash::zero(),
                 timestamp: 1,
                 height,
+                producer: mbongo_core::Address::zero(),
             },
             body: mbongo_core::BlockBody {
                 transactions: Vec::new(),
             },
+            producer_signature: [0u8; 64],
         }
     }
 }

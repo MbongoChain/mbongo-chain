@@ -25,9 +25,10 @@
 //!     transactions_root: compute_transactions_root(&txs),
 //!     timestamp: 1_700_000_000,
 //!     height: 1,
+//!     producer: Address::zero(),
 //! };
 //! let body = BlockBody { transactions: txs };
-//! let _block = Block { header, body };
+//! let _block = Block { header, body, producer_signature: [0u8; 64] };
 //! ```
 
 #![warn(missing_docs)]
@@ -50,7 +51,7 @@ pub use compute_task::{
 pub use genesis::{chain_id, ChainId, Genesis, GenesisError};
 pub use primitives::{
     compute_transactions_root, Address, Block, BlockBody, BlockHeader, Hash, Transaction,
-    TransactionPayload, TransactionType, TX_SIGNING_DOMAIN,
+    TransactionPayload, TransactionType, BLOCK_SIGNING_DOMAIN, TX_SIGNING_DOMAIN,
 };
 pub use receipt::Receipt;
 pub use state::{genesis_state_root, next_state_root, StateChanges, STATE_DOMAIN};
@@ -105,12 +106,14 @@ mod tests {
             transactions_root: compute_transactions_root(&txs),
             timestamp: 123,
             height: 7,
+            producer: Address::zero(),
         };
         let block = Block {
             header,
             body: BlockBody {
                 transactions: txs.clone(),
             },
+            producer_signature: [0u8; 64],
         };
         let s = json::to_string(&block).unwrap();
         let round: Block = json::from_str(&s).unwrap();
@@ -480,8 +483,10 @@ mod tests {
                 transactions_root: compute_transactions_root(&txs),
                 timestamp: 42,
                 height: 1,
+                producer: Address::zero(),
             },
             body: BlockBody { transactions: txs },
+            producer_signature: [0u8; 64],
         };
 
         let enc = block.encode();

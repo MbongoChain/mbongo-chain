@@ -102,13 +102,18 @@ test("get_block_by_height sends the canonical object, never a bare number", asyn
       transactions_root: "0x00",
       timestamp: 0,
       height: 5,
+      producer: "0xb1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
     },
     body: { transactions: [] },
+    producer_signature: "0x" + "ab".repeat(64),
   };
   const { client, sent } = clientWith(ok(block));
   const got = await client.getBlockByHeight(5);
   assert.equal(got.header.height, 5n, "the nested block shape must survive");
   assert.deepEqual(got.body.transactions, []);
+  // The fields RFC 0006 §3 appends, returned as the node serves them.
+  assert.equal(got.header.producer, block.header.producer);
+  assert.equal(got.producer_signature, block.producer_signature);
   assert.equal(sent[0].method, "get_block_by_height");
   assert.deepEqual(
     sent[0].params,
@@ -393,4 +398,43 @@ test("u64::MAX is accepted for nonce and height", async () => {
     signature: "0x00",
   });
   assert.ok(sentRaw[0].includes(`"nonce":${m}`));
+});
+
+test("a block without the producer fields of RFC 0006 section 3 is refused", async () => {
+  // The v0.4 block shape: no header.producer, no producer_signature. A node
+  // of this protocol always serves both, so a block without them is not one
+  // of its blocks.
+  const full = {
+    header: {
+      parent_hash: "0x00",
+      state_root: "0x00",
+      transactions_root: "0x00",
+      timestamp: 0,
+      height: 1,
+      producer: "0xb1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+    },
+    body: { transactions: [] },
+    producer_signature: "0x" + "ab".repeat(64),
+  };
+  const withoutProducer = { ...full, header: { ...full.header } };
+  delete withoutProducer.header.producer;
+  const withoutSignature = { ...full };
+  delete withoutSignature.producer_signature;
+  const numericProducer = { ...full, header: { ...full.header, producer: 7 } };
+  const cases = [
+    [withoutProducer, "block.header.producer is not a string"],
+    [withoutSignature, "block.producer_signature is not a string"],
+    [numericProducer, "block.header.producer is not a string"],
+  ];
+  assert.equal(cases.length, 3);
+  for (const [block, message] of cases) {
+    const { client } = clientWith(ok(block));
+    await assert.rejects(client.getBlockByHeight(1), (err) => {
+      assert.ok(err instanceof MbongoTransportError, String(err));
+      assert.ok(err.message.includes(message), err.message);
+      return true;
+    });
+  }
+  const { client } = clientWith(ok(full));
+  assert.equal((await client.getBlockByHeight(1)).header.producer, full.header.producer);
 });

@@ -16,7 +16,7 @@
 //!   nonce and boundary amount, against a reference model.
 
 use super::tests::{
-    address_of, build_valid_block, fund, make_backend, signed_anchor_tx, signed_receipt_for,
+    address_of, build_valid_block_by, fund, make_backend, signed_anchor_tx, signed_receipt_for,
     signed_task_tx, signed_transfer, task_for,
 };
 use super::*;
@@ -49,8 +49,51 @@ fn sign_for(sk: &SigningKey, chain_id: &ChainId, mut tx: Transaction) -> Transac
     tx
 }
 
+/// The TEST ONLY seed of the authority of `state-root-v1.json`'s genesis.
+const VECTOR_AUTHORITY_SEED: [u8; 32] = [0x10; 32];
+
+/// The seed of `genesis`'s authority: the dev authority, or the vector's.
+fn authority_seed(genesis: &Genesis) -> [u8; 32] {
+    let seed = if genesis.authority() == Genesis::dev().authority() {
+        mbongo_core::genesis::dev_authority_seed()
+    } else {
+        VECTOR_AUTHORITY_SEED
+    };
+    assert_eq!(
+        address_of(&SigningKey::from_bytes(&seed)),
+        genesis.authority(),
+        "a test genesis names an authority whose seed this file does not hold"
+    );
+    seed
+}
+
+/// The seed of the authority of `backend`'s genesis.
+fn seed_of<S: Storage>(backend: &NodeBackend<S>) -> [u8; 32] {
+    let authority = backend.chain.get().expect("the backend has a genesis").authority;
+    [
+        mbongo_core::genesis::dev_authority_seed(),
+        VECTOR_AUTHORITY_SEED,
+    ]
+    .into_iter()
+    .find(|seed| address_of(&SigningKey::from_bytes(seed)) == authority)
+    .expect("a test genesis names an authority whose seed this file does not hold")
+}
+
+/// A block on `backend`'s tip, signed by the authority of its genesis.
+fn build_valid_block<S: Storage>(backend: &NodeBackend<S>, txs: Vec<Transaction>) -> Block {
+    build_valid_block_by(backend, txs, &seed_of(backend))
+}
+
+/// Signs `block` again, after a test changed its header, so that it reaches
+/// the rule under test with a valid producer signature (RFC 0006 §5 rule u).
+fn resign<S: Storage>(backend: &NodeBackend<S>, block: &mut Block) {
+    let chain_id = backend.chain_id().expect("the backend has a genesis");
+    super::tests::sign_block(block, &seed_of(backend), &chain_id);
+}
+
 fn producer_on(genesis: &Genesis) -> NodeBackend<InMemoryStorage> {
-    let node = NodeBackend::new(InMemoryStorage::new(), true);
+    let mut node = NodeBackend::new(InMemoryStorage::new(), true);
+    node.set_producer_key(&authority_seed(genesis));
     node.ensure_genesis(genesis).unwrap();
     node
 }
@@ -386,6 +429,7 @@ fn a_wrong_state_root_is_refused_and_writes_nothing() {
         assert_ne!(root, right, "{what}");
         let mut block = good.clone();
         block.header.state_root = root;
+        resign(&backend, &mut block);
         match backend.apply_block(&block) {
             Err(ApplyBlockError::StateRootMismatch { expected, got }) => {
                 assert_eq!(expected, right, "{what}: the locally computed root");
@@ -431,6 +475,7 @@ fn a_block_is_checked_against_its_own_parents_root() {
     );
     let mut stale = again.clone();
     stale.header.state_root = at_one;
+    resign(&backend, &mut stale);
     assert!(matches!(
         backend.apply_block(&stale),
         Err(ApplyBlockError::StateRootMismatch { .. })
@@ -451,6 +496,7 @@ fn a_failing_transaction_is_reported_before_rule_w() {
         vec![signed_transfer(&alice, Address([1u8; 32]), 11, 0)],
     );
     block.header.state_root = Hash([0x77u8; 32]);
+    resign(&backend, &mut block);
     assert!(matches!(
         backend.apply_block(&block),
         Err(ApplyBlockError::InsufficientBalance(0))
@@ -755,6 +801,7 @@ fn a_failed_execution_leaves_the_view_as_it_was() {
     let mut block = build_valid_block(&backend, vec![first, other]);
     assert_eq!(block.header.state_root, root);
     block.header.state_root = root;
+    resign(&backend, &mut block);
     backend.apply_block(&block).unwrap();
     assert_eq!(
         backend.storage.get_account(&a1).unwrap().unwrap().nonce,
@@ -841,6 +888,7 @@ async fn a_produced_timestamp_is_never_below_its_parents() {
     let future = now_secs() + 1_000_000_000;
     let mut block = build_valid_block(&backend, vec![]);
     block.header.timestamp = future;
+    resign(&backend, &mut block);
     backend.apply_block(&block).unwrap();
     let produced = produce(&backend).await;
     assert_eq!(
@@ -1081,7 +1129,7 @@ fn single_transfers_follow_the_reference_model_at_every_boundary() {
                             }
                         }
                         let parent = tip(&backend);
-                        let block = Block {
+                        let mut block = Block {
                             header: BlockHeader {
                                 parent_hash: compute_block_hash(&parent),
                                 state_root: next_state_root(&parent.header.state_root, &changes),
@@ -1090,11 +1138,14 @@ fn single_transfers_follow_the_reference_model_at_every_boundary() {
                                 )),
                                 timestamp: now_secs(),
                                 height: 1,
+                                producer: mbongo_core::Address::zero(),
                             },
                             body: BlockBody {
                                 transactions: vec![tx],
                             },
+                            producer_signature: [0u8; 64],
                         };
+                        resign(&backend, &mut block);
                         let got = backend.apply_block(&block);
                         let watched: Vec<Address> = vec![sender, raddr];
                         let state: Vec<Option<Held>> = watched
@@ -1251,6 +1302,7 @@ async fn two_transaction_blocks_follow_the_model_in_validation_and_production() 
                             let mut block = build_valid_block(&validator, txs.to_vec());
                             let parent_root = tip(&validator).header.state_root;
                             block.header.state_root = next_state_root(&parent_root, &changes);
+                            resign(&validator, &mut block);
                             let strict_ok = included.len() == 2;
                             assert_eq!(
                                 validator.apply_block(&block).is_ok(),

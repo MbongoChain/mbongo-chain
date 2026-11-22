@@ -188,10 +188,12 @@ fn empty_block() -> Block {
             transactions_root: Hash::zero(),
             timestamp: 0,
             height: 1,
+            producer: mbongo_core::Address::zero(),
         },
         body: BlockBody {
             transactions: vec![],
         },
+        producer_signature: [0u8; 64],
     }
 }
 

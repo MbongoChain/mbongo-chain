@@ -1,0 +1,577 @@
+{
+  "fixture_version": 1,
+  "purpose": "Neutral cross-language vectors for authenticated blocks (RFC 0006 section 3, section 5 rules (t), (u), (v)): the block header and block encodings with the appended producer and producer_signature, the 32-byte message a producer signs, strict Ed25519 verdicts for block signatures, and what a node at genesis does with each block.",
+  "authority": {
+    "rfc": "docs/rfcs/0006-chain-identity-authenticated-blocks.md section 3 (block format, signature, strict definition) and section 5 (rules t, u, v)",
+    "plan": "docs/architecture/S1_IMPLEMENTATION_PLAN.md S1-7",
+    "implementation": "crates/mbongo-core/src/primitives.rs (BlockHeader::signing_hash, Block::verify_producer_signature); crates/mbongo-node/src/backend.rs (apply_block rules t, u, v; produce_block)"
+  },
+  "conventions": {
+    "hex": "lowercase, no 0x prefix",
+    "integers": "decimal strings",
+    "header_encoding": "SCALE(BlockHeader) = parent_hash (32) || state_root (32) || transactions_root (32) || timestamp (u64 LE) || height (u64 LE) || producer (32): 144 bytes",
+    "block_encoding": "SCALE(Block) = SCALE(BlockHeader) || SCALE(BlockBody) || producer_signature (64). Every block here has an empty body, encoded 00",
+    "block_hash": "BLAKE3(block_encoding): the whole block, the signature included",
+    "signing_hash": "BLAKE3(\"mbongo-block:v1\" || chain_id || header_encoding), the 32 bytes the producer signs",
+    "expected": "valid or invalid: the strict verdict for producer_signature by header.producer over signing_hash",
+    "rule": "the first requirement the signature does not meet over this chain's signing_hash, or valid",
+    "apply_block": "what a node of `chain`, holding only its genesis, does with block_encoding: accepted, or the first error. Rules (t), (u), (v) are evaluated in that order after height, parent and transactions_root, and before any transaction. A valid block carries state_root(1) of an empty block, so it also passes rule (w)",
+    "keys": "TEST ONLY. The dev authority seed is public: BLAKE3(\"mbongo:dev-authority:v1\"). The other seed is 0x5c repeated"
+  },
+  "derivation": {
+    "method": "Derived without the Rust crates or the SDK. Ed25519: the BigInt implementation of S1-2 (RFC 8032, SHA-512 from node:crypto), checked there against RFC 8032 tests 1 to 3, OpenSSL and libsodium's small-order blocklist; every honest signature here is also produced by OpenSSL, and must be byte-identical. BLAKE3: the implementation written from its specification in S1-5. SCALE: by hand. Layout, message and rule order: read from the RFC text. state_root(0) uses the formula of state-root-v1.json, checked here against that file's genesis.",
+    "script": "derive-block-signature-v1.mjs, kept with the S1-7 evidence; re-running it reproduces this file"
+  },
+  "domain": {
+    "ascii": "mbongo-block:v1",
+    "hex": "6d626f6e676f2d626c6f636b3a7631",
+    "length": 15
+  },
+  "test_keys": {
+    "warning": "TEST ONLY. NOT PRODUCTION KEYS. Every seed is public.",
+    "dev_authority": {
+      "ed25519_seed": "ffc935b81fef11c03355df197b59c618af7dc5c6cabd071328993f655192505c",
+      "public_key": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "source": "BLAKE3(\"mbongo:dev-authority:v1\")"
+    },
+    "other": {
+      "ed25519_seed": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+      "public_key": "ed6a47a39da869b5446155e40b2d93f1e3f0167be26732bae7a3ef9d8e3a3fd3"
+    }
+  },
+  "chains": {
+    "dev": {
+      "genesis_file": "{\"allocations\":[{\"address\":\"25fc32c478a5a4f84e4557a0342e08278c883641b6149bdb0b4a986ab6c2cb78\",\"amount\":\"0\"},{\"address\":\"e734ea6c2b6257de72355e472aa05a4c487e6b463c029ed306df2f01b5636b58\",\"amount\":\"1000000000\"}],\"authorities\":[\"b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15\"],\"name\":\"dev\",\"schema\":\"mbongo-genesis:v1\",\"timestamp\":0}",
+      "genesis_file_source": "crates/mbongo-core/genesis/dev.json",
+      "chain_id": "2fd700acc09b3d1752ca6fe21e7d6f4844917c5a9fcd41a34fe1d13d7deed1a4",
+      "authority": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "genesis_timestamp": "0",
+      "genesis_state_root": "aea13f13e9b886b1459dd0ee584169362d13531467a474f11a3e2562123e4267",
+      "genesis_block_encoding": "0000000000000000000000000000000000000000000000000000000000000000aea13f13e9b886b1459dd0ee584169362d13531467a474f11a3e2562123e4267af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f32620000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "genesis_block_hash": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1"
+    },
+    "other": {
+      "genesis_file": "{\"allocations\":[],\"authorities\":[\"b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15\"],\"name\":\"block-signature-v1\",\"schema\":\"mbongo-genesis:v1\",\"timestamp\":1700000000}",
+      "genesis_file_source": "this fixture",
+      "chain_id": "d643a1c16d76e66088dd73d3e3d18a812309d89a6f64b09f2044476cdd38e6fc",
+      "authority": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "genesis_timestamp": "1700000000",
+      "genesis_state_root": "d08fbba572c84c7f52b0ea5ba558ea5177a0ebc019d78c2ca511f967f67e9382",
+      "genesis_block_encoding": "0000000000000000000000000000000000000000000000000000000000000000d08fbba572c84c7f52b0ea5ba558ea5177a0ebc019d78c2ca511f967f67e9382af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f1536500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "genesis_block_hash": "55e1ded73fc0728d785a51e83ac116fac5080c1b79ef8186335c813d8cbc30f8"
+    }
+  },
+  "apply_block_outcomes": [
+    "accepted",
+    "BadParent",
+    "UnauthorizedProducer",
+    "InvalidBlockSignature",
+    "InvalidTimestamp"
+  ],
+  "cases": [
+    {
+      "name": "valid-dev",
+      "chain": "dev",
+      "rule": "valid",
+      "expected": "valid",
+      "apply_block": "accepted",
+      "note": "Block 1 of the dev chain, empty body, signed by the dev authority over its own chain_id.",
+      "header": {
+        "parent_hash": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1",
+        "state_root": "c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08f",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "1700000000",
+        "height": "1",
+        "producer": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15"
+      },
+      "header_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "signing_hash": "662739c22d791f440b8bf38b4174f65d536f9461c976879e9758770372ec766d",
+      "producer_signature": "058d241841e3e178f5a4f94608ace45150c3b9e496552725039ada85fa393d3fe26ad8ac24ce87e1c2630d2100c73a3c2729d5c663dc510f5aa4847a5efc8e06",
+      "block_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c1500058d241841e3e178f5a4f94608ace45150c3b9e496552725039ada85fa393d3fe26ad8ac24ce87e1c2630d2100c73a3c2729d5c663dc510f5aa4847a5efc8e06",
+      "block_hash": "5d2f0f69839a42d28bca5dd7a4a4c9279aede9e4cc44a2b2ffe9a3e0eae71d8c"
+    },
+    {
+      "name": "valid-other-chain-same-authority",
+      "chain": "other",
+      "rule": "valid",
+      "expected": "valid",
+      "apply_block": "accepted",
+      "note": "Block 1 of a second network whose genesis names the same authority key. Its timestamp equals its parent's, which rule (v) accepts.",
+      "header": {
+        "parent_hash": "55e1ded73fc0728d785a51e83ac116fac5080c1b79ef8186335c813d8cbc30f8",
+        "state_root": "1edec1e7fd5d63d2f2cf8590fc9a2eb4626f031e3c9ff16a9d231973392373dd",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "1700000000",
+        "height": "1",
+        "producer": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15"
+      },
+      "header_encoding": "55e1ded73fc0728d785a51e83ac116fac5080c1b79ef8186335c813d8cbc30f81edec1e7fd5d63d2f2cf8590fc9a2eb4626f031e3c9ff16a9d231973392373ddaf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "signing_hash": "b8f6573e069ff46d4718c695fcac1d3dc202da64641884a36000dd5c7cb993b7",
+      "producer_signature": "3431ed4397a696c38ff2fe2e9e91d2d6250a087e7382217c83ff0758c23997130702f9faad6d84b63830d8479e795d290a3632f13400057cdb4653a61bc9260a",
+      "block_encoding": "55e1ded73fc0728d785a51e83ac116fac5080c1b79ef8186335c813d8cbc30f81edec1e7fd5d63d2f2cf8590fc9a2eb4626f031e3c9ff16a9d231973392373ddaf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15003431ed4397a696c38ff2fe2e9e91d2d6250a087e7382217c83ff0758c23997130702f9faad6d84b63830d8479e795d290a3632f13400057cdb4653a61bc9260a",
+      "block_hash": "81f2a74d2477f3f9763e3af9832880725557cab2245216780f25a575e4c4791e"
+    },
+    {
+      "name": "timestamp-at-u64-max",
+      "chain": "other",
+      "rule": "valid",
+      "expected": "valid",
+      "apply_block": "accepted",
+      "note": "Rule (v) has no upper bound (RFC 0006 §5): a timestamp of u64::MAX is valid.",
+      "header": {
+        "parent_hash": "55e1ded73fc0728d785a51e83ac116fac5080c1b79ef8186335c813d8cbc30f8",
+        "state_root": "1edec1e7fd5d63d2f2cf8590fc9a2eb4626f031e3c9ff16a9d231973392373dd",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "18446744073709551615",
+        "height": "1",
+        "producer": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15"
+      },
+      "header_encoding": "55e1ded73fc0728d785a51e83ac116fac5080c1b79ef8186335c813d8cbc30f81edec1e7fd5d63d2f2cf8590fc9a2eb4626f031e3c9ff16a9d231973392373ddaf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262ffffffffffffffff0100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "signing_hash": "77380c8f00966d475f8573f7fee9e79440bc9b057b651d15f70e90b7ce12ddf6",
+      "producer_signature": "406a938b44ff38f23b68abb4a0132483d516eb6be84e2fd47f2e34d4f6cdc612324abe81b9fd269521932182814fa34cab36fbad124b3e6f9a91bf4ff20dbb03",
+      "block_encoding": "55e1ded73fc0728d785a51e83ac116fac5080c1b79ef8186335c813d8cbc30f81edec1e7fd5d63d2f2cf8590fc9a2eb4626f031e3c9ff16a9d231973392373ddaf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262ffffffffffffffff0100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c1500406a938b44ff38f23b68abb4a0132483d516eb6be84e2fd47f2e34d4f6cdc612324abe81b9fd269521932182814fa34cab36fbad124b3e6f9a91bf4ff20dbb03",
+      "block_hash": "fecac39274b95519c688201332524c1d103b8a169d17af06ac4949da72284a39"
+    },
+    {
+      "name": "cross-chain-signature",
+      "chain": "dev",
+      "rule": "wrong-message",
+      "expected": "invalid",
+      "apply_block": "InvalidBlockSignature",
+      "note": "The dev header, signed by the same authority key over the other network's chain_id. The key is the authority of both networks; the signature is for the other one.",
+      "header": {
+        "parent_hash": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1",
+        "state_root": "c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08f",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "1700000000",
+        "height": "1",
+        "producer": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15"
+      },
+      "header_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "signing_hash": "662739c22d791f440b8bf38b4174f65d536f9461c976879e9758770372ec766d",
+      "producer_signature": "0069b8f8e7d13d3db1308b0889b6891f4089a015c9ee02c333415a3083ec15176fe1fb80470eefcb22866f9da6ea02af7f61df2b3b2d413b3f408903a6501000",
+      "block_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15000069b8f8e7d13d3db1308b0889b6891f4089a015c9ee02c333415a3083ec15176fe1fb80470eefcb22866f9da6ea02af7f61df2b3b2d413b3f408903a6501000",
+      "block_hash": "34268e37189660511b8f1804bf3ff9e623b883e385e6bec269b91699ca6829bd"
+    },
+    {
+      "name": "whole-block-from-another-chain",
+      "chain": "other",
+      "rule": "wrong-message",
+      "expected": "invalid",
+      "apply_block": "BadParent",
+      "note": "valid-dev, replayed whole on the other network: its parent is another genesis block, so it is refused before rule (t). Its signature would not verify there either.",
+      "header": {
+        "parent_hash": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1",
+        "state_root": "c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08f",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "1700000000",
+        "height": "1",
+        "producer": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15"
+      },
+      "header_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "signing_hash": "b95576df1c8bf7f4476d1ec8431f24e0a7cfb763b81276e069ee3cd47fa7aa53",
+      "producer_signature": "058d241841e3e178f5a4f94608ace45150c3b9e496552725039ada85fa393d3fe26ad8ac24ce87e1c2630d2100c73a3c2729d5c663dc510f5aa4847a5efc8e06",
+      "block_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c1500058d241841e3e178f5a4f94608ace45150c3b9e496552725039ada85fa393d3fe26ad8ac24ce87e1c2630d2100c73a3c2729d5c663dc510f5aa4847a5efc8e06",
+      "block_hash": "5d2f0f69839a42d28bca5dd7a4a4c9279aede9e4cc44a2b2ffe9a3e0eae71d8c"
+    },
+    {
+      "name": "s-plus-group-order",
+      "chain": "dev",
+      "rule": "s-not-below-group-order",
+      "expected": "invalid",
+      "apply_block": "InvalidBlockSignature",
+      "note": "valid-dev with s replaced by s + L: the same value modulo L, so a malleable form of one signature, and one block would have two hashes.",
+      "header": {
+        "parent_hash": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1",
+        "state_root": "c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08f",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "1700000000",
+        "height": "1",
+        "producer": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15"
+      },
+      "header_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "signing_hash": "662739c22d791f440b8bf38b4174f65d536f9461c976879e9758770372ec766d",
+      "producer_signature": "058d241841e3e178f5a4f94608ace45150c3b9e496552725039ada85fa393d3fcf3ece093f319a39990005c4dec019512729d5c663dc510f5aa4847a5efc8e16",
+      "block_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c1500058d241841e3e178f5a4f94608ace45150c3b9e496552725039ada85fa393d3fcf3ece093f319a39990005c4dec019512729d5c663dc510f5aa4847a5efc8e16",
+      "block_hash": "419f4f29ab4a4aec3087fd147fb79f78f0f4c37c1f0202b4b2857c20e8268c5b"
+    },
+    {
+      "name": "s-high-bit",
+      "chain": "dev",
+      "rule": "s-not-below-group-order",
+      "expected": "invalid",
+      "apply_block": "InvalidBlockSignature",
+      "note": "s with bit 255 set.",
+      "header": {
+        "parent_hash": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1",
+        "state_root": "c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08f",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "1700000000",
+        "height": "1",
+        "producer": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15"
+      },
+      "header_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "signing_hash": "662739c22d791f440b8bf38b4174f65d536f9461c976879e9758770372ec766d",
+      "producer_signature": "058d241841e3e178f5a4f94608ace45150c3b9e496552725039ada85fa393d3fe26ad8ac24ce87e1c2630d2100c73a3c2729d5c663dc510f5aa4847a5efc8e86",
+      "block_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c1500058d241841e3e178f5a4f94608ace45150c3b9e496552725039ada85fa393d3fe26ad8ac24ce87e1c2630d2100c73a3c2729d5c663dc510f5aa4847a5efc8e86",
+      "block_hash": "ce89bd1b6907aeab35230ce261a169a3d7c0138c1d23d1bf9d6aad7f7e409052"
+    },
+    {
+      "name": "r-identity",
+      "chain": "dev",
+      "rule": "r-small-order",
+      "expected": "invalid",
+      "apply_block": "InvalidBlockSignature",
+      "note": "R of order 1.",
+      "header": {
+        "parent_hash": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1",
+        "state_root": "c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08f",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "1700000000",
+        "height": "1",
+        "producer": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15"
+      },
+      "header_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "signing_hash": "662739c22d791f440b8bf38b4174f65d536f9461c976879e9758770372ec766d",
+      "producer_signature": "010000000000000000000000000000000000000000000000000000000000000074ed5b418e63b0e17fc6b0468d05993e808d7e05168a419fe659f7ece6fc2f07",
+      "block_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c1500010000000000000000000000000000000000000000000000000000000000000074ed5b418e63b0e17fc6b0468d05993e808d7e05168a419fe659f7ece6fc2f07",
+      "block_hash": "d673bb88d8182a0fe147d6fd174409b24743bbd5574acaa6445be86cb6f6e653"
+    },
+    {
+      "name": "r-non-canonical",
+      "chain": "dev",
+      "rule": "r-non-canonical",
+      "expected": "invalid",
+      "apply_block": "InvalidBlockSignature",
+      "note": "R encoding with y >= p.",
+      "header": {
+        "parent_hash": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1",
+        "state_root": "c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08f",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "1700000000",
+        "height": "1",
+        "producer": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15"
+      },
+      "header_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "signing_hash": "662739c22d791f440b8bf38b4174f65d536f9461c976879e9758770372ec766d",
+      "producer_signature": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f22d49adf403f2cd2ff651d68dfe3d3b37f12b93bedb6242dab4425b2e7275004",
+      "block_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c1500eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f22d49adf403f2cd2ff651d68dfe3d3b37f12b93bedb6242dab4425b2e7275004",
+      "block_hash": "33a54bab662e71b72f7a8470471ebef306c65b2005d7addf8c0e0b0709a2bde4"
+    },
+    {
+      "name": "r-not-a-point",
+      "chain": "dev",
+      "rule": "r-not-a-point",
+      "expected": "invalid",
+      "apply_block": "InvalidBlockSignature",
+      "note": "R bytes that decode to no curve point.",
+      "header": {
+        "parent_hash": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1",
+        "state_root": "c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08f",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "1700000000",
+        "height": "1",
+        "producer": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15"
+      },
+      "header_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "signing_hash": "662739c22d791f440b8bf38b4174f65d536f9461c976879e9758770372ec766d",
+      "producer_signature": "0200000000000000000000000000000000000000000000000000000000000000e26ad8ac24ce87e1c2630d2100c73a3c2729d5c663dc510f5aa4847a5efc8e06",
+      "block_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15000200000000000000000000000000000000000000000000000000000000000000e26ad8ac24ce87e1c2630d2100c73a3c2729d5c663dc510f5aa4847a5efc8e06",
+      "block_hash": "1d26f18ef5f340ab0974b7168dc6db72a8fe1c29c5f75a9af7cd0aef776d7dad"
+    },
+    {
+      "name": "cofactored-equation-only",
+      "chain": "dev",
+      "rule": "cofactored-equation-only",
+      "expected": "invalid",
+      "apply_block": "InvalidBlockSignature",
+      "note": "Satisfies the cofactored equation only: R carries a torsion component.",
+      "header": {
+        "parent_hash": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1",
+        "state_root": "c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08f",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "1700000000",
+        "height": "1",
+        "producer": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15"
+      },
+      "header_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "signing_hash": "662739c22d791f440b8bf38b4174f65d536f9461c976879e9758770372ec766d",
+      "producer_signature": "197e018e41208750ffda7d2a4a57806932052c97030f07c7a0d499bdaa6ef98ec06ee3f9005da69f7520adeb090d298d0419ccee7db745c800628ba51ac10408",
+      "block_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c1500197e018e41208750ffda7d2a4a57806932052c97030f07c7a0d499bdaa6ef98ec06ee3f9005da69f7520adeb090d298d0419ccee7db745c800628ba51ac10408",
+      "block_hash": "378c41ab50993070ed69bea5da5bb600dfbf8f4653620333f7966777c18c7594"
+    },
+    {
+      "name": "signature-over-another-header",
+      "chain": "dev",
+      "rule": "wrong-message",
+      "expected": "invalid",
+      "apply_block": "InvalidBlockSignature",
+      "note": "An honest signature over the same header with timestamp + 1: the signature covers the whole header.",
+      "header": {
+        "parent_hash": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1",
+        "state_root": "c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08f",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "1700000000",
+        "height": "1",
+        "producer": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15"
+      },
+      "header_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "signing_hash": "662739c22d791f440b8bf38b4174f65d536f9461c976879e9758770372ec766d",
+      "producer_signature": "d3743e8bb486089292745127e4a133319bf9217c48b5bdd4baa89156043b41a03c2638305aadf1676fc5edafc9e8f322495e75d5502fa31ef53121f7bf32420d",
+      "block_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c1500d3743e8bb486089292745127e4a133319bf9217c48b5bdd4baa89156043b41a03c2638305aadf1676fc5edafc9e8f322495e75d5502fa31ef53121f7bf32420d",
+      "block_hash": "d845adfbe17dba2086ca4434bd251bf757a6a0f1f0bab9669d40678d4dd96732"
+    },
+    {
+      "name": "signature-over-the-preimage",
+      "chain": "dev",
+      "rule": "wrong-message",
+      "expected": "invalid",
+      "apply_block": "InvalidBlockSignature",
+      "note": "Signed over \"mbongo-block:v1\" || chain_id || SCALE(header) itself, not its BLAKE3: the signed message is the 32-byte hash.",
+      "header": {
+        "parent_hash": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1",
+        "state_root": "c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08f",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "1700000000",
+        "height": "1",
+        "producer": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15"
+      },
+      "header_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "signing_hash": "662739c22d791f440b8bf38b4174f65d536f9461c976879e9758770372ec766d",
+      "producer_signature": "273fdff902cee26a110ea210add179cac25d822df674290875d5ff134009e6a55b1168ce5f6fbd9c55ef695c161893cf53d996bb5cc50397f10e172030832604",
+      "block_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c1500273fdff902cee26a110ea210add179cac25d822df674290875d5ff134009e6a55b1168ce5f6fbd9c55ef695c161893cf53d996bb5cc50397f10e172030832604",
+      "block_hash": "25f2aa24b1dcfc24953cef058494dfb129fc4c66fdf79136ef9cd8378748561e"
+    },
+    {
+      "name": "signature-without-domain",
+      "chain": "dev",
+      "rule": "wrong-message",
+      "expected": "invalid",
+      "apply_block": "InvalidBlockSignature",
+      "note": "Signed over BLAKE3(chain_id || SCALE(header)): the domain is part of the message.",
+      "header": {
+        "parent_hash": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1",
+        "state_root": "c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08f",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "1700000000",
+        "height": "1",
+        "producer": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15"
+      },
+      "header_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "signing_hash": "662739c22d791f440b8bf38b4174f65d536f9461c976879e9758770372ec766d",
+      "producer_signature": "1727b001ab4a7d1134a2d8ffbaa84eb5195622de1e81117cfe770288470c6cd69a29415f433ef8779616a40c4fe6fa8afccb77bca5e43b27b4f874ff21c63f07",
+      "block_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15001727b001ab4a7d1134a2d8ffbaa84eb5195622de1e81117cfe770288470c6cd69a29415f433ef8779616a40c4fe6fa8afccb77bca5e43b27b4f874ff21c63f07",
+      "block_hash": "5224ac2b3ec43abb611c75ca62bcd28b34a9cbf6f3ef320a57c8ee82963e81db"
+    },
+    {
+      "name": "signature-with-the-transaction-domain",
+      "chain": "dev",
+      "rule": "wrong-message",
+      "expected": "invalid",
+      "apply_block": "InvalidBlockSignature",
+      "note": "Signed over BLAKE3(\"mbongo-tx:v2\" || chain_id || SCALE(header)): another protocol domain.",
+      "header": {
+        "parent_hash": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1",
+        "state_root": "c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08f",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "1700000000",
+        "height": "1",
+        "producer": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15"
+      },
+      "header_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "signing_hash": "662739c22d791f440b8bf38b4174f65d536f9461c976879e9758770372ec766d",
+      "producer_signature": "a81cd392f4020b5f41badbec065a7f944786b9455d23e67063f1de5546fd979bd47eae54d384f52749c4f45e3f6a6e2c9ef9e4462fd8e6cb2be57c857366e00b",
+      "block_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c1500a81cd392f4020b5f41badbec065a7f944786b9455d23e67063f1de5546fd979bd47eae54d384f52749c4f45e3f6a6e2c9ef9e4462fd8e6cb2be57c857366e00b",
+      "block_hash": "30067eac07b4fa46a11027328a84dbbb2858a7ea61031059da317b694e511d4a"
+    },
+    {
+      "name": "zero-signature",
+      "chain": "dev",
+      "rule": "r-small-order",
+      "expected": "invalid",
+      "apply_block": "InvalidBlockSignature",
+      "note": "The genesis block's zero signature on block 1. R = 0x00..00 decodes to a point of small order.",
+      "header": {
+        "parent_hash": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1",
+        "state_root": "c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08f",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "1700000000",
+        "height": "1",
+        "producer": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15"
+      },
+      "header_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "signing_hash": "662739c22d791f440b8bf38b4174f65d536f9461c976879e9758770372ec766d",
+      "producer_signature": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "block_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c150000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "block_hash": "0a98d11415c95535591d6d525bf3df99c0456737df84524c2f0451b4518c742c"
+    },
+    {
+      "name": "authority-named-another-key-signs",
+      "chain": "dev",
+      "rule": "wrong-message",
+      "expected": "invalid",
+      "apply_block": "InvalidBlockSignature",
+      "note": "A forged block: the header names the authority, and another key signs the right message.",
+      "header": {
+        "parent_hash": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1",
+        "state_root": "c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08f",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "1700000000",
+        "height": "1",
+        "producer": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15"
+      },
+      "header_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "signing_hash": "662739c22d791f440b8bf38b4174f65d536f9461c976879e9758770372ec766d",
+      "producer_signature": "5d2c5e287b0dd715436819923259fb3a1909fac75cfe3a2fcc0f8a23e80c3c16a138de0cffc69ca06575d85e563acd34bb946ad264d08988ca07057e604f2708",
+      "block_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15005d2c5e287b0dd715436819923259fb3a1909fac75cfe3a2fcc0f8a23e80c3c16a138de0cffc69ca06575d85e563acd34bb946ad264d08988ca07057e604f2708",
+      "block_hash": "e7aa714d28443e6042830f7ab26a7472eecf25e5e14a78299ff19e3ac5375f5d"
+    },
+    {
+      "name": "unauthorized-producer-valid-signature",
+      "chain": "dev",
+      "rule": "valid",
+      "expected": "valid",
+      "apply_block": "UnauthorizedProducer",
+      "note": "A forged block: another key names itself producer and signs correctly. Its signature is strictly valid; the producer is not the authority.",
+      "header": {
+        "parent_hash": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1",
+        "state_root": "c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08f",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "1700000000",
+        "height": "1",
+        "producer": "ed6a47a39da869b5446155e40b2d93f1e3f0167be26732bae7a3ef9d8e3a3fd3"
+      },
+      "header_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000ed6a47a39da869b5446155e40b2d93f1e3f0167be26732bae7a3ef9d8e3a3fd3",
+      "signing_hash": "03f8d57c4db9249483b02bd7ea2184deb2574db56a6cc65b00606bae12ea2dd6",
+      "producer_signature": "7d175ac6e92712d17f32206abe5bd30e3835510bda7b14889bac5a32bed859f83a54e3f4f57c910048a54c3864c5d1147c839207af31a666d85f13bfce6d490e",
+      "block_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000ed6a47a39da869b5446155e40b2d93f1e3f0167be26732bae7a3ef9d8e3a3fd3007d175ac6e92712d17f32206abe5bd30e3835510bda7b14889bac5a32bed859f83a54e3f4f57c910048a54c3864c5d1147c839207af31a666d85f13bfce6d490e",
+      "block_hash": "403e4246640d490270fcbe47b966d4ae37e23b48016d0bd9c9f7f0ce595e7675"
+    },
+    {
+      "name": "unauthorized-zero-producer",
+      "chain": "dev",
+      "rule": "key-small-order",
+      "expected": "invalid",
+      "apply_block": "UnauthorizedProducer",
+      "note": "Block 1 with the genesis block's zero producer and zero signature: rule (t) refuses it first.",
+      "header": {
+        "parent_hash": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1",
+        "state_root": "c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08f",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "1700000000",
+        "height": "1",
+        "producer": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "header_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f153650000000001000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "signing_hash": "1aa74f0f8fd6583147a4ce069a301fcd4b0506aefd7a99ecf5e3175c94df0470",
+      "producer_signature": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "block_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f1536500000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "block_hash": "851d24284f20750d775bad5cfbe69b8c1bb235460db8cb854158a1a8bc4b74a6"
+    },
+    {
+      "name": "unauthorized-small-order-producer",
+      "chain": "dev",
+      "rule": "key-small-order",
+      "expected": "invalid",
+      "apply_block": "UnauthorizedProducer",
+      "note": "A producer key of order 1, with a signature satisfying the equation for it. Rule (t) refuses it before any key check.",
+      "header": {
+        "parent_hash": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1",
+        "state_root": "c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08f",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "1700000000",
+        "height": "1",
+        "producer": "0100000000000000000000000000000000000000000000000000000000000000"
+      },
+      "header_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f153650000000001000000000000000100000000000000000000000000000000000000000000000000000000000000",
+      "signing_hash": "f94fc4b9148ace2142dc134673db779970021fb0e1e24651e8bcfdfd7c906f3b",
+      "producer_signature": "603ad72aefbf00b20779eb4bc91133a08b8405b2369ec1b9782e5fa76736b580ad281398ee7732c78884a66b5e82afb63e8f9a3fa348b4c504422957a7d64f01",
+      "block_encoding": "7e51bdf2873376651f7a38f83aaebbb516592b505b677f17ad1aac475dfa6aa1c97519837cdb5b970deb350dec15c1998ab0571e9cf861c18c1ca285968de08faf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200f15365000000000100000000000000010000000000000000000000000000000000000000000000000000000000000000603ad72aefbf00b20779eb4bc91133a08b8405b2369ec1b9782e5fa76736b580ad281398ee7732c78884a66b5e82afb63e8f9a3fa348b4c504422957a7d64f01",
+      "block_hash": "694f8bb93b6cb7368c94c4eff60021adcc0ed73e95196b3be90e3a49f1f6a869"
+    },
+    {
+      "name": "timestamp-below-parent",
+      "chain": "other",
+      "rule": "valid",
+      "expected": "valid",
+      "apply_block": "InvalidTimestamp",
+      "note": "A validly signed block one second before its parent (the other genesis, timestamp 1700000000).",
+      "header": {
+        "parent_hash": "55e1ded73fc0728d785a51e83ac116fac5080c1b79ef8186335c813d8cbc30f8",
+        "state_root": "1edec1e7fd5d63d2f2cf8590fc9a2eb4626f031e3c9ff16a9d231973392373dd",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "1699999999",
+        "height": "1",
+        "producer": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15"
+      },
+      "header_encoding": "55e1ded73fc0728d785a51e83ac116fac5080c1b79ef8186335c813d8cbc30f81edec1e7fd5d63d2f2cf8590fc9a2eb4626f031e3c9ff16a9d231973392373ddaf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262fff05365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "signing_hash": "2f0624dd64ffb99c2c0b424bacc0006acdb61e451f115755df09906b487ded11",
+      "producer_signature": "7f841ccd6517c30716c395fac0d5ffd6fc3d1182bed8503955c28d8c3194becf46fb9480c5e153379c4d8e1ea8e08371f03540d6e45b9c777933757e22b40a0c",
+      "block_encoding": "55e1ded73fc0728d785a51e83ac116fac5080c1b79ef8186335c813d8cbc30f81edec1e7fd5d63d2f2cf8590fc9a2eb4626f031e3c9ff16a9d231973392373ddaf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262fff05365000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15007f841ccd6517c30716c395fac0d5ffd6fc3d1182bed8503955c28d8c3194becf46fb9480c5e153379c4d8e1ea8e08371f03540d6e45b9c777933757e22b40a0c",
+      "block_hash": "c342078aa43444ffee1db6bd995c87008a431310ff719f4518e8619236756bc0"
+    },
+    {
+      "name": "timestamp-zero-below-parent",
+      "chain": "other",
+      "rule": "valid",
+      "expected": "valid",
+      "apply_block": "InvalidTimestamp",
+      "note": "A validly signed block at timestamp 0 on a genesis at 1700000000.",
+      "header": {
+        "parent_hash": "55e1ded73fc0728d785a51e83ac116fac5080c1b79ef8186335c813d8cbc30f8",
+        "state_root": "1edec1e7fd5d63d2f2cf8590fc9a2eb4626f031e3c9ff16a9d231973392373dd",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "0",
+        "height": "1",
+        "producer": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15"
+      },
+      "header_encoding": "55e1ded73fc0728d785a51e83ac116fac5080c1b79ef8186335c813d8cbc30f81edec1e7fd5d63d2f2cf8590fc9a2eb4626f031e3c9ff16a9d231973392373ddaf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200000000000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "signing_hash": "e7f9125a322912ea16268f6b4cf095a810c3f9e3ac39227cbefdc62676f31642",
+      "producer_signature": "f25c26246d0d8dedd34d110238d3e629a0cb406a494cda946e5c525b7d0cc8fa7764678bf8508637f1b031f1a3c8b2ef13ea90fef7ba440937682f431029dd02",
+      "block_encoding": "55e1ded73fc0728d785a51e83ac116fac5080c1b79ef8186335c813d8cbc30f81edec1e7fd5d63d2f2cf8590fc9a2eb4626f031e3c9ff16a9d231973392373ddaf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326200000000000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c1500f25c26246d0d8dedd34d110238d3e629a0cb406a494cda946e5c525b7d0cc8fa7764678bf8508637f1b031f1a3c8b2ef13ea90fef7ba440937682f431029dd02",
+      "block_hash": "24eeedec8cb90553258b776deb4d1d5a1602db927eaae07102349d26542f9d4e"
+    },
+    {
+      "name": "bad-signature-and-bad-timestamp",
+      "chain": "other",
+      "rule": "s-not-below-group-order",
+      "expected": "invalid",
+      "apply_block": "InvalidBlockSignature",
+      "note": "Fails rules (u) and (v): (u) is reported, it comes first.",
+      "header": {
+        "parent_hash": "55e1ded73fc0728d785a51e83ac116fac5080c1b79ef8186335c813d8cbc30f8",
+        "state_root": "1edec1e7fd5d63d2f2cf8590fc9a2eb4626f031e3c9ff16a9d231973392373dd",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "1",
+        "height": "1",
+        "producer": "b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15"
+      },
+      "header_encoding": "55e1ded73fc0728d785a51e83ac116fac5080c1b79ef8186335c813d8cbc30f81edec1e7fd5d63d2f2cf8590fc9a2eb4626f031e3c9ff16a9d231973392373ddaf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326201000000000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c15",
+      "signing_hash": "e32fa6a48e8c5165383d6d4523064c41263a5567351a5e2900c6dabf87fe3fc2",
+      "producer_signature": "a4eecdf1f306a3014bb3aae9b660d0c36305d21a68cd0832f7ef246faa2d3898c1b67a6d906b90330bbaf3cf8452d9cb73703a634da1492408cab9957421fb1e",
+      "block_encoding": "55e1ded73fc0728d785a51e83ac116fac5080c1b79ef8186335c813d8cbc30f81edec1e7fd5d63d2f2cf8590fc9a2eb4626f031e3c9ff16a9d231973392373ddaf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326201000000000000000100000000000000b1c2c08e2e372f831ca40e2a6e442ddc18f1dc1b6e0b39a0a32b41d6e5541c1500a4eecdf1f306a3014bb3aae9b660d0c36305d21a68cd0832f7ef246faa2d3898c1b67a6d906b90330bbaf3cf8452d9cb73703a634da1492408cab9957421fb1e",
+      "block_hash": "db857d3355a200d1289424a094374459bdf783ceb1a5a94ab06a3c95081f6894"
+    },
+    {
+      "name": "unauthorized-and-bad-signature-and-bad-timestamp",
+      "chain": "other",
+      "rule": "wrong-message",
+      "expected": "invalid",
+      "apply_block": "UnauthorizedProducer",
+      "note": "Fails rules (t), (u) and (v): (t) is reported, it comes first.",
+      "header": {
+        "parent_hash": "55e1ded73fc0728d785a51e83ac116fac5080c1b79ef8186335c813d8cbc30f8",
+        "state_root": "1edec1e7fd5d63d2f2cf8590fc9a2eb4626f031e3c9ff16a9d231973392373dd",
+        "transactions_root": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        "timestamp": "1",
+        "height": "1",
+        "producer": "ed6a47a39da869b5446155e40b2d93f1e3f0167be26732bae7a3ef9d8e3a3fd3"
+      },
+      "header_encoding": "55e1ded73fc0728d785a51e83ac116fac5080c1b79ef8186335c813d8cbc30f81edec1e7fd5d63d2f2cf8590fc9a2eb4626f031e3c9ff16a9d231973392373ddaf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326201000000000000000100000000000000ed6a47a39da869b5446155e40b2d93f1e3f0167be26732bae7a3ef9d8e3a3fd3",
+      "signing_hash": "a32efd2acf9b1dd57c2742f56c534efa8ddda67cf7f54674701fbc44d3444e3c",
+      "producer_signature": "08016ef425c48e0419b02f9589c1f410892e273123f3fa83f922aaec1e29432bc4273e028523176e92df62569a3f00dc051e3744497f72a200c8202b072e690a",
+      "block_encoding": "55e1ded73fc0728d785a51e83ac116fac5080c1b79ef8186335c813d8cbc30f81edec1e7fd5d63d2f2cf8590fc9a2eb4626f031e3c9ff16a9d231973392373ddaf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f326201000000000000000100000000000000ed6a47a39da869b5446155e40b2d93f1e3f0167be26732bae7a3ef9d8e3a3fd30008016ef425c48e0419b02f9589c1f410892e273123f3fa83f922aaec1e29432bc4273e028523176e92df62569a3f00dc051e3744497f72a200c8202b072e690a",
+      "block_hash": "8a11c308ff8d3b23e8f4b84c2450cce21600190485f6b36e6e96531548558d51"
+    }
+  ]
+}

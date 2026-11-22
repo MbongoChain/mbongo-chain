@@ -60,9 +60,11 @@ function block(overrides = {}, txs = []) {
       transactions_root: "0x00",
       timestamp: 0,
       height: 0,
+      producer: "0x00",
       ...overrides,
     },
     body: { transactions: txs },
+    producer_signature: "0x00",
   };
 }
 
@@ -188,7 +190,7 @@ const TWO_POW_53_PLUS_1_TEXT = "9007199254740993";
 
 test("the safe maximum still reaches the network, now as bigint", async () => {
   const { client, calls } = rawClient(
-    `{"header":{"parent_hash":"0x00","state_root":"0x00","transactions_root":"0x00","timestamp":0,"height":${SAFE_MAX}},"body":{"transactions":[]}}`,
+    `{"header":{"parent_hash":"0x00","state_root":"0x00","transactions_root":"0x00","timestamp":0,"height":${SAFE_MAX},"producer":"0x00"},"body":{"transactions":[]},"producer_signature":"0x00"}`,
   );
   const got = await client.getBlockByHeight(SAFE_MAX);
   assert.equal(got.header.height, BigInt(SAFE_MAX), "the boundary survives exactly");
@@ -221,9 +223,9 @@ test("block header and transaction integers all arrive exactly", async () => {
   const amount = "9007199254740999";
   const { client } = rawClient(
     `{"header":{"parent_hash":"0x00","state_root":"0x00","transactions_root":"0x00",` +
-      `"timestamp":${timestamp},"height":${height}},"body":{"transactions":[` +
+      `"timestamp":${timestamp},"height":${height},"producer":"0x00"},"body":{"transactions":[` +
       `{"tx_type":"Transfer","sender":"0x11","receiver":"0x22","amount":${amount},` +
-      `"nonce":${nonce},"payload":"None","signature":"0x00"}]}}`,
+      `"nonce":${nonce},"payload":"None","signature":"0x00"}]},"producer_signature":"0x00"}`,
   );
 
   const got = await client.getBlockByHeight(0);
@@ -240,9 +242,9 @@ test("u64::MAX arrives exactly in every u64 field", async () => {
   const m = U64_MAX_TEXT;
   const { client } = rawClient(
     `{"header":{"parent_hash":"0x00","state_root":"0x00","transactions_root":"0x00",` +
-      `"timestamp":${m},"height":${m}},"body":{"transactions":[` +
+      `"timestamp":${m},"height":${m},"producer":"0x00"},"body":{"transactions":[` +
       `{"tx_type":"Transfer","sender":"0x11","receiver":"0x22","amount":${m},` +
-      `"nonce":${m},"payload":"None","signature":"0x00"}]}}`,
+      `"nonce":${m},"payload":"None","signature":"0x00"}]},"producer_signature":"0x00"}`,
   );
   const got = await client.getBlockByHeight(0);
   const intended = exact(m);
@@ -254,8 +256,8 @@ test("u64::MAX arrives exactly in every u64 field", async () => {
 
 test("a well-formed block with small values still passes through", async () => {
   const { client } = rawClient(
-    `{"header":{"parent_hash":"0x00","state_root":"0x00","transactions_root":"0x00","timestamp":12345,"height":7},` +
-      `"body":{"transactions":[{"tx_type":"Transfer","sender":"0x11","receiver":"0x22","amount":100,"nonce":0,"payload":"None","signature":"0x00"}]}}`,
+    `{"header":{"parent_hash":"0x00","state_root":"0x00","transactions_root":"0x00","timestamp":12345,"height":7,"producer":"0x00"},` +
+      `"body":{"transactions":[{"tx_type":"Transfer","sender":"0x11","receiver":"0x22","amount":100,"nonce":0,"payload":"None","signature":"0x00"}]},"producer_signature":"0x00"}`,
   );
   const got = await client.getBlockByHeight(7);
   assert.deepEqual(got, {
@@ -265,6 +267,7 @@ test("a well-formed block with small values still passes through", async () => {
       transactions_root: "0x00",
       timestamp: 12345n,
       height: 7n,
+      producer: "0x00",
     },
     body: {
       transactions: [
@@ -279,5 +282,6 @@ test("a well-formed block with small values still passes through", async () => {
         },
       ],
     },
+    producer_signature: "0x00",
   });
 });

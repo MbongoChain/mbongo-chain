@@ -277,8 +277,10 @@ pub mod testing {
                     transactions_root: compute_transactions_root(&txs),
                     timestamp: 0,
                     height,
+                    producer: mbongo_core::Address::zero(),
                 },
                 body: BlockBody { transactions: txs },
+                producer_signature: [0u8; 64],
             });
             height
         }

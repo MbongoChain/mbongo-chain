@@ -89,10 +89,12 @@ fn blocks(count: u64, transactions: u64) -> Batch {
                     transactions_root: Hash::zero(),
                     timestamp: 1_700_000_000,
                     height,
+                    producer: mbongo_core::Address::zero(),
                 },
                 body: BlockBody {
                     transactions: (0..transactions).map(transfer).collect(),
                 },
+                producer_signature: [0u8; 64],
             };
             (Hash::zero(), block)
         })

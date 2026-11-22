@@ -227,6 +227,7 @@ function normalizeHeader(path: string, value: unknown): BlockHeader {
     transactions_root: expectString(`${path}.transactions_root`, h.transactions_root),
     timestamp: expectBigint(`${path}.timestamp`, h.timestamp),
     height: expectBigint(`${path}.height`, h.height),
+    producer: expectString(`${path}.producer`, h.producer),
   };
 }
 
@@ -240,7 +241,11 @@ function normalizeBlock(path: string, value: unknown): Block {
     normalizeTransaction(`${path}.body.transactions[${i}]`, tx),
   );
   const normalizedBody: BlockBody = { transactions };
-  return { header: normalizeHeader(`${path}.header`, b.header), body: normalizedBody };
+  return {
+    header: normalizeHeader(`${path}.header`, b.header),
+    body: normalizedBody,
+    producer_signature: expectString(`${path}.producer_signature`, b.producer_signature),
+  };
 }
 
 /** Converts a caller's transaction into the exact form that goes on the wire. */

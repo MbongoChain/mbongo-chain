@@ -49,7 +49,8 @@ const REFERENCED = TX.valid.find(
 const wire = (over = {}) => ({ ...structuredClone(PINNED_WIRE), ...over });
 
 const blockWith = (...payloads) => ({
-  header: { parent_hash: "0x00", state_root: "0x00", transactions_root: "0x00", timestamp: 0, height: 1 },
+  header: { parent_hash: "0x00", state_root: "0x00", transactions_root: "0x00", timestamp: 0, height: 1, producer: "0x00" },
+  producer_signature: "0x00",
   body: {
     transactions: payloads.map((payload) => ({
       tx_type: payload === "None" ? "Transfer" : "AnchorReceipt",
