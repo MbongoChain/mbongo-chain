@@ -448,9 +448,12 @@ fn a_producer_key_is_checked_against_the_genesis_before_anything_starts() {
     let net = dir.join("private.json");
     std::fs::write(&net, PRIVATE_GENESIS).unwrap();
     let net = net.to_str().unwrap().to_string();
-    let write_key = |name: &str, seed: [u8; 32]| {
+    // Every key file is written with mode 600, as the node requires on Unix,
+    // so that each case reaches the check it is about. The mode check itself
+    // is the last case, Unix only.
+    let write_key = |name: &str, contents: &str| {
         let path = dir.join(name);
-        std::fs::write(&path, hex::encode(seed)).unwrap();
+        std::fs::write(&path, contents).unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -458,11 +461,12 @@ fn a_producer_key_is_checked_against_the_genesis_before_anything_starts() {
         }
         path.to_str().unwrap().to_string()
     };
-    let authority = write_key("authority.key", mbongo_core::genesis::dev_authority_seed());
-    let intruder = write_key("intruder.key", [0x11u8; 32]);
-    let malformed = dir.join("malformed.key");
-    std::fs::write(&malformed, "not a key").unwrap();
-    let malformed = malformed.to_str().unwrap().to_string();
+    let authority = write_key(
+        "authority.key",
+        &hex::encode(mbongo_core::genesis::dev_authority_seed()),
+    );
+    let intruder = write_key("intruder.key", &hex::encode([0x11u8; 32]));
+    let malformed = write_key("malformed.key", "not a key");
 
     let cases: [(&[&str], &str); 6] = [
         (
@@ -506,6 +510,32 @@ fn a_producer_key_is_checked_against_the_genesis_before_anything_starts() {
         let out = refused(args, &data);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(stderr.contains(expected), "{args:?}: {stderr}");
+        assert!(!data.exists(), "{args:?} created the data directory");
+    }
+
+    // The mode check (Unix): the authority's own, well-formed key in a file
+    // others can read is refused, before its contents are read.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let readable = write_key(
+            "readable.key",
+            &hex::encode(mbongo_core::genesis::dev_authority_seed()),
+        );
+        std::fs::set_permissions(&readable, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let args: [&str; 5] = [
+            "--genesis",
+            &net,
+            "--producer",
+            "--producer-key-file",
+            &readable,
+        ];
+        let out = refused(&args, &data);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("readable by others, expected mode 600"),
+            "{args:?}: {stderr}"
+        );
         assert!(!data.exists(), "{args:?} created the data directory");
     }
     std::fs::remove_dir_all(&dir).unwrap();
