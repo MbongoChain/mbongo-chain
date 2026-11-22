@@ -42,10 +42,21 @@ fn vectors() -> Value {
     serde_json::from_str(&text.unwrap()).unwrap()
 }
 
+/// The wall-time limit for jobs built from the vectors in these tests.
+///
+/// The vectors say 5 s. That limit also bounds the start of Node, which a
+/// loaded runner can push past 5 s, and the job then ends in
+/// `JOB_LIMIT_WALL_TIME` whatever the test was checking. A test whose subject
+/// is the deadline sets its own limit (`s2_4`, `s2_6`). The limit changes
+/// nothing in a job's output.
+const TEST_MAX_WALL_MS: u64 = 30_000;
+
 fn spec_json(name: &str) -> Value {
     let v = vectors();
     let specs = v["specs"].as_array().unwrap();
-    specs.iter().find(|s| s["name"] == name).unwrap()["spec"].clone()
+    let mut spec = specs.iter().find(|s| s["name"] == name).unwrap()["spec"].clone();
+    spec["limits"]["max_wall_ms"] = json!(TEST_MAX_WALL_MS);
+    spec
 }
 
 fn with_mode(name: &str, mode: &str) -> Value {
@@ -214,7 +225,11 @@ fn s2_4_output_over_the_limit_is_cut_and_killed() {
             Err(JobError::LimitOutputSize),
             "{mode}"
         );
-        assert!(started.elapsed() < Duration::from_secs(4), "{mode}");
+        // Cut when the output passes its limit, not left to run to the deadline:
+        // the bound sits well below the wall-time limit, with room for Node to
+        // start on a loaded runner.
+        let bound = Duration::from_millis(TEST_MAX_WALL_MS) / 3;
+        assert!(started.elapsed() < bound, "{mode}: {:?}", started.elapsed());
     }
 }
 

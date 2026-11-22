@@ -12,7 +12,7 @@ use mbongo_api::rest::{
 use mbongo_core::{
     compute_transactions_root, Account, Address, Block, BlockBody, BlockHeader, ComputeTask, Hash,
     Receipt, Transaction, TransactionPayload, TransactionType, COMPUTE_TASK_VERSION,
-    MAX_EXECUTION_SPEC_BYTES,
+    MAX_EXECUTION_SPEC_BYTES, MAX_TRANSACTION_NONCE,
 };
 use mbongo_network::rpc::{BackendError, RpcBackend};
 use mbongo_network::BlockBroadcaster;
@@ -1039,7 +1039,14 @@ impl<S: Storage + Send + Sync + 'static> RpcBackend for NodeBackend<S> {
             // account view (RFC 0002 rule d). This only stops admission
             // from rejecting a correct successor while its predecessor is
             // still waiting for a block.
-            let Some(expected_nonce) = pending.expected_nonce else {
+            //
+            // A nonce above MAX_TRANSACTION_NONCE can never be applied (RFC
+            // 0006 §6 step 2), so a sender whose next nonce lies above it has
+            // no nonce left. Refusing it here keeps a transaction that no
+            // block could hold out of the pool.
+            let Some(expected_nonce) =
+                pending.expected_nonce.filter(|n| *n <= MAX_TRANSACTION_NONCE)
+            else {
                 return Err(BackendError::Internal(
                     "invalid nonce: sender nonce space exhausted".to_string(),
                 ));
@@ -3983,11 +3990,17 @@ mod tests {
         let backend = make_backend();
         backend.ensure_genesis().unwrap();
         let sk = SigningKey::from_bytes(&[91u8; 32]);
-        fund_with_nonce(&backend, &sk, 10_000, u64::MAX);
+        fund_with_nonce(&backend, &sk, 10_000, MAX_TRANSACTION_NONCE);
 
-        // The last allocatable nonce is still admissible.
+        // The last applicable nonce is still admissible. u64::MAX itself
+        // never is: no block could apply it (RFC 0006 §6 step 2).
         backend
-            .submit_transaction(signed_transfer(&sk, Address([1u8; 32]), 10, u64::MAX))
+            .submit_transaction(signed_transfer(
+                &sk,
+                Address([1u8; 32]),
+                10,
+                MAX_TRANSACTION_NONCE,
+            ))
             .await
             .unwrap();
 
@@ -6546,6 +6559,192 @@ mod tests {
         restarted.mempool.read().await.assert_consistent();
         drop(restarted);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── RFC 0006 §6 step 2: the nonce bound (S1-1) ─────────────────────
+
+    #[test]
+    fn a_compute_task_at_nonce_u64_max_is_refused_and_writes_nothing() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[110u8; 32]);
+        let addr = fund_with_nonce(&backend, &sk, 5, u64::MAX);
+        let height = backend.storage.get_latest_height().unwrap();
+        let task = task_for(addr, Address([111u8; 32]), [7u8; 32], vec![1, 2, 3]);
+        let block = build_valid_block(&backend, vec![signed_task_tx(&sk, u64::MAX, task)]);
+        let err = backend.apply_block(&block).unwrap_err();
+        assert!(matches!(err, ApplyBlockError::InvalidNonce(0)), "{err}");
+        assert_eq!(backend.storage.get_latest_height().unwrap(), height);
+        let after = account(&backend, addr);
+        assert_eq!((after.balance, after.nonce), (5, u64::MAX));
+    }
+
+    #[test]
+    fn an_anchor_at_nonce_u64_max_is_refused_and_writes_nothing() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[112u8; 32]);
+        let addr = fund_with_nonce(&backend, &sk, 5, u64::MAX);
+        let height = backend.storage.get_latest_height().unwrap();
+        let receipt = signed_receipt_for(&sk, [9u8; 32], vec![], RECEIPT_VERSION);
+        let block = build_valid_block(&backend, vec![signed_anchor_tx(&sk, u64::MAX, receipt)]);
+        let err = backend.apply_block(&block).unwrap_err();
+        assert!(matches!(err, ApplyBlockError::InvalidNonce(0)), "{err}");
+        assert_eq!(backend.storage.get_latest_height().unwrap(), height);
+        let after = account(&backend, addr);
+        assert_eq!((after.balance, after.nonce), (5, u64::MAX));
+    }
+
+    #[tokio::test]
+    async fn admission_refuses_a_nonce_beyond_the_bound() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[113u8; 32]);
+        fund_with_nonce(&backend, &sk, 10, u64::MAX);
+        let err = backend
+            .submit_transaction(signed_transfer(&sk, Address([114u8; 32]), 1, u64::MAX))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("nonce space exhausted"), "{err}");
+        assert_eq!(backend.mempool.read().await.len(), 0);
+    }
+
+    /// The last applicable nonce is admitted and produced. After it the
+    /// sender has no nonce left, whether its predecessor is pending or
+    /// committed.
+    #[tokio::test]
+    async fn the_last_applicable_nonce_is_admitted_produced_and_then_exhausted() {
+        let backend = make_backend();
+        backend.ensure_genesis().unwrap();
+        let sk = SigningKey::from_bytes(&[115u8; 32]);
+        let addr = fund_with_nonce(&backend, &sk, 10, MAX_TRANSACTION_NONCE);
+        let to = Address([116u8; 32]);
+        backend
+            .submit_transaction(signed_transfer(&sk, to, 1, MAX_TRANSACTION_NONCE))
+            .await
+            .unwrap();
+        // First while the predecessor is pending, then once it is committed.
+        for pending in [true, false] {
+            let err = backend
+                .submit_transaction(signed_transfer(&sk, to, 1, u64::MAX))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("nonce space exhausted"),
+                "pending={pending}: {err}"
+            );
+            if pending {
+                assert_eq!(backend.mempool.read().await.len(), 1);
+                backend.produce_block().await.unwrap();
+            }
+        }
+        assert_eq!(backend.latest_height().unwrap(), 1);
+        let after = account(&backend, addr);
+        assert_eq!((after.balance, after.nonce), (9, u64::MAX));
+        assert_eq!(account(&backend, to).balance, 1);
+        assert_eq!(backend.mempool.read().await.len(), 0);
+    }
+
+    const NONCE_BOUNDARY_FIXTURE: &str =
+        include_str!("../../../test-vectors/transaction/nonce-boundary-v1.json");
+
+    /// The `state_transition` cases of the shared nonce fixture, through
+    /// `apply_block`. The fixture's transactions are decoded from their
+    /// pinned bytes, never rebuilt here.
+    #[test]
+    fn nonce_boundary_state_transition_vectors() {
+        use parity_scale_codec::DecodeAll;
+        use std::collections::{HashMap, HashSet};
+
+        let doc: serde_json::Value = serde_json::from_str(NONCE_BOUNDARY_FIXTURE).unwrap();
+        assert_eq!(doc["fixture_version"].as_u64(), Some(1));
+        let txs: HashMap<&str, Transaction> = doc["plain"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| {
+                let full =
+                    hex::decode(p["expected"]["full_transaction"].as_str().unwrap()).unwrap();
+                let tx = Transaction::decode_all(&mut &full[..]).unwrap();
+                assert!(tx.verify_signature());
+                (p["name"].as_str().unwrap(), tx)
+            })
+            .collect();
+        assert_eq!(txs.len(), 9, "expected 9 distinct plain vectors");
+        // <test_key> is the single sender of every plain vector.
+        let senders: HashSet<Address> = txs.values().map(|t| t.sender).collect();
+        assert_eq!(senders.len(), 1);
+        let test_key = *senders.iter().next().unwrap();
+        let resolve = |v: &serde_json::Value| match v.as_str().unwrap() {
+            "<test_key>" => test_key,
+            h => Address(hex::decode(h).unwrap().try_into().unwrap()),
+        };
+        let text = |v: &serde_json::Value| v.as_str().unwrap().to_string();
+
+        let cases = doc["state_transition"].as_array().unwrap();
+        assert_eq!(cases.len(), 7, "expected 7 state-transition cases");
+        let (mut blocks_seen, mut rejected) = (0, 0);
+        for case in cases {
+            let name = case["name"].as_str().unwrap();
+            let backend = make_backend();
+            backend.ensure_genesis().unwrap();
+            for pre in case["pre"].as_array().unwrap() {
+                let addr = resolve(&pre["address"]);
+                let mut acc = Account::new(addr);
+                acc.balance = text(&pre["balance"]).parse().unwrap();
+                acc.nonce = text(&pre["nonce"]).parse().unwrap();
+                backend.storage.put_account(&addr, &acc).unwrap();
+            }
+            for blk in case["blocks"].as_array().unwrap() {
+                blocks_seen += 1;
+                let body: Vec<Transaction> = blk["transactions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|n| txs[n.as_str().unwrap()].clone())
+                    .collect();
+                let height = backend.storage.get_latest_height().unwrap();
+                let block = build_valid_block(&backend, body);
+                match blk["outcome"].as_str().unwrap() {
+                    "applied" => {
+                        backend.apply_block(&block).unwrap_or_else(|e| panic!("{name}: {e}"));
+                        assert_eq!(backend.storage.get_latest_height().unwrap(), height + 1);
+                    }
+                    "rejected" => {
+                        rejected += 1;
+                        let err = backend.apply_block(&block).unwrap_err();
+                        let index = usize::try_from(blk["index"].as_u64().unwrap()).unwrap();
+                        match blk["error"].as_str().unwrap() {
+                            "InvalidNonce" => assert!(
+                                matches!(err, ApplyBlockError::InvalidNonce(i) if i == index),
+                                "{name}: expected InvalidNonce({index}), got {err}"
+                            ),
+                            other => panic!("{name}: unsupported error {other}"),
+                        }
+                        assert_eq!(backend.storage.get_latest_height().unwrap(), height);
+                    }
+                    other => panic!("{name}: unsupported outcome {other}"),
+                }
+            }
+            for post in case["post"].as_array().unwrap() {
+                let addr = resolve(&post["address"]);
+                let held = backend.storage.get_account(&addr).unwrap();
+                if post["absent"].as_bool() == Some(true) {
+                    assert!(held.is_none(), "{name}: {addr} must stay absent");
+                } else {
+                    let held = held.unwrap_or_else(|| panic!("{name}: {addr} missing"));
+                    assert_eq!(held.balance.to_string(), text(&post["balance"]), "{name}");
+                    assert_eq!(held.nonce.to_string(), text(&post["nonce"]), "{name}");
+                }
+            }
+        }
+        assert_eq!(
+            (blocks_seen, rejected),
+            (9, 3),
+            "expected 9 blocks, 3 rejected"
+        );
     }
 
     // ── RFC 0006 §2–§3: strict signature verification (S1-2) ──────────

@@ -58,11 +58,21 @@ fn scratch() -> PathBuf {
     dir
 }
 
+/// The wall-time limit for jobs built from the vectors in these tests.
+///
+/// The vectors say 5 s. That limit also bounds the start of Node, which a
+/// loaded runner can push past 5 s, and the job then ends in
+/// `JOB_LIMIT_WALL_TIME` whatever the test was checking. A test whose subject
+/// is the deadline sets its own limit (`s2_4`, `s2_6`). The limit changes
+/// nothing in a job's output.
+const TEST_MAX_WALL_MS: u64 = 30_000;
+
 fn job_spec() -> Vec<u8> {
     let text = std::fs::read_to_string(format!("{ROOT}/test-vectors/job/job-contract-v1.json"));
     let vectors: Value = serde_json::from_str(&text.unwrap()).unwrap();
     let specs = vectors["specs"].as_array().unwrap();
-    let spec = &specs.iter().find(|s| s["name"] == "fixture-sum").unwrap()["spec"];
+    let mut spec = specs.iter().find(|s| s["name"] == "fixture-sum").unwrap()["spec"].clone();
+    spec["limits"]["max_wall_ms"] = json!(TEST_MAX_WALL_MS);
     canonical::canonicalize(&spec.to_string(), 1 << 20).unwrap()
 }
 
@@ -180,7 +190,8 @@ struct Rule {
 struct Gateway {
     backend: String,
     rules: Mutex<Vec<Rule>>,
-    seen: Mutex<Vec<(String, String)>>,
+    /// Every request, with the moment it arrived.
+    seen: Mutex<Vec<(String, String, Instant)>>,
     http: reqwest::Client,
 }
 
@@ -198,7 +209,15 @@ impl Gateway {
 
     fn count(&self, method: &str, path_contains: &str) -> usize {
         let seen = self.seen.lock().unwrap();
-        seen.iter().filter(|(m, p)| m == method && p.contains(path_contains)).count()
+        seen.iter().filter(|(m, p, _)| m == method && p.contains(path_contains)).count()
+    }
+
+    /// When the first matching request arrived, if one did.
+    fn first_seen(&self, method: &str, path_contains: &str) -> Option<Instant> {
+        let seen = self.seen.lock().unwrap();
+        seen.iter()
+            .find(|(m, p, _)| m == method && p.contains(path_contains))
+            .map(|(_, _, at)| *at)
     }
 
     fn add(&self, method: &'static str, path_contains: &'static str, faults: &[Fault]) {
@@ -225,7 +244,11 @@ async fn forward(State(gateway): State<Arc<Gateway>>, request: Request) -> Respo
     let bytes = to_bytes(body, 1 << 20).await.unwrap();
     let method = parts.method.as_str().to_owned();
     let path = parts.uri.path().to_owned();
-    gateway.seen.lock().unwrap().push((method.clone(), path.clone()));
+    gateway
+        .seen
+        .lock()
+        .unwrap()
+        .push((method.clone(), path.clone(), Instant::now()));
     let mut target = format!("{}{path}", gateway.backend);
     match gateway.fault_for(&method, &path) {
         Some(Fault::Status(code)) => {
@@ -624,28 +647,53 @@ async fn tracking_recovers_from_transient_gateway_failures() {
     assert_eq!(s.tasks_on_chain().await, 1, "the job was submitted twice");
 }
 
+/// The wait multipliers a timing test tries in turn. The wait bounds the whole
+/// job, so on a slow runner the steps before the request under test can use it
+/// up. Such a run proves nothing either way: it is retried with a longer wait,
+/// and never counted as a pass.
+const WAIT_LADDER: [u32; 3] = [1, 2, 4];
+
 /// Retries stop at the wait's bound, and none submits the job again.
 async fn gives_up_at_its_bound(seed: u8, method: &'static str, path: &'static str) {
-    let s = start(seed).await;
-    let (_front, client) = s.secure().await;
-    s.gateway.add_forever(method, path, Fault::Status(503));
-    let wait = WaitPolicy {
-        timeout: Duration::from_secs(2),
-        poll: Duration::from_millis(100),
-    };
-    let started = Instant::now();
-    let outcome = s.job(&client, wait).await;
-    let timed_out = matches!(outcome, Err(JobClientError::TimedOut(_)));
-    assert!(timed_out || gateway_failure(&outcome, 503), "{outcome:?}");
-    let elapsed = started.elapsed();
-    assert!(
-        elapsed >= wait.timeout && elapsed < Duration::from_secs(10),
-        "{elapsed:?}"
-    );
-    let attempts = s.gateway.count(method, path);
-    assert!((3..=40).contains(&attempts), "{attempts} attempts");
-    assert_eq!(s.gateway.count("PUT", "/v1/inputs"), 1);
-    assert_eq!(s.tasks_on_chain().await, 1, "the job was submitted again");
+    for factor in WAIT_LADDER {
+        let s = start(seed).await;
+        let (_front, client) = s.secure().await;
+        s.gateway.add_forever(method, path, Fault::Status(503));
+        let wait = WaitPolicy {
+            timeout: Duration::from_secs(2) * factor,
+            poll: Duration::from_millis(100),
+        };
+        let started = Instant::now();
+        let outcome = s.job(&client, wait).await;
+        let timed_out = matches!(outcome, Err(JobClientError::TimedOut(_)));
+        assert!(timed_out || gateway_failure(&outcome, 503), "{outcome:?}");
+        // Conclusive only if the failing request was reached with at least half
+        // of the wait left for its retries.
+        let reached = s.gateway.first_seen(method, path).map(|at| at - started);
+        if reached.is_none_or(|r| r > wait.timeout / 2) {
+            eprintln!(
+                "inconclusive at {:?}: {method} {path} reached at {reached:?}",
+                wait.timeout
+            );
+            continue;
+        }
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= wait.timeout && elapsed < wait.timeout + Duration::from_secs(8),
+            "{elapsed:?}"
+        );
+        // At least three tries, paced by the poll interval rather than a tight loop.
+        let attempts = s.gateway.count(method, path);
+        let paced = 2 * wait.timeout.as_millis() / wait.poll.as_millis();
+        assert!(
+            (3..=paced).contains(&(attempts as u128)),
+            "{attempts} attempts"
+        );
+        assert_eq!(s.gateway.count("PUT", "/v1/inputs"), 1);
+        assert_eq!(s.tasks_on_chain().await, 1, "the job was submitted again");
+        return;
+    }
+    panic!("{method} {path} was never reached early enough in any wait of the ladder");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -660,33 +708,45 @@ async fn registration_gives_up_at_its_bound() {
 
 /// A request that never answers ends the job at the wait, and is not repeated.
 async fn a_hung_request_stops_at_the_wait(seed: u8, method: &'static str, path: &'static str) {
-    let s = start(seed).await;
-    let (_front, client) = s.secure().await;
-    s.gateway.add_forever(method, path, Fault::Hang);
-    // The wait covers the whole job. Registration and status come after chain
-    // inclusion, so it has to outlast that on a loaded runner, or the wait ends
-    // before the hung request is ever sent, and the count below reads 0.
-    let wait = WaitPolicy {
-        timeout: Duration::from_secs(6),
-        poll: Duration::from_millis(50),
-    };
-    let started = Instant::now();
-    let outcome = s.job(&client, wait).await;
-    assert!(
-        matches!(outcome, Err(JobClientError::TimedOut(_))),
-        "{outcome:?}"
-    );
-    assert!(
-        started.elapsed() < Duration::from_secs(8),
-        "{:?}",
-        started.elapsed()
-    );
-    assert_eq!(
-        s.gateway.count(method, path),
-        1,
-        "the request was sent again, or never reached"
-    );
-    assert!(s.tasks_on_chain().await <= 1, "the job was submitted again");
+    for factor in WAIT_LADDER {
+        let s = start(seed).await;
+        let (_front, client) = s.secure().await;
+        s.gateway.add_forever(method, path, Fault::Hang);
+        let wait = WaitPolicy {
+            timeout: Duration::from_secs(6) * factor,
+            poll: Duration::from_millis(50),
+        };
+        let started = Instant::now();
+        let outcome = s.job(&client, wait).await;
+        // Whether or not the hung request was reached, the job ends at the wait.
+        assert!(
+            matches!(outcome, Err(JobClientError::TimedOut(_))),
+            "{outcome:?}"
+        );
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < wait.timeout + Duration::from_secs(2),
+            "{elapsed:?}"
+        );
+        // Conclusive only if the hung request was reached before the wait ended.
+        // Registration and status come after chain inclusion, which a loaded
+        // runner can stretch over the whole wait.
+        if s.gateway.first_seen(method, path).is_none() {
+            eprintln!(
+                "inconclusive at {:?}: {method} {path} never reached",
+                wait.timeout
+            );
+            continue;
+        }
+        assert_eq!(
+            s.gateway.count(method, path),
+            1,
+            "the request was sent again"
+        );
+        assert!(s.tasks_on_chain().await <= 1, "the job was submitted again");
+        return;
+    }
+    panic!("{method} {path} was never reached in any wait of the ladder");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

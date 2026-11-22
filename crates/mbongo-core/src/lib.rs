@@ -40,7 +40,7 @@ pub mod crypto;
 mod primitives;
 pub mod receipt;
 
-pub use account::{Account, AccountError};
+pub use account::{Account, AccountError, MAX_TRANSACTION_NONCE};
 pub use compute_task::{
     ComputeTask, COMPUTE_TASK_VERSION, DOMAIN_TASK, MAX_COMPUTE_TASK_BYTES,
     MAX_EXECUTION_SPEC_BYTES, MAX_TASK_ID_PREIMAGE_BYTES,
