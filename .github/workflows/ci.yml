@@ -163,6 +163,16 @@ jobs:
         run: cargo test -p mbongo-compute --all-features --locked --lib service::conformance -- --nocapture
       - name: Mbongo MVP Launch Exposure
         run: node --test scripts/mvp-launch-exposure.test.mjs
+      # SEC-MDNS: every node the MVP launchers start runs with --no-mdns, and
+      # every follower names its peers with --bootnodes. It reads
+      # docker-compose.yml as Docker Compose resolves it, and the arguments
+      # the MVP-D acceptance run builds; the tests change one thing each and
+      # require the guard to fail. The Docker Devnet job checks the running
+      # containers, and the Compute Vertical each node it starts.
+      - name: SEC-MDNS launcher guard
+        run: |
+          node --test scripts/check-sec-mdns.test.mjs
+          node scripts/check-sec-mdns.mjs
       # POST-MVP-O1 privacy scanner (docs/product/POST_MVP_KAAYU_OBSERVATION.md
       # §10): leak detection in logs, chain blocks and publishable evidence,
       # seed detection everywhere, exact-file classification, fail-closed

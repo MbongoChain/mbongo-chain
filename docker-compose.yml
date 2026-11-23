@@ -13,6 +13,11 @@
 # explicit --bootnodes multiaddr built from a fixed IP, so no runtime peer
 # discovery is required for the devnet to form.
 #
+# Every node runs with --no-mdns (SEC-MDNS): mDNS is not needed here, and a
+# node that runs it accepts DNS packets from any host on its network
+# (RUSTSEC-2026-0491). scripts/check-sec-mdns.mjs checks the resolved
+# configuration, and scripts/devnet/docker-devnet.sh the running containers.
+#
 # convergence-check starts no node: it probes the three running nodes with
 # the convergence_probe binary. Height and tip-hash comparison exists only
 # inside that binary -- never in this file, the healthchecks, or the
@@ -59,6 +64,7 @@ services:
       - --rest-host=${MBONGO_REST_HOST}
       - --rest-port=${MBONGO_REST_PORT}
       - --p2p-port=${MBONGO_P2P_PORT}
+      - --no-mdns
       - --data-dir=/data/producer
     networks:
       devnet:
@@ -83,6 +89,7 @@ services:
       - --rest-host=${MBONGO_REST_HOST}
       - --rest-port=${MBONGO_REST_PORT}
       - --p2p-port=${MBONGO_P2P_PORT}
+      - --no-mdns
       - --bootnodes=/ip4/${MBONGO_PRODUCER_IP}/tcp/${MBONGO_P2P_PORT}
       - --data-dir=/data/follower-a
     networks:
@@ -101,6 +108,7 @@ services:
       - --rest-host=${MBONGO_REST_HOST}
       - --rest-port=${MBONGO_REST_PORT}
       - --p2p-port=${MBONGO_P2P_PORT}
+      - --no-mdns
       - --bootnodes=/ip4/${MBONGO_PRODUCER_IP}/tcp/${MBONGO_P2P_PORT}
       - --data-dir=/data/follower-b
     networks:

@@ -76,6 +76,53 @@ dump_diagnostics() {
     done
 }
 
+# ── SEC-MDNS ────────────────────────────────────────────────────────────
+# Every running node process has --no-mdns among its arguments, as Docker
+# started it, and printed that mDNS is disabled. Exactly the three node
+# services run the node binary: a node container this file does not expect
+# fails the check.
+verify_mdns_off() {
+    expected=3
+    checked=0
+    for node in $NODES; do
+        cid=$(compose ps -q "$node")
+        if [ -z "$cid" ]; then
+            echo "FAILED: SEC-MDNS: no running container for ${node}" >&2
+            return 1
+        fi
+        path=$(docker inspect --format '{{.Path}}' "$cid")
+        args=$(docker inspect --format '{{json .Args}}' "$cid")
+        if [ "$path" != "mbongo-node" ]; then
+            echo "FAILED: SEC-MDNS: ${node} runs ${path}, not mbongo-node" >&2
+            return 1
+        fi
+        case "$args" in
+            *'"--no-mdns"'*) ;;
+            *)
+                echo "FAILED: SEC-MDNS: ${node} runs without --no-mdns: ${args}" >&2
+                return 1
+                ;;
+        esac
+        if ! compose logs --no-log-prefix "$node" 2>/dev/null | grep -qx '  mDNS:     disabled (--no-mdns)'; then
+            echo "FAILED: SEC-MDNS: ${node} did not report mDNS disabled" >&2
+            return 1
+        fi
+        echo "  ${node}: ${path} ${args}: mDNS disabled"
+        checked=$((checked + 1))
+    done
+    running=0
+    for cid in $(compose ps -q); do
+        if [ "$(docker inspect --format '{{.Path}}' "$cid")" = "mbongo-node" ]; then
+            running=$((running + 1))
+        fi
+    done
+    if [ "$checked" -ne "$expected" ] || [ "$running" -ne "$expected" ]; then
+        echo "FAILED: SEC-MDNS: checked ${checked} and found ${running} running node containers, expected ${expected}" >&2
+        return 1
+    fi
+    echo "SEC-MDNS: ${checked} of ${expected} nodes run with mDNS disabled"
+}
+
 cmd_up() {
     echo "=== Building image and starting ${MBONGO_IMAGE:-devnet} nodes ==="
     # --wait blocks until every started service reports healthy, so no
@@ -84,6 +131,13 @@ cmd_up() {
     if ! compose up --detach --build --wait --wait-timeout "${DEVNET_WAIT_TIMEOUT:-420}" $NODES; then
         echo ""
         echo "FAILED: the three nodes did not all become healthy." >&2
+        dump_diagnostics
+        exit 1
+    fi
+
+    echo ""
+    echo "=== All 3 nodes healthy; checking that none runs mDNS ==="
+    if ! verify_mdns_off; then
         dump_diagnostics
         exit 1
     fi
