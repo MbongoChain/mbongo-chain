@@ -238,6 +238,28 @@ pub struct BlockHeader {
     pub timestamp: u64,
     /// Block height (genesis = 0).
     pub height: u64,
+    /// The authority that produced and signed the block (RFC 0006 §3).
+    /// Appended: it is the last field of the header encoding. Zero in the
+    /// genesis block.
+    pub producer: Address,
+}
+
+/// The domain of every block signature (RFC 0006 §3).
+pub const BLOCK_SIGNING_DOMAIN: &[u8] = b"mbongo-block:v1";
+
+impl BlockHeader {
+    /// The 32 bytes a producer signature covers on the network `chain_id`
+    /// (RFC 0006 §3): `BLAKE3("mbongo-block:v1" || chain_id || SCALE(header))`.
+    /// The whole header is covered, `producer` included, and a signature made
+    /// for one network does not verify on another.
+    #[must_use]
+    pub fn signing_hash(&self, chain_id: &crate::ChainId) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(BLOCK_SIGNING_DOMAIN);
+        hasher.update(&chain_id.0);
+        hasher.update(&self.encode());
+        *hasher.finalize().as_bytes()
+    }
 }
 
 /// Block body containing ordered transactions.
@@ -254,6 +276,28 @@ pub struct Block {
     pub header: BlockHeader,
     /// Body with transactions.
     pub body: BlockBody,
+    /// Ed25519 signature by `header.producer` over
+    /// [`BlockHeader::signing_hash`] (RFC 0006 §3). Appended: it is the last
+    /// field of the block encoding, so the block hash covers it. Zero in the
+    /// genesis block.
+    #[serde(with = "serde_arr64")]
+    pub producer_signature: [u8; 64],
+}
+
+impl Block {
+    /// Verifies the producer signature by `header.producer` over
+    /// [`BlockHeader::signing_hash`] for `chain_id`, under the strict
+    /// definition of RFC 0006 §3 ([`crate::crypto::verify_ed25519_strict`]).
+    /// It says nothing about whether the producer is the authority: that is
+    /// rule (t), checked first.
+    #[must_use]
+    pub fn verify_producer_signature(&self, chain_id: &crate::ChainId) -> bool {
+        crate::crypto::verify_ed25519_strict(
+            &self.header.producer.0,
+            &self.header.signing_hash(chain_id),
+            &self.producer_signature,
+        )
+    }
 }
 
 /// Compute a deterministic commitment over transactions.

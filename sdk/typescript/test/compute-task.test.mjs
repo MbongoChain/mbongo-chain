@@ -1,7 +1,7 @@
 // TypeScript side of the shared cross-language ComputeTask vectors.
 //
 // Every expected value is read from test-vectors/compute-task/compute-task-v1
-// .json and test-vectors/rpc/compute-task-rpc-v2.json. Nothing is copied into
+// .json and test-vectors/rpc/compute-task-rpc-v3.json. Nothing is copied into
 // this file: a copied constant would only prove the copy was faithful. Rust
 // reads the same files, so agreement here is real interoperability.
 
@@ -36,12 +36,13 @@ import { stringifyExact } from "../dist/json-exact.js";
 const load = (rel) => JSON.parse(readFileSync(new URL(rel, import.meta.url), "utf8"));
 
 const CT = load("../../../test-vectors/compute-task/compute-task-v2.json");
-const RPC = load("../../../test-vectors/rpc/compute-task-rpc-v2.json");
+const RPC = load("../../../test-vectors/rpc/compute-task-rpc-v3.json");
 // The network the v2 fixtures sign for (RFC 0006 section 2).
 const CHAIN = Uint8Array.from(Buffer.from(CT.chain.chain_id, "hex"));
 const RX = load("../../../test-vectors/receipt/receipt-v1.json");
 for (const [name, doc] of [["compute-task", CT], ["rpc", RPC], ["receipt", RX]]) {
-  assert.equal(doc.fixture_version, doc.supersedes ? 2 : 1, `${name} fixture: unsupported schema version`);
+  const version = name === "rpc" ? 3 : doc.supersedes ? 2 : 1;
+  assert.equal(doc.fixture_version, version, `${name} fixture: unsupported schema version`);
 }
 
 const unhex = (s) => {

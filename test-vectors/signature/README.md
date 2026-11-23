@@ -7,7 +7,8 @@ owns it.
 ## The definition
 
 RFC 0006 §3 defines strict verification, and §2 applies it to transaction
-signatures and receipt signatures (rule (h)). Block signatures join in S1-7.
+signatures and receipt signatures (rule (h)). Block signatures (§5 rule (u))
+follow the same definition; their vectors are in `../block/`.
 
 A signature is valid only if all four hold:
 

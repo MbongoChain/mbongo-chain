@@ -56,6 +56,7 @@ fn block(height: u64, transfers: u64) -> Block {
             transactions_root: Hash::zero(),
             timestamp: 1_700_000_000,
             height,
+            producer: mbongo_core::Address::zero(),
         },
         body: BlockBody {
             transactions: (0..transfers)
@@ -70,6 +71,7 @@ fn block(height: u64, transfers: u64) -> Block {
                 })
                 .collect(),
         },
+        producer_signature: [0u8; 64],
     }
 }
 

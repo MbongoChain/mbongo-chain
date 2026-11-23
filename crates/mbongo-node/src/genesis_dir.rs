@@ -1159,4 +1159,80 @@ mod tests {
             Opened::Reopened
         );
     }
+
+    #[test]
+    fn a_directory_in_the_block_format_before_s1_7_is_refused_and_left_as_it_is() {
+        // A directory written by an S1-6 build: the same marker and chain_id,
+        // and a genesis block encoded without producer and producer_signature.
+        // It is refused at start, not misread, migrated or overwritten.
+        use parity_scale_codec::Encode;
+        #[derive(Encode)]
+        struct HeaderBeforeS17 {
+            parent_hash: mbongo_core::Hash,
+            state_root: mbongo_core::Hash,
+            transactions_root: mbongo_core::Hash,
+            timestamp: u64,
+            height: u64,
+        }
+        #[derive(Encode)]
+        struct BlockBeforeS17 {
+            header: HeaderBeforeS17,
+            body: mbongo_core::BlockBody,
+        }
+        let dir = TempDir::new("before-s1-7");
+        start(dir.path(), &SelectedGenesis::dev()).unwrap();
+        let current = crate::backend::genesis_block(&Genesis::dev());
+        let legacy = BlockBeforeS17 {
+            header: HeaderBeforeS17 {
+                parent_hash: current.header.parent_hash,
+                state_root: current.header.state_root,
+                transactions_root: current.header.transactions_root,
+                timestamp: current.header.timestamp,
+                height: 0,
+            },
+            body: mbongo_core::BlockBody::default(),
+        }
+        .encode();
+        let legacy_hash = *blake3::hash(&legacy).as_bytes();
+        let current_hash = crate::backend::compute_block_hash(&current).0;
+        let index_key = 0u64.to_be_bytes();
+
+        // Rewrite the database as the S1-6 build left it.
+        let raw = |f: &dyn Fn(&rocksdb::DB)| {
+            let names = rocksdb::DB::list_cf(&rocksdb::Options::default(), dir.path()).unwrap();
+            let db =
+                rocksdb::DB::open_cf(&rocksdb::Options::default(), dir.path(), &names).unwrap();
+            f(&db);
+        };
+        raw(&|db| {
+            let blocks = db.cf_handle("blocks").unwrap();
+            let index = db.cf_handle("height_index").unwrap();
+            assert_eq!(db.get_cf(&index, index_key).unwrap().unwrap(), current_hash);
+            db.delete_cf(&blocks, current_hash).unwrap();
+            db.put_cf(&blocks, legacy_hash, &legacy).unwrap();
+            db.put_cf(&index, index_key, legacy_hash).unwrap();
+        });
+
+        let marker = fs::read(dir.path().join(MARKER_FILE)).unwrap();
+        for _ in 0..2 {
+            match start(dir.path(), &SelectedGenesis::dev()) {
+                Err(DirError::Storage(e)) => assert!(e.contains("Serialization"), "{e}"),
+                r => panic!("expected a refusal, got {r:?}"),
+            }
+        }
+
+        // Left as it was: the legacy block, its index, no block of this format.
+        raw(&|db| {
+            let blocks = db.cf_handle("blocks").unwrap();
+            let index = db.cf_handle("height_index").unwrap();
+            assert_eq!(db.get_cf(&index, index_key).unwrap().unwrap(), legacy_hash);
+            assert_eq!(db.get_cf(&blocks, legacy_hash).unwrap().unwrap(), legacy);
+            assert!(db.get_cf(&blocks, current_hash).unwrap().is_none());
+        });
+        assert_eq!(
+            fs::read(dir.path().join(MARKER_FILE)).unwrap(),
+            marker,
+            "the marker is unchanged"
+        );
+    }
 }

@@ -489,16 +489,16 @@ async fn produce_block_takes_no_parameters_and_returns_a_hash_string() {
 // serves is a pure function of the serde types, so the payload union rpc_v0.2
 // §4.1 pinned as `None | AnchorReceipt(Receipt)` now carries a third variant.
 // That widening is what rpc_v0.3 documents. These tests pin it at the wire
-// boundary using the neutral fixture `test-vectors/rpc/compute-task-rpc-v2.json`,
+// boundary using the neutral fixture `test-vectors/rpc/compute-task-rpc-v3.json`,
 // whose objects were assembled from the serde annotations and whose bytes come
 // from the protocol fixtures — never from this crate. They assert
 // representation only: admission and consensus are covered in the node.
 
-const RPC_FIXTURE: &str = include_str!("../../../test-vectors/rpc/compute-task-rpc-v2.json");
+const RPC_FIXTURE: &str = include_str!("../../../test-vectors/rpc/compute-task-rpc-v3.json");
 
 fn rpc_doc() -> Value {
     let v: Value = serde_json::from_str(RPC_FIXTURE).expect("rpc fixture parses");
-    assert_eq!(v["fixture_version"].as_u64(), Some(2));
+    assert_eq!(v["fixture_version"].as_u64(), Some(3));
     v
 }
 
@@ -677,6 +677,7 @@ async fn maximal_compute_task_request_is_far_below_the_body_limit() {
 
 #[tokio::test]
 async fn get_block_by_height_returns_compute_task_payloads_intact() {
+    use parity_scale_codec::Encode;
     let doc = rpc_doc();
     let pinned = doc["block"]["object"].clone();
     // The pinned object is a protocol block: it deserialises, and its
@@ -715,6 +716,38 @@ async fn get_block_by_height_returns_compute_task_payloads_intact() {
         let back: Transaction = serde_json::from_value(wire.clone()).expect("round trip");
         assert_eq!(back, block.body.transactions[i], "transaction {i}");
     }
+    // The block fields RFC 0006 §3 appends, in the 0x hex of rpc_v0.3 §1
+    // (RFC 0006 §7): producer last in the header, producer_signature last in
+    // the block, and the signature is the dev authority's over this header.
+    let header_keys: Vec<&str> =
+        v["result"]["header"].as_object().unwrap().keys().map(String::as_str).collect();
+    assert_eq!(header_keys.len(), 6);
+    assert_eq!(
+        v["result"]["header"]["producer"],
+        json!(format!(
+            "0x{}",
+            doc["block"]["expected"]["producer"].as_str().unwrap()
+        ))
+    );
+    assert_eq!(
+        v["result"]["producer_signature"],
+        json!(format!(
+            "0x{}",
+            doc["block"]["expected"]["producer_signature"].as_str().unwrap()
+        ))
+    );
+    let dev = mbongo_core::Genesis::dev();
+    assert_eq!(block.header.producer, dev.authority());
+    assert_eq!(
+        block.header.encode(),
+        fixture_hex(&doc["block"]["expected"]["header_encoding"])
+    );
+    assert_eq!(
+        block.header.signing_hash(&dev.chain_id),
+        fixture_32(&doc["block"]["expected"]["signing_hash"])
+    );
+    assert!(block.verify_producer_signature(&dev.chain_id));
+
     let hashes = doc["block"]["expected"]["transaction_hashes"].as_array().unwrap();
     for (i, tx) in block.body.transactions.iter().enumerate() {
         assert_eq!(transaction_hash(tx), fixture_32(&hashes[i]), "hash {i}");

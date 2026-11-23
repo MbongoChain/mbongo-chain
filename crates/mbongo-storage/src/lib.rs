@@ -54,6 +54,7 @@ mod tests {
                 transactions_root: Hash::zero(),
                 timestamp: 1_700_000_000,
                 height: 1,
+                producer: mbongo_core::Address::zero(),
             },
             body: BlockBody {
                 transactions: vec![Transaction {
@@ -66,6 +67,7 @@ mod tests {
                     signature: [0u8; 64],
                 }],
             },
+            producer_signature: [0u8; 64],
         };
         (hash, block)
     }
@@ -97,10 +99,12 @@ mod tests {
                 transactions_root: Hash::zero(),
                 timestamp: 1_700_000_001,
                 height: 2,
+                producer: mbongo_core::Address::zero(),
             },
             body: BlockBody {
                 transactions: vec![],
             },
+            producer_signature: [0u8; 64],
         };
         store.put_block(&hash2, &block2).unwrap();
         store.put_block_height_index(2, hash2).unwrap();

@@ -180,6 +180,17 @@ mod replay {
         Ok(())
     }
 
+    /// Signs `block` as the key of `seed` for the dev chain: sets the producer,
+    /// then the signature over the whole header (RFC 0006 §3).
+    fn sign_as(block: &mut Block, seed: &[u8; 32]) {
+        use ed25519_dalek::Signer;
+        let sk = ed25519_dalek::SigningKey::from_bytes(seed);
+        block.header.producer = mbongo_core::Address(sk.verifying_key().to_bytes());
+        block.producer_signature = sk
+            .sign(&block.header.signing_hash(&mbongo_core::Genesis::dev().chain_id))
+            .to_bytes();
+    }
+
     /// Runs every replay check against the producer's reference state.
     pub fn run(
         blocks: &[Block],
@@ -217,7 +228,23 @@ mod replay {
         if let Some(h) = replayed.state_roots.iter().position(|r| *r == Hash::zero()) {
             return Err(format!("the state_root at height {h} is zero"));
         }
+        // Every exported block after genesis is the authority's, with a
+        // strictly valid signature for the dev chain (RFC 0006 §3, rules t, u).
+        let dev = mbongo_core::Genesis::dev();
+        let signed = blocks[1..]
+            .iter()
+            .filter(|b| {
+                b.header.producer == dev.authority() && b.verify_producer_signature(&dev.chain_id)
+            })
+            .count();
+        if signed != blocks.len() - 1 {
+            return Err(format!(
+                "expected {} blocks signed by the authority, found {signed}",
+                blocks.len() - 1
+            ));
+        }
         println!("  Replay 1 (in memory): every block applied; state equals the producer's");
+        println!("  Signatures: all {signed} exported blocks signed by the dev authority for its chain_id");
         println!(
             "  state_root: computed and equal to the producer's at all {} heights",
             replayed.state_roots.len()
@@ -283,9 +310,19 @@ mod replay {
             return Err("a refused block changed state".to_string());
         }
         // The same block with only its state_root altered is refused by rule
-        // (w), and leaves no trace either.
+        // (u), its signature no longer covering its header; signed again by
+        // the authority, it is refused by rule (w). Neither leaves a trace.
         let mut wrong_root = blocks[i].clone();
         wrong_root.header.state_root.0[0] ^= 1;
+        match partial.apply_block(&wrong_root) {
+            Err(ApplyBlockError::InvalidBlockSignature) => {}
+            other => {
+                return Err(format!(
+                    "a block with an altered state_root at height {i}, not signed again: expected InvalidBlockSignature, got {other:?}"
+                ))
+            }
+        }
+        sign_as(&mut wrong_root, &mbongo_core::genesis::dev_authority_seed());
         match partial.apply_block(&wrong_root) {
             Err(ApplyBlockError::StateRootMismatch { expected, .. })
                 if expected == blocks[i].header.state_root => {}
@@ -298,12 +335,30 @@ mod replay {
         if state(&partial, watched)? != before {
             return Err("a block refused by rule (w) changed state".to_string());
         }
+        // A forged block: another key names itself producer and signs it
+        // correctly. Refused by rule (t).
+        let mut forged = blocks[i].clone();
+        sign_as(&mut forged, &[0x5Du8; 32]);
+        match partial.apply_block(&forged) {
+            Err(ApplyBlockError::UnauthorizedProducer { .. }) => {}
+            other => {
+                return Err(format!(
+                    "a block signed by another key at height {i}: expected UnauthorizedProducer, got {other:?}"
+                ))
+            }
+        }
+        if state(&partial, watched)? != before {
+            return Err("a block refused by rule (t) changed state".to_string());
+        }
         apply_all(&partial, &blocks[i..])?;
         if state(&partial, watched)? != replayed {
             return Err("after the refusals, the original blocks gave another state".to_string());
         }
         println!("  Altered block at height {i}: refused twice (content, then signature); no state written");
-        println!("  Altered state_root at height {i}: refused by rule (w); no state written");
+        println!("  Altered state_root at height {i}: refused by rule (u), then signed again by rule (w); no state written");
+        println!(
+            "  Block signed by another key at height {i}: refused by rule (t); no state written"
+        );
 
         // 5. Divergence is detected: replay onto a different starting state.
         // The dev account holds one unit less. Every block before the first
@@ -912,10 +967,12 @@ mod tests {
                 transactions_root: Hash::zero(),
                 timestamp,
                 height,
+                producer: mbongo_core::Address::zero(),
             },
             body: BlockBody {
                 transactions: vec![],
             },
+            producer_signature: [0u8; 64],
         }
     }
 

@@ -125,6 +125,13 @@ refuses a directory created with another genesis, or one with no
 `MBONGO_GENESIS` marker, such as a directory from an earlier version. Start
 from an empty directory.
 
+Every block after genesis is signed by the genesis authority (RFC 0006 §3),
+and a node refuses a block from any other producer. With `--dev`, a
+`--producer` signs with the public dev authority key. With `--genesis`, it
+needs `--producer-key-file <file>`, holding the authority's 32-byte Ed25519
+seed as 64 hex characters, and refuses to start if that key is not the
+authority. `--dev` with `--producer-key-file` is refused.
+
 ### Run Validation Harnesses
 
 ```powershell

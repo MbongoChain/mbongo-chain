@@ -262,6 +262,35 @@ fn starts_and_restarts_on_its_own_genesis() {
         }
     }
 
+    // A producer of the private network needs its authority key, from a
+    // file (RFC 0006 §3, S1-7). Its genesis names the dev authority, so the
+    // dev seed in a file is that key here.
+    let key = dir.join("authority.key");
+    std::fs::write(
+        &key,
+        hex::encode(mbongo_core::genesis::dev_authority_seed()),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let banner = started(
+        &[
+            "--genesis",
+            net_arg,
+            "--producer",
+            "--producer-key-file",
+            key.to_str().unwrap(),
+        ],
+        &net_data,
+    );
+    assert!(
+        line(&banner, "Data dir:").ends_with("(existing chain)"),
+        "{banner}"
+    );
+
     // Each directory refuses the other genesis, and is left as it was.
     let out = refused(&["--genesis", net_arg], &dev_data);
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -406,5 +435,108 @@ fn a_directory_without_a_marker_is_refused_unchanged() {
     assert!(stderr.contains("no MBONGO_GENESIS marker"), "{stderr}");
     assert_eq!(snapshot(&data), before);
     assert!(!data.join(MARKER).exists());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_producer_key_is_checked_against_the_genesis_before_anything_starts() {
+    // RFC 0006 §3 (S1-7): outside --dev, --producer needs the authority key
+    // from --producer-key-file; --dev takes the public dev key and refuses a
+    // file. Every refusal comes before the data directory is created.
+    let dir = scratch("producer-key");
+    let data = dir.join("data");
+    let net = dir.join("private.json");
+    std::fs::write(&net, PRIVATE_GENESIS).unwrap();
+    let net = net.to_str().unwrap().to_string();
+    // Every key file is written with mode 600, as the node requires on Unix,
+    // so that each case reaches the check it is about. The mode check itself
+    // is the last case, Unix only.
+    let write_key = |name: &str, contents: &str| {
+        let path = dir.join(name);
+        std::fs::write(&path, contents).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        path.to_str().unwrap().to_string()
+    };
+    let authority = write_key(
+        "authority.key",
+        &hex::encode(mbongo_core::genesis::dev_authority_seed()),
+    );
+    let intruder = write_key("intruder.key", &hex::encode([0x11u8; 32]));
+    let malformed = write_key("malformed.key", "not a key");
+
+    let cases: [(&[&str], &str); 6] = [
+        (
+            &["--genesis", &net, "--producer"],
+            "--producer needs --producer-key-file",
+        ),
+        (
+            &[
+                "--genesis",
+                &net,
+                "--producer",
+                "--producer-key-file",
+                &intruder,
+            ],
+            "is not the authority",
+        ),
+        (
+            &[
+                "--genesis",
+                &net,
+                "--producer",
+                "--producer-key-file",
+                &malformed,
+            ],
+            "expected 64 hex characters",
+        ),
+        (
+            &["--genesis", &net, "--producer-key-file", &authority],
+            "only used with --producer",
+        ),
+        (
+            &["--dev", "--producer", "--producer-key-file", &authority],
+            "cannot be used with --dev",
+        ),
+        (
+            &["--dev", "--producer-key-file", &authority],
+            "cannot be used with --dev",
+        ),
+    ];
+    for (args, expected) in cases {
+        let out = refused(args, &data);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(expected), "{args:?}: {stderr}");
+        assert!(!data.exists(), "{args:?} created the data directory");
+    }
+
+    // The mode check (Unix): the authority's own, well-formed key in a file
+    // others can read is refused, before its contents are read.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let readable = write_key(
+            "readable.key",
+            &hex::encode(mbongo_core::genesis::dev_authority_seed()),
+        );
+        std::fs::set_permissions(&readable, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let args: [&str; 5] = [
+            "--genesis",
+            &net,
+            "--producer",
+            "--producer-key-file",
+            &readable,
+        ];
+        let out = refused(&args, &data);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("readable by others, expected mode 600"),
+            "{args:?}: {stderr}"
+        );
+        assert!(!data.exists(), "{args:?} created the data directory");
+    }
     std::fs::remove_dir_all(&dir).unwrap();
 }
