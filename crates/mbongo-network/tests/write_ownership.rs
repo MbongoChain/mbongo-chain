@@ -12,7 +12,7 @@ use libp2p::request_response::Codec;
 use mbongo_core::{
     Address, Block, BlockBody, BlockHeader, Hash, Transaction, TransactionPayload, TransactionType,
 };
-use mbongo_network::{Announcement, SyncCodec, SyncNotification, SyncResponse, SYNC_PROTOCOL};
+use mbongo_network::{sync_protocol, Announcement, SyncCodec, SyncNotification, SyncResponse};
 use parity_scale_codec::Encode;
 
 struct Counting;
@@ -151,7 +151,9 @@ fn broadcasts_share_one_encoding_and_answers_are_freed_before_their_write() {
     let mut writer = StallsAfterHeader { taken: 0 };
     let waker = futures::task::noop_waker();
     let mut cx = Context::from_waker(&waker);
-    let mut write = codec.write_response(&SYNC_PROTOCOL, &mut writer, answer);
+    // The codec writes the same bytes whatever identifier it is given.
+    let protocol = sync_protocol(&mbongo_core::ChainId([0x5a; 32]));
+    let mut write = codec.write_response(&protocol, &mut writer, answer);
     assert!(
         write.as_mut().poll(&mut cx).is_pending(),
         "the write is in flight"

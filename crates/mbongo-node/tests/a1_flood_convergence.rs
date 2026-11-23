@@ -234,7 +234,9 @@ async fn a_follower_converges_while_a_peer_floods_it() {
     let before = converged(&client, "before the flood").await;
 
     // The flooding peer: answers nothing, never reads what it is sent.
-    let mut flooder = P2PNode::with_mdns(false).unwrap();
+    // The nodes run --dev: the flooder speaks that network's identifiers, so
+    // its traffic negotiates and reaches the follower (asserted below).
+    let mut flooder = P2PNode::with_mdns(&mbongo_core::Genesis::dev().chain_id, false).unwrap();
     let _unread_requests = flooder.take_sync_rx().unwrap();
     let _unread_blocks = flooder.take_block_rx().unwrap();
     let _unread_events = flooder.take_sync_event_rx().unwrap();

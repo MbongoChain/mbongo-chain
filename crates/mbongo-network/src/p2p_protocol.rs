@@ -6,8 +6,8 @@
 
 use async_trait::async_trait;
 use futures::prelude::*;
-use libp2p::request_response;
-use mbongo_core::{Block, Hash};
+use libp2p::{request_response, StreamProtocol};
+use mbongo_core::{Block, ChainId, Hash};
 use parity_scale_codec::{Decode, Encode};
 use std::sync::Arc;
 
@@ -16,18 +16,42 @@ use crate::frame_budget::{Category, FrameBudget, Reservation, SMALL_FRAME};
 /// Maximum number of blocks that can be requested in a single `GetBlocks` range.
 pub const MAX_RANGE: u64 = 256;
 
-/// Protocol name used for libp2p request/response negotiation.
-///
-/// v0.3 (RFC 0002 Phase 4): bumped from `/mbongo-sync/1` so v0.2 and
-/// v0.3 nodes fail cleanly at negotiation instead of exchanging
-/// undecodable payloads. There is deliberately no v0.2 fallback.
-pub const SYNC_PROTOCOL: &str = "/mbongo-sync/2";
+/// How many characters of `chain_id` a negotiation identifier carries.
+pub const CHAIN_PREFIX_LEN: usize = 16;
 
-/// Protocol name for block announcement push notifications.
+/// The first [`CHAIN_PREFIX_LEN`] lowercase hex characters of `chain_id`:
+/// the `<c>` of both negotiation identifiers (RFC 0006 §7).
+#[must_use]
+pub fn chain_prefix(chain_id: &ChainId) -> String {
+    // `ChainId` displays as 64 lowercase hex characters, with no prefix.
+    let mut hex = chain_id.to_string();
+    hex.truncate(CHAIN_PREFIX_LEN);
+    hex
+}
+
+/// The sync negotiation identifier of the network `chain_id`:
+/// `/mbongo-sync/3/<c>` (RFC 0006 §7).
 ///
-/// v0.3 (RFC 0002 Phase 4): bumped from `/mbongo/block_notify/0.1.0`;
-/// same rationale as [`SYNC_PROTOCOL`], no v0.2 fallback.
-pub const BLOCK_NOTIFY_PROTOCOL: &str = "/mbongo/block_notify/0.2.0";
+/// A node on another network, or one that speaks an earlier identifier
+/// (`/mbongo-sync/2` at v0.4), shares no protocol with this one: the request
+/// fails at negotiation, before any payload byte. There is no fallback.
+#[must_use]
+pub fn sync_protocol(chain_id: &ChainId) -> StreamProtocol {
+    chain_bound("/mbongo-sync/3/", chain_id)
+}
+
+/// The block announcement negotiation identifier of the network `chain_id`:
+/// `/mbongo/block_notify/0.3.0/<c>` (RFC 0006 §7). Same rule as
+/// [`sync_protocol`]; `/mbongo/block_notify/0.2.0` at v0.4.
+#[must_use]
+pub fn block_notify_protocol(chain_id: &ChainId) -> StreamProtocol {
+    chain_bound("/mbongo/block_notify/0.3.0/", chain_id)
+}
+
+fn chain_bound(base: &'static str, chain_id: &ChainId) -> StreamProtocol {
+    StreamProtocol::try_from_owned(format!("{base}{}", chain_prefix(chain_id)))
+        .expect("an identifier that starts with '/' is a valid protocol name")
+}
 
 // ── Request ────────────────────────────────────────────────────────────
 
@@ -152,7 +176,7 @@ const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
 
 #[async_trait]
 impl request_response::Codec for SyncCodec {
-    type Protocol = &'static str;
+    type Protocol = StreamProtocol;
     type Request = SyncRequest;
     type Response = SyncResponse;
 
@@ -231,7 +255,7 @@ impl BlockNotifyCodec {
 
 #[async_trait]
 impl request_response::Codec for BlockNotifyCodec {
-    type Protocol = &'static str;
+    type Protocol = StreamProtocol;
     type Request = Announcement;
     type Response = BlockNotifyAck;
 
@@ -545,18 +569,69 @@ mod tests {
         assert_eq!(MAX_RANGE, 256);
     }
 
+    /// The dev network's chain id (`Genesis::dev()`), as the test vectors
+    /// record it.
+    const DEV_CHAIN_ID: &str = "2fd700acc09b3d1752ca6fe21e7d6f4844917c5a9fcd41a34fe1d13d7deed1a4";
+
+    /// Any chain id: the codecs ignore the identifier they are given.
+    fn any_chain() -> ChainId {
+        ChainId([0x5a; 32])
+    }
+
+    #[test]
+    fn chain_prefix_is_the_first_16_lowercase_hex_characters() {
+        // Locked surface (RFC 0006 §7): `<c>` of both identifiers.
+        let counting = ChainId(std::array::from_fn(|i| u8::try_from(i).unwrap()));
+        assert_eq!(chain_prefix(&counting), "0001020304050607");
+        // Letters come out lowercase.
+        assert_eq!(chain_prefix(&ChainId([0xab; 32])), "abababababababab");
+        let dev = mbongo_core::Genesis::dev().chain_id;
+        assert_eq!(dev.to_string(), DEV_CHAIN_ID);
+        assert_eq!(chain_prefix(&dev), "2fd700acc09b3d17");
+        assert_eq!(chain_prefix(&dev).len(), CHAIN_PREFIX_LEN);
+        assert_eq!(CHAIN_PREFIX_LEN, 16);
+    }
+
     #[test]
     fn sync_protocol_string_pinned() {
-        // Locked surface (PROTOCOL_LOCK_v0.3): changing this string is a
-        // protocol version bump and requires an RFC.
-        assert_eq!(SYNC_PROTOCOL, "/mbongo-sync/2");
+        // Locked surface (RFC 0006 §7): changing this string is a protocol
+        // version bump and requires an RFC.
+        let dev = mbongo_core::Genesis::dev().chain_id;
+        assert_eq!(
+            sync_protocol(&dev).as_ref(),
+            "/mbongo-sync/3/2fd700acc09b3d17"
+        );
+        assert_eq!(
+            sync_protocol(&ChainId([0xab; 32])).as_ref(),
+            "/mbongo-sync/3/abababababababab"
+        );
     }
 
     #[test]
     fn block_notify_protocol_string_pinned() {
-        // Locked surface (PROTOCOL_LOCK_v0.3): changing this string is a
-        // protocol version bump and requires an RFC.
-        assert_eq!(BLOCK_NOTIFY_PROTOCOL, "/mbongo/block_notify/0.2.0");
+        // Locked surface (RFC 0006 §7): changing this string is a protocol
+        // version bump and requires an RFC.
+        let dev = mbongo_core::Genesis::dev().chain_id;
+        assert_eq!(
+            block_notify_protocol(&dev).as_ref(),
+            "/mbongo/block_notify/0.3.0/2fd700acc09b3d17"
+        );
+        assert_eq!(
+            block_notify_protocol(&ChainId([0xab; 32])).as_ref(),
+            "/mbongo/block_notify/0.3.0/abababababababab"
+        );
+    }
+
+    #[test]
+    fn two_networks_have_different_identifiers() {
+        let (a, b) = (ChainId([1; 32]), ChainId([2; 32]));
+        assert_ne!(sync_protocol(&a), sync_protocol(&b));
+        assert_ne!(block_notify_protocol(&a), block_notify_protocol(&b));
+        // Only the first 8 bytes are carried: ids that differ after them
+        // share identifiers, as RFC 0006 §7 defines `<c>`.
+        let mut c = [1; 32];
+        c[8] = 9;
+        assert_eq!(sync_protocol(&a), sync_protocol(&ChainId(c)));
     }
 
     #[test]
@@ -971,7 +1046,7 @@ mod tests {
         futures::executor::block_on(write_length_delimited(&mut wire, &announcement)).unwrap();
         let mut clone = notify.clone();
         futures::executor::block_on(clone.read_request(
-            &BLOCK_NOTIFY_PROTOCOL,
+            &block_notify_protocol(&any_chain()),
             &mut Trickle {
                 data: &wire,
                 step: usize::MAX,
@@ -990,7 +1065,7 @@ mod tests {
         futures::executor::block_on(write_length_delimited(&mut wire, &answer)).unwrap();
         let mut clone = sync.clone();
         futures::executor::block_on(clone.read_response(
-            &SYNC_PROTOCOL,
+            &sync_protocol(&any_chain()),
             &mut Trickle {
                 data: &wire,
                 step: usize::MAX,
@@ -1009,7 +1084,7 @@ mod tests {
         use libp2p::request_response::Codec;
         let mut wire = Vec::new();
         futures::executor::block_on(BlockNotifyCodec::default().write_request(
-            &BLOCK_NOTIFY_PROTOCOL,
+            &block_notify_protocol(&any_chain()),
             &mut wire,
             announcement,
         ))
@@ -1050,7 +1125,7 @@ mod tests {
         );
         assert_eq!(shared, decoded);
         let read = futures::executor::block_on(BlockNotifyCodec::default().read_request(
-            &BLOCK_NOTIFY_PROTOCOL,
+            &block_notify_protocol(&any_chain()),
             &mut Trickle {
                 data: &shared,
                 step: 1000,
@@ -1136,7 +1211,8 @@ mod tests {
         let weak = Arc::downgrade(bytes);
         let mut codec = BlockNotifyCodec::default();
         let mut writer = StallsAfterHeader { taken: 0 };
-        let mut write = codec.write_request(&BLOCK_NOTIFY_PROTOCOL, &mut writer, announcement);
+        let protocol = block_notify_protocol(&any_chain());
+        let mut write = codec.write_request(&protocol, &mut writer, announcement);
         let waker = futures::task::noop_waker();
         let mut cx = std::task::Context::from_waker(&waker);
         assert!(write.as_mut().poll(&mut cx).is_pending());

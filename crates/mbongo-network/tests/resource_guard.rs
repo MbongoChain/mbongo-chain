@@ -25,13 +25,14 @@ use libp2p::core::ConnectedPoint;
 use libp2p::request_response::{self, ProtocolSupport};
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
-use libp2p::{identity, noise, tcp, yamux, Multiaddr, PeerId, Swarm};
+use libp2p::{identity, noise, tcp, yamux, Multiaddr, PeerId, StreamProtocol, Swarm};
 use mbongo_core::{
-    Address, Block, BlockBody, BlockHeader, Hash, Transaction, TransactionPayload, TransactionType,
+    Address, Block, BlockBody, BlockHeader, ChainId, Hash, Transaction, TransactionPayload,
+    TransactionType,
 };
 use mbongo_network::{
-    GuardMode, GuardSnapshot, P2PCounters, P2PNode, P2pResourceGuard, SyncCodec, SyncCommand,
-    SyncEvent, SyncRequest, SyncResponse, SYNC_PROTOCOL,
+    sync_protocol, GuardMode, GuardSnapshot, P2PCounters, P2PNode, P2pResourceGuard, SyncCodec,
+    SyncCommand, SyncEvent, SyncRequest, SyncResponse,
 };
 use parity_scale_codec::Encode;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -54,6 +55,12 @@ const NEGOTIATION_P2P: u16 = 27140;
 
 /// A protocol the node does not speak: negotiation on it fails.
 const UNKNOWN_PROTOCOL: &str = "/mbongo-phase1/unknown/1";
+
+/// The network the node under test and its raw peers run. They share it, so
+/// the peers' sync streams negotiate and reach the guard and the node's
+/// limits; every test that relies on it asserts answers or admissions, so a
+/// mismatch would fail rather than pass (RFC 0006 §7).
+const CHAIN: ChainId = ChainId([0x5a; 32]);
 
 /// The height the node under test answers.
 const NODE_HEIGHT: u64 = 42;
@@ -137,7 +144,7 @@ struct Victim {
 }
 
 fn victim(port: u16) -> Victim {
-    let mut node = P2PNode::with_mdns(false).unwrap();
+    let mut node = P2PNode::with_mdns(&CHAIN, false).unwrap();
     node.listen_on_host(Ipv4Addr::LOCALHOST, port).unwrap();
     let peer = node.peer_id;
     let guard = node.resource_guard();
@@ -296,7 +303,7 @@ enum Ev {
     DialError(String),
 }
 
-fn raw_swarm(nodelay: Option<bool>) -> Swarm<Raw> {
+fn raw_swarm(chain: &ChainId, nodelay: Option<bool>) -> Swarm<Raw> {
     let config = || {
         request_response::Config::default()
             .with_request_timeout(Duration::from_secs(20))
@@ -312,11 +319,14 @@ fn raw_swarm(nodelay: Option<bool>) -> Swarm<Raw> {
         .expect("tcp")
         .with_behaviour(|_| Raw {
             sync: request_response::Behaviour::new(
-                iter::once((SYNC_PROTOCOL, ProtocolSupport::Full)),
+                iter::once((sync_protocol(chain), ProtocolSupport::Full)),
                 config(),
             ),
             unknown: request_response::Behaviour::new(
-                iter::once((UNKNOWN_PROTOCOL, ProtocolSupport::Outbound)),
+                iter::once((
+                    StreamProtocol::new(UNKNOWN_PROTOCOL),
+                    ProtocolSupport::Outbound,
+                )),
                 config(),
             ),
         })
@@ -418,17 +428,23 @@ struct RawPeer {
 
 impl RawPeer {
     fn spawn() -> Self {
-        Self::spawn_full(None, None, PEER_HEIGHT, payload())
+        Self::spawn_full(&CHAIN, None, None, PEER_HEIGHT, payload())
     }
 
     fn spawn_with(nodelay: Option<bool>, listen: Option<&str>, bulk: Batch) -> Self {
-        Self::spawn_full(nodelay, listen, PEER_HEIGHT, bulk)
+        Self::spawn_full(&CHAIN, nodelay, listen, PEER_HEIGHT, bulk)
     }
 
     /// `nodelay`: `None` leaves libp2p's default, as the node does. `height`
     /// and `bulk` are what this peer answers to the node's own requests.
-    fn spawn_full(nodelay: Option<bool>, listen: Option<&str>, height: u64, bulk: Batch) -> Self {
-        let mut swarm = raw_swarm(nodelay);
+    fn spawn_full(
+        chain: &ChainId,
+        nodelay: Option<bool>,
+        listen: Option<&str>,
+        height: u64,
+        bulk: Batch,
+    ) -> Self {
+        let mut swarm = raw_swarm(chain, nodelay);
         if let Some(addr) = listen {
             swarm.listen_on(addr.parse().unwrap()).unwrap();
         }
@@ -705,7 +721,7 @@ async fn t2_a_session_with_a_with_tcp_peer_is_unchanged() {
 async fn t2_two_guarded_nodes_talk_both_ways() {
     let mut server = victim(T2_NODES_P2P);
 
-    let mut client = P2PNode::with_mdns(false).unwrap();
+    let mut client = P2PNode::with_mdns(&CHAIN, false).unwrap();
     let client_id = client.peer_id;
     let client_guard = client.resource_guard();
     let mut client_events = client.take_sync_event_rx().unwrap();
@@ -1130,13 +1146,25 @@ fn env_nodelay() -> Option<bool> {
     }
 }
 
+/// The external node's chain id, `PHASE1_CHAIN_ID`, as the node prints it (64
+/// hex characters): the probes speak its network's identifiers. No default.
+fn external_chain() -> ChainId {
+    let text = std::env::var("PHASE1_CHAIN_ID").expect("PHASE1_CHAIN_ID");
+    assert_eq!(text.len(), 64, "PHASE1_CHAIN_ID: 64 hex characters");
+    let mut id = [0u8; 32];
+    for (i, byte) in id.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&text[2 * i..2 * i + 2], 16).expect("PHASE1_CHAIN_ID: hex");
+    }
+    ChainId(id)
+}
+
 /// T7. Height requests to an external node, from several identities, each one
 /// request every `PHASE1_INTERVAL_MS` (default 600, under the node's per-peer
 /// rate), for `PHASE1_SECONDS`. Prints the latency distribution.
 ///
 /// `PHASE1_TARGET` is the node's address, e.g. `/ip4/172.31.250.20/tcp/30333`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "measurement against an external node; set PHASE1_TARGET"]
+#[ignore = "measurement against an external node; set PHASE1_TARGET and PHASE1_CHAIN_ID"]
 async fn probe_latency() {
     let target: Multiaddr = std::env::var("PHASE1_TARGET").expect("PHASE1_TARGET").parse().unwrap();
     let seconds = env_u64("PHASE1_SECONDS", 30);
@@ -1150,7 +1178,7 @@ async fn probe_latency() {
         let target = target.clone();
         tasks.push(tokio::spawn(async move {
             // Height 0: the node never asks this peer for blocks.
-            let mut peer = RawPeer::spawn_full(nodelay, None, 0, Vec::new());
+            let mut peer = RawPeer::spawn_full(&external_chain(), nodelay, None, 0, Vec::new());
             let node = peer.connect(&target).await;
             let (mut micros, mut failed) = (Vec::new(), 0u64);
             let end = Instant::now() + Duration::from_secs(seconds);
@@ -1186,11 +1214,11 @@ async fn probe_latency() {
 /// T2, against an external node: the same session on any build, printed as a
 /// transcript so that two builds can be compared line by line.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "session against an external node; set PHASE1_TARGET"]
+#[ignore = "session against an external node; set PHASE1_TARGET and PHASE1_CHAIN_ID"]
 async fn probe_session() {
     let target: Multiaddr = std::env::var("PHASE1_TARGET").expect("PHASE1_TARGET").parse().unwrap();
     // Answers height 0 to the node, so that it never asks this peer for blocks.
-    let mut peer = RawPeer::spawn_full(None, None, 0, Vec::new());
+    let mut peer = RawPeer::spawn_full(&external_chain(), None, None, 0, Vec::new());
     let pause = Duration::from_millis(600);
     let say = |line: String| println!("PHASE1-SESSION {line}");
 
@@ -1480,7 +1508,7 @@ async fn nodelay_matrix() {
         else {
             unreachable!()
         };
-        let mut client = P2PNode::with_mdns(false).unwrap();
+        let mut client = P2PNode::with_mdns(&CHAIN, false).unwrap();
         let mut events = client.take_sync_event_rx().unwrap();
         let commands = client.sync_commander();
         client.dial(&addr.to_string()).unwrap();
@@ -1522,7 +1550,7 @@ async fn nodelay_matrix() {
 
     // Real node to real node: both as built.
     {
-        let mut client = P2PNode::with_mdns(false).unwrap();
+        let mut client = P2PNode::with_mdns(&CHAIN, false).unwrap();
         let mut events = client.take_sync_event_rx().unwrap();
         let commands = client.sync_commander();
         client.dial(&node.addr.to_string()).unwrap();

@@ -16,8 +16,14 @@ use futures::StreamExt;
 use libp2p::request_response::{self, ProtocolSupport};
 use libp2p::swarm::SwarmEvent;
 use libp2p::{noise, tcp, yamux, Multiaddr};
-use mbongo_network::{P2PNode, SyncCodec, SyncRequest, SyncResponse, SYNC_PROTOCOL};
+use mbongo_core::ChainId;
+use mbongo_network::{sync_protocol, P2PNode, SyncCodec, SyncRequest, SyncResponse};
 use tokio::time::timeout;
+
+/// The network every node and peer of this file runs. They share it, so
+/// their streams negotiate and the tests exercise the resource guard, not the
+/// chain binding (RFC 0006 §7).
+const CHAIN: ChainId = ChainId([0x5a; 32]);
 
 const WAIT: Duration = Duration::from_secs(30);
 
@@ -65,7 +71,7 @@ async fn each_inbound_stream_leaves_an_opening_and_a_closing_record() {
     log::set_logger(&Capture).unwrap();
     log::set_max_level(log::LevelFilter::Trace);
 
-    let mut node = P2PNode::with_mdns(false).unwrap();
+    let mut node = P2PNode::with_mdns(&CHAIN, false).unwrap();
     node.listen_on_host(Ipv4Addr::LOCALHOST, TRACE_P2P).unwrap();
     let node_id = node.peer_id;
     let guard = node.resource_guard();
@@ -90,7 +96,7 @@ async fn each_inbound_stream_leaves_an_opening_and_a_closing_record() {
         .unwrap()
         .with_behaviour(|_| {
             request_response::Behaviour::<SyncCodec>::new(
-                iter::once((SYNC_PROTOCOL, ProtocolSupport::Full)),
+                iter::once((sync_protocol(&CHAIN), ProtocolSupport::Full)),
                 request_response::Config::default(),
             )
         })

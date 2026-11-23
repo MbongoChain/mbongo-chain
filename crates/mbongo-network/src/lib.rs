@@ -46,8 +46,9 @@ pub use crate::p2p::{
     SyncEvent, SyncReply, SyncRequestKind,
 };
 pub use crate::p2p_protocol::{
-    Announcement, BlockNotifyAck, BlockNotifyCodec, SyncCodec, SyncNotification, SyncRequest,
-    SyncResponse, BLOCK_NOTIFY_PROTOCOL, MAX_RANGE, SYNC_PROTOCOL,
+    block_notify_protocol, chain_prefix, sync_protocol, Announcement, BlockNotifyAck,
+    BlockNotifyCodec, SyncCodec, SyncNotification, SyncRequest, SyncResponse, CHAIN_PREFIX_LEN,
+    MAX_RANGE,
 };
 pub use crate::resource_guard::{GuardMode, GuardSnapshot, P2pResourceGuard};
 pub use crate::rpc::{

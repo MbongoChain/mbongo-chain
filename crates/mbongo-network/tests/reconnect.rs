@@ -8,10 +8,16 @@ use std::time::Duration;
 
 use libp2p::identity::Keypair;
 use libp2p::PeerId;
+use mbongo_core::ChainId;
 use mbongo_network::{P2PNode, SyncEvent};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
+
+/// The network every node and peer of this file runs. They share it, so
+/// their streams negotiate and the tests exercise reconnection, not the
+/// chain binding (RFC 0006 §7).
+const CHAIN: ChainId = ChainId([0x5a; 32]);
 
 /// Far above the first retry delays, far below a CI job's patience.
 const WAIT: Duration = Duration::from_secs(30);
@@ -26,7 +32,7 @@ const LATE_P2P: u16 = 27104;
 
 /// A node listening on `port`, running in its own task.
 fn listener(port: u16, key: Option<Keypair>) -> (PeerId, JoinHandle<()>) {
-    let mut node = P2PNode::with_identity(false, key).unwrap();
+    let mut node = P2PNode::with_identity(&CHAIN, false, key).unwrap();
     node.listen_on_host(Ipv4Addr::LOCALHOST, port).unwrap();
     let peer = node.peer_id;
     (peer, tokio::spawn(node.run()))
@@ -34,7 +40,7 @@ fn listener(port: u16, key: Option<Keypair>) -> (PeerId, JoinHandle<()>) {
 
 /// A node holding one bootnode, and its sync events.
 fn follower(bootnode: &str) -> (UnboundedReceiver<SyncEvent>, JoinHandle<()>) {
-    let mut node = P2PNode::with_identity(false, None).unwrap();
+    let mut node = P2PNode::with_identity(&CHAIN, false, None).unwrap();
     node.add_bootnode(bootnode).unwrap();
     let events = node.take_sync_event_rx().unwrap();
     (events, tokio::spawn(node.run()))
