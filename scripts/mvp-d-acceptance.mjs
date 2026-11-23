@@ -37,6 +37,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ACCEPTANCE_NODES, MDNS_OFF_LINE, acceptanceNodeArgs } from "./mvp-d-node-args.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EXE = process.platform === "win32" ? ".exe" : "";
@@ -49,12 +50,8 @@ const DEFAULT_PROFILE_VECTOR = path.join(ROOT, "test-vectors", "inference", "kaa
 const INFER_HOME = path.join(os.homedir(), ".cache", "mbongo", "inference");
 const RUNTIME_EXE = path.join(INFER_HOME, "runtime", "b11669-win-cpu-x64", "llama-server.exe");
 const PINNED_RUNTIME_SHA256 = "6a4635aeb35656153d4bfeeddf761d24ed84aada9c9108d580737cbed465141b";
-// Harness-profile ports of DEVNET_V0.4_OPERATIONS.md.
-const NODES = [
-  { name: "producer", rpc: 39944, rest: 38080, p2p: 40333, producer: true },
-  { name: "follower1", rpc: 39945, rest: 38081, p2p: 40334, producer: false },
-  { name: "follower2", rpc: 39946, rest: 38082, p2p: 40335, producer: false },
-];
+// The three nodes and their arguments: scripts/mvp-d-node-args.mjs (SEC-MDNS).
+const NODES = ACCEPTANCE_NODES;
 const FRONT = "127.0.0.1:8740";
 // Documented DEV / TEST keys (DEVNET_V0.4_OPERATIONS.md "Identities and funding").
 const CLIENT_SEED = "aa".repeat(32);
@@ -246,21 +243,24 @@ try {
 async function spawnNode(n, bootnode) {
   const dir = path.join(RUN, "nodes", n.name);
   fs.mkdirSync(dir, { recursive: true });
-  const args = ["--dev", "--rpc-port", String(n.rpc), "--rest-port", String(n.rest), "--p2p-port", String(n.p2p), "--data-dir", dir];
-  if (n.producer) args.push("--producer", "--block-time", "1");
-  if (bootnode) args.push("--bootnodes", bootnode);
+  const args = acceptanceNodeArgs(n, dir, bootnode);
   const out = fs.createWriteStream(path.join(RUN, `${n.name}.log`));
   const child = spawn(BIN("mbongo-node"), args, { cwd: ROOT, env: { ...process.env, RUST_LOG: "info" } });
   children.push(child);
   child.stderr.pipe(out);
+  // The node prints its mDNS state after its PeerId, and only when mDNS is
+  // off: both are required before the run goes on (SEC-MDNS).
   const peer = await new Promise((resolve, reject) => {
     let buf = "";
-    const timer = setTimeout(() => reject(new Error(`${n.name}: no PeerId within 20 s`)), 20000);
+    const timer = setTimeout(
+      () => reject(new Error(`${n.name}: ${/PeerId:/.test(buf) ? "did not report mDNS disabled" : "no PeerId"} within 20 s`)),
+      20000,
+    );
     child.stdout.on("data", (d) => {
       out.write(d);
       buf += d;
       const m = buf.match(/PeerId:\s*(\S+)/);
-      if (m) {
+      if (m && MDNS_OFF_LINE.test(buf)) {
         clearTimeout(timer);
         resolve(m[1]);
       }

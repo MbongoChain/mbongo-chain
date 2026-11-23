@@ -61,6 +61,11 @@ const STORAGE_SCHEMA: u32 = 3;
 /// The line every node prints at start-up; the harness requires it from all
 /// three, which is the operational version check (one binary, one lock).
 const NODE_BANNER: &str = "  Protocol: PROTOCOL_LOCK_v0.4 (rpc_v0.3, storage schema 3)";
+/// The line a node prints right after its PeerId when it runs with
+/// `--no-mdns` (SEC-MDNS). The harness requires it from every node it starts:
+/// the evidence that the process really runs without mDNS, not only that the
+/// flag was meant to be passed.
+const MDNS_OFF_BANNER: &str = "  mDNS:     disabled (--no-mdns)";
 
 const BLOCK_TIME_SECS: u64 = 1;
 const MIN_HEIGHT: u64 = 3;
@@ -176,27 +181,55 @@ fn port_free(port: u16, label: &str) -> Result<(), String> {
         .map_err(|e| format!("port {port} ({label}) is already in use: {e}"))
 }
 
+/// The arguments of one node of the devnet: mDNS off (SEC-MDNS), and a
+/// follower reaches its peers only through the `--bootnodes` it is given, so
+/// no discovery is needed. A follower without one is refused here.
+fn node_args(cfg: &NodeCfg, data_dir: &str, bootnodes: &[String]) -> Result<Vec<String>, String> {
+    if !cfg.producer && bootnodes.is_empty() {
+        return Err(format!(
+            "{}: a follower needs at least one --bootnodes address",
+            cfg.name
+        ));
+    }
+    let mut args: Vec<String> = [
+        "--rpc-port",
+        &cfg.rpc.to_string(),
+        "--rest-port",
+        &cfg.rest.to_string(),
+        "--p2p-port",
+        &cfg.p2p.to_string(),
+        "--dev",
+        "--no-mdns",
+        "--data-dir",
+        data_dir,
+    ]
+    .iter()
+    .map(|s| (*s).to_string())
+    .collect();
+    if cfg.producer {
+        args.extend([
+            "--producer".to_string(),
+            "--block-time".to_string(),
+            BLOCK_TIME_SECS.to_string(),
+        ]);
+    }
+    for b in bootnodes {
+        args.extend(["--bootnodes".to_string(), b.clone()]);
+    }
+    Ok(args)
+}
+
 async fn spawn_node(
     cfg: &'static NodeCfg,
     data_dir: &Path,
     bootnodes: &[String],
 ) -> Result<Node, String> {
     let mut cmd = Command::new(node_binary());
-    cmd.arg("--rpc-port")
-        .arg(cfg.rpc.to_string())
-        .arg("--rest-port")
-        .arg(cfg.rest.to_string())
-        .arg("--p2p-port")
-        .arg(cfg.p2p.to_string())
-        .arg("--dev")
-        .arg("--data-dir")
-        .arg(data_dir.to_str().ok_or("data dir path")?);
-    if cfg.producer {
-        cmd.arg("--producer").arg("--block-time").arg(BLOCK_TIME_SECS.to_string());
-    }
-    for b in bootnodes {
-        cmd.arg("--bootnodes").arg(b);
-    }
+    cmd.args(node_args(
+        cfg,
+        data_dir.to_str().ok_or("data dir path")?,
+        bootnodes,
+    )?);
     cmd.env("RUST_LOG", "info")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -244,6 +277,28 @@ async fn spawn_node(
             "{}: the node did not announce {PROTOCOL_AUTHORITY} / {RPC_AUTHORITY} / storage schema {STORAGE_SCHEMA}; this is not the expected v0.4 binary",
             cfg.name
         ));
+    }
+    // The node prints its mDNS state on the line after its PeerId, and only
+    // when mDNS is off: anything else means it runs with mDNS on.
+    match tokio::time::timeout_at(deadline, lines.next_line()).await {
+        Ok(Ok(Some(line))) => {
+            logs.lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(format!("[{}:stdout] {line}", cfg.name));
+            if line != MDNS_OFF_BANNER {
+                return Err(format!(
+                    "{}: the node did not report mDNS disabled after its PeerId (got {line:?}); it runs with mDNS on",
+                    cfg.name
+                ));
+            }
+            println!("  {}: started with mDNS disabled (--no-mdns)", cfg.name);
+        }
+        _ => {
+            return Err(format!(
+                "{}: no mDNS line after the PeerId within 20s",
+                cfg.name
+            ))
+        }
     }
     {
         let logs = Arc::clone(&logs);
@@ -1156,6 +1211,61 @@ async fn main() {
             eprintln!("\nMBONGO COMPUTE V0.4 VERTICAL: FAIL\n  Error: {e}");
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod launch_tests {
+    //! SEC-MDNS: the arguments every node of the devnet is started with.
+
+    use super::*;
+
+    fn count(args: &[String], flag: &str) -> usize {
+        args.iter().filter(|a| a.as_str() == flag).count()
+    }
+
+    #[test]
+    fn every_node_runs_without_mdns_and_every_follower_has_a_bootnode() {
+        let boot = vec!["/ip4/127.0.0.1/tcp/26333/p2p/12D3KooWExample".to_string()];
+        let mut checked = 0;
+        for cfg in &NODES {
+            let bootnodes: &[String] = if cfg.producer { &[] } else { &boot };
+            let args = node_args(cfg, "/data", bootnodes).unwrap();
+            assert_eq!(count(&args, "--no-mdns"), 1, "{}", cfg.name);
+            assert_eq!(count(&args, "--dev"), 1, "{}", cfg.name);
+            if cfg.producer {
+                assert_eq!(count(&args, "--producer"), 1);
+                assert_eq!(count(&args, "--bootnodes"), 0);
+            } else {
+                assert_eq!(count(&args, "--producer"), 0, "{}", cfg.name);
+                let i = args.iter().position(|a| a == "--bootnodes").unwrap();
+                assert_eq!(args[i + 1], boot[0], "{}", cfg.name);
+            }
+            checked += 1;
+        }
+        assert_eq!(checked, 3);
+    }
+
+    #[test]
+    fn a_follower_without_a_bootnode_is_refused() {
+        for cfg in NODES.iter().filter(|c| !c.producer) {
+            let error = node_args(cfg, "/data", &[]).unwrap_err();
+            assert!(error.contains("needs at least one --bootnodes"), "{error}");
+        }
+    }
+
+    #[test]
+    fn the_flag_is_an_argument_of_its_own() {
+        // Not a part of another value: a data directory or a bootnode that
+        // happens to contain the text does not count.
+        let boot = vec!["/ip4/127.0.0.1/tcp/1/p2p/--no-mdns".to_string()];
+        let args = node_args(&NODES[1], "/tmp/--no-mdns", &boot).unwrap();
+        assert_eq!(count(&args, "--no-mdns"), 1);
+        assert_eq!(
+            args.iter().filter(|a| a.contains("--no-mdns")).count(),
+            3,
+            "the flag itself, the data directory and the bootnode"
+        );
     }
 }
 

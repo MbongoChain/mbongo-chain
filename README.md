@@ -109,13 +109,13 @@ cargo test --workspace
 **Terminal 1 — Producer:**
 
 ```powershell
-cargo run --bin mbongo-node -- --dev --producer --block-time 5 --rpc-port 9944 --rest-port 8080 --p2p-port 30333 --data-dir data_producer
+cargo run --bin mbongo-node -- --dev --no-mdns --producer --block-time 5 --rpc-port 9944 --rest-port 8080 --p2p-port 30333 --data-dir data_producer
 ```
 
 **Terminal 2 — Follower:**
 
 ```powershell
-cargo run --bin mbongo-node -- --dev --bootnodes /ip4/127.0.0.1/tcp/30333 --rpc-port 9945 --rest-port 8081 --p2p-port 30334 --data-dir data_follower
+cargo run --bin mbongo-node -- --dev --no-mdns --bootnodes /ip4/127.0.0.1/tcp/30333 --rpc-port 9945 --rest-port 8081 --p2p-port 30334 --data-dir data_follower
 ```
 
 Every node needs exactly one of `--dev` (the built-in dev genesis, public test
@@ -131,6 +131,15 @@ and a node refuses a block from any other producer. With `--dev`, a
 needs `--producer-key-file <file>`, holding the authority's 32-byte Ed25519
 seed as 64 hex characters, and refuses to start if that key is not the
 authority. `--dev` with `--producer-key-file` is refused.
+
+The node runs mDNS discovery unless it is given `--no-mdns`, and a node that
+runs it accepts DNS packets from any host on its local network
+(RUSTSEC-2026-0491). Peers are named with `--bootnodes` instead, as above.
+The Docker devnet, the MVP launch and acceptance scripts and the compute
+vertical start every node with `--no-mdns` (SEC-MDNS). CI checks this with
+`scripts/check-sec-mdns.mjs`, the Docker devnet job and the compute vertical.
+`scripts/devnet/start-devnet.ps1`
+runs the frozen v0.4 release, which has no such flag: its nodes run mDNS.
 
 ### Run Validation Harnesses
 
