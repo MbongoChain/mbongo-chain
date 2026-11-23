@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use libp2p::PeerId;
+use mbongo_core::ChainId;
 use mbongo_core::{Block, BlockBody, BlockHeader, Hash};
 use mbongo_network::limits::{BLOCK_QUOTA_PER_PEER, SYNC_QUOTA_PER_PEER};
 use mbongo_network::{
@@ -18,6 +19,11 @@ use mbongo_network::{
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::{timeout, Instant};
+
+/// The network every node and peer of this file runs. They share it, so
+/// their streams negotiate and the tests exercise the limits, not the
+/// chain binding (RFC 0006 §7).
+const CHAIN: ChainId = ChainId([0x5a; 32]);
 
 /// Far above any local round trip, far below a CI job's patience.
 const WAIT: Duration = Duration::from_secs(30);
@@ -85,10 +91,10 @@ struct Pair {
 }
 
 fn pair(port: u16) -> Pair {
-    let mut victim = P2PNode::with_mdns(false).unwrap();
+    let mut victim = P2PNode::with_mdns(&CHAIN, false).unwrap();
     victim.listen_on_host(Ipv4Addr::LOCALHOST, port).unwrap();
     let victim_id = victim.peer_id;
-    let mut peer = P2PNode::with_mdns(false).unwrap();
+    let mut peer = P2PNode::with_mdns(&CHAIN, false).unwrap();
     peer.dial(&format!("/ip4/127.0.0.1/tcp/{port}/p2p/{victim_id}")).unwrap();
     Pair {
         victim,

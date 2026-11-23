@@ -32,7 +32,7 @@ use libp2p::{
 use log::{debug, info, warn};
 use tokio::sync::mpsc::{self, error::TrySendError};
 
-use mbongo_core::Block;
+use mbongo_core::{Block, ChainId};
 
 use crate::bootnodes::BootnodeSet;
 use crate::frame_budget::FrameBudget;
@@ -52,8 +52,8 @@ use crate::resource_guard::{GuardSnapshot, P2pResourceGuard};
 /// How often the counters are summarised in the log, when they changed.
 const SUMMARY_INTERVAL: Duration = Duration::from_secs(60);
 use crate::p2p_protocol::{
-    Announcement, BlockNotifyAck, BlockNotifyCodec, SyncCodec, SyncNotification, SyncRequest,
-    SyncResponse, BLOCK_NOTIFY_PROTOCOL, SYNC_PROTOCOL,
+    block_notify_protocol, sync_protocol, Announcement, BlockNotifyAck, BlockNotifyCodec,
+    SyncCodec, SyncNotification, SyncRequest, SyncResponse,
 };
 
 // ── Sync event / command types ─────────────────────────────────────────
@@ -163,13 +163,14 @@ pub trait BlockBroadcaster: Send + Sync {
 /// Protocol version string exchanged during the libp2p Identify
 /// handshake.
 ///
-/// v0.3: this is **informational metadata only** — peers advertise it but
-/// nothing gates on it, and it must never grow fallback or admission
-/// logic. The authoritative compatibility gates are the Sync and Block
-/// Notify protocol negotiations ([`SYNC_PROTOCOL`],
-/// [`BLOCK_NOTIFY_PROTOCOL`]), which fail deterministically across
-/// versions.
-const IDENTIFY_PROTOCOL_VERSION: &str = "/mbongo/0.3.0";
+/// **Informational metadata only**: peers advertise it but nothing gates on
+/// it, and it must never grow fallback or admission logic. The
+/// authoritative compatibility gates are the Sync and Block Notify protocol
+/// negotiations ([`sync_protocol`], [`block_notify_protocol`]), bound to the
+/// chain id, which fail deterministically across networks and versions.
+///
+/// `/mbongo/0.5.0` from RFC 0006 §7; it was `/mbongo/0.3.0` at v0.3 and v0.4.
+const IDENTIFY_PROTOCOL_VERSION: &str = "/mbongo/0.5.0";
 
 /// Agent version string exchanged during identify handshake.
 const AGENT_VERSION: &str = "mbongo-node/0.1.0";
@@ -308,14 +309,15 @@ pub struct P2PNode {
 }
 
 impl P2PNode {
-    /// Creates a new P2P node with a fresh Ed25519 identity and mDNS
-    /// discovery enabled (the default behaviour).
+    /// Creates a new P2P node of the network `chain_id`, with a fresh Ed25519
+    /// identity and mDNS discovery enabled (the default behaviour). See
+    /// [`Self::with_identity`].
     ///
     /// # Errors
     ///
     /// Returns an error if the transport or mDNS initialisation fails.
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        Self::with_mdns(true)
+    pub fn new(chain_id: &ChainId) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::with_mdns(chain_id, true)
     }
 
     /// Creates a new P2P node with a fresh Ed25519 identity; `mdns` chooses
@@ -327,12 +329,19 @@ impl P2PNode {
     /// # Errors
     ///
     /// Returns an error if the transport or mDNS initialisation fails.
-    pub fn with_mdns(mdns: bool) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::with_identity(mdns, None)
+    pub fn with_mdns(chain_id: &ChainId, mdns: bool) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::with_identity(chain_id, mdns, None)
     }
 
     /// Creates a new P2P node. With no `keypair`, a fresh identity is generated, so
     /// the peer id changes at each start. See [`Self::with_mdns`].
+    ///
+    /// `chain_id` is the network the node runs, the one its genesis defines.
+    /// The sync and block-notify identifiers it speaks are bound to it, and
+    /// fixed for the node's lifetime (RFC 0006 §7): a peer of another network,
+    /// or of an earlier protocol version, fails negotiation on both, before
+    /// any block is exchanged. Such a peer may still connect; nothing else
+    /// refuses it here.
     ///
     /// # Errors
     ///
@@ -340,10 +349,13 @@ impl P2PNode {
     // One builder chain: the transport, then the behaviours.
     #[allow(clippy::too_many_lines)]
     pub fn with_identity(
+        chain_id: &ChainId,
         mdns: bool,
         keypair: Option<libp2p::identity::Keypair>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let keypair = keypair.unwrap_or_else(libp2p::identity::Keypair::generate_ed25519);
+        let sync_id = sync_protocol(chain_id);
+        let block_notify_id = block_notify_protocol(chain_id);
         // One inbound frame budget, shared by both codecs and every clone
         // libp2p makes of them (S3 A2.2b-lite).
         let frame_budget = Arc::new(FrameBudget::default());
@@ -388,7 +400,7 @@ impl P2PNode {
                 // is dropped (inbound) or fails (outbound), never queued.
                 let sync = request_response::Behaviour::with_codec(
                     SyncCodec::with_budget(Arc::clone(&codec_budget)),
-                    iter::once((SYNC_PROTOCOL, ProtocolSupport::Full)),
+                    iter::once((sync_id, ProtocolSupport::Full)),
                     request_response::Config::default()
                         .with_max_concurrent_streams(SYNC_STREAMS_PER_CONNECTION),
                 );
@@ -396,7 +408,7 @@ impl P2PNode {
                 // Block notification push behaviour.
                 let block_notify = request_response::Behaviour::with_codec(
                     BlockNotifyCodec::with_budget(Arc::clone(&codec_budget)),
-                    iter::once((BLOCK_NOTIFY_PROTOCOL, ProtocolSupport::Full)),
+                    iter::once((block_notify_id, ProtocolSupport::Full)),
                     request_response::Config::default()
                         .with_max_concurrent_streams(NOTIFY_STREAMS_PER_CONNECTION),
                 );
@@ -1157,10 +1169,10 @@ mod tests {
 
     #[test]
     fn identify_protocol_version_pinned() {
-        // Locked identifier (PROTOCOL_LOCK_v0.3): informational Identify
+        // Locked identifier (RFC 0006 §7): informational Identify
         // metadata only — never a negotiation gate. Changing it is a
         // protocol version bump.
-        assert_eq!(IDENTIFY_PROTOCOL_VERSION, "/mbongo/0.3.0");
+        assert_eq!(IDENTIFY_PROTOCOL_VERSION, "/mbongo/0.5.0");
     }
 
     fn fail(
@@ -1179,7 +1191,7 @@ mod tests {
 
     #[test]
     fn sync_outbound_failure_is_forwarded_to_orchestrator() {
-        let mut node = P2PNode::with_mdns(false).unwrap();
+        let mut node = P2PNode::with_mdns(&mbongo_core::ChainId([7; 32]), false).unwrap();
         let mut sync_events = node.take_sync_event_rx().unwrap();
         let peer = libp2p::PeerId::random();
 
@@ -1218,7 +1230,7 @@ mod tests {
     #[test]
     fn a_response_of_the_wrong_kind_fails_the_request() {
         use crate::p2p_protocol::SyncResponse;
-        let mut node = P2PNode::with_mdns(false).unwrap();
+        let mut node = P2PNode::with_mdns(&mbongo_core::ChainId([7; 32]), false).unwrap();
         let mut sync_events = node.take_sync_event_rx().unwrap();
         let peer = libp2p::PeerId::random();
 
@@ -1246,7 +1258,7 @@ mod tests {
     #[test]
     fn a_response_of_the_right_kind_or_an_error_is_forwarded() {
         use crate::p2p_protocol::SyncResponse;
-        let mut node = P2PNode::with_mdns(false).unwrap();
+        let mut node = P2PNode::with_mdns(&mbongo_core::ChainId([7; 32]), false).unwrap();
         let mut sync_events = node.take_sync_event_rx().unwrap();
         let peer = libp2p::PeerId::random();
 
@@ -1289,7 +1301,7 @@ mod tests {
 
     #[test]
     fn a_failure_with_no_tracked_request_is_not_forwarded() {
-        let mut node = P2PNode::with_mdns(false).unwrap();
+        let mut node = P2PNode::with_mdns(&mbongo_core::ChainId([7; 32]), false).unwrap();
         let mut sync_events = node.take_sync_event_rx().unwrap();
         let peer = libp2p::PeerId::random();
         let request_id = node.send_get_height(peer);

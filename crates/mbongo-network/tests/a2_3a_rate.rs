@@ -11,9 +11,15 @@ use std::net::{Ipv4Addr, TcpStream};
 use std::time::Duration;
 
 use libp2p::PeerId;
+use mbongo_core::ChainId;
 use mbongo_network::{P2PNode, SyncCommand, SyncEvent, SyncResponse};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::{timeout, Instant};
+
+/// The network every node and peer of this file runs. They share it, so
+/// their streams negotiate and the tests exercise the connection rate limit, not the
+/// chain binding (RFC 0006 §7).
+const CHAIN: ChainId = ChainId([0x5a; 32]);
 
 /// Far above any local round trip, far below a CI job's patience.
 const WAIT: Duration = Duration::from_secs(30);
@@ -56,7 +62,7 @@ async fn height_from(events: &mut UnboundedReceiver<SyncEvent>) -> u64 {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_connection_burst_is_refused_before_the_handshake_without_harming_peers() {
-    let mut victim = P2PNode::with_mdns(false).unwrap();
+    let mut victim = P2PNode::with_mdns(&CHAIN, false).unwrap();
     victim.listen_on_host(Ipv4Addr::LOCALHOST, RATE_P2P).unwrap();
     let victim_id = victim.peer_id;
     let counters = victim.counters();
@@ -71,7 +77,7 @@ async fn a_connection_burst_is_refused_before_the_handshake_without_harming_peer
     });
 
     // An honest peer, connected before the burst.
-    let mut honest = P2PNode::with_mdns(false).unwrap();
+    let mut honest = P2PNode::with_mdns(&CHAIN, false).unwrap();
     let mut honest_events = honest.take_sync_event_rx().unwrap();
     let honest_cmd = honest.sync_commander();
     honest.dial(&format!("/ip4/127.0.0.1/tcp/{RATE_P2P}/p2p/{victim_id}")).unwrap();
@@ -142,7 +148,7 @@ async fn a_connection_burst_is_refused_before_the_handshake_without_harming_peer
 
     // A new legitimate peer from the same address gets in once tokens refill:
     // as a bootnode it is redialed with backoff until admitted.
-    let mut late = P2PNode::with_mdns(false).unwrap();
+    let mut late = P2PNode::with_mdns(&CHAIN, false).unwrap();
     let mut late_events = late.take_sync_event_rx().unwrap();
     late.add_bootnode(&format!("/ip4/127.0.0.1/tcp/{RATE_P2P}/p2p/{victim_id}"))
         .unwrap();

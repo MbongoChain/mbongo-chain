@@ -36,7 +36,7 @@ Mbongo Chain verifies cryptographic receipts from off-chain AI inference. It doe
 - Account model (balance, nonce)
 - Transfer execution and validation (signature, nonce, balance, replay protection)
 - Persistent storage (RocksDB, atomic `WriteBatch`, schema versioning + migration)
-- Multi-node devnet: 1 producer + N followers over libp2p (`/mbongo-sync/2`)
+- Multi-node devnet: 1 producer + N followers over libp2p (`/mbongo-sync/3/<c>`, `<c>` = the first 16 hex characters of the chain id: nodes of different networks do not negotiate)
 - Block sync: bootstrap from genesis, height-based request/response, block announcement
 - Timed block production (`--producer`, `--block-time`)
 - JSON-RPC 2.0 and REST API

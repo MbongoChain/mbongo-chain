@@ -294,7 +294,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Genesis:  OK");
 
     // ── P2P ────────────────────────────────────────────────────────────
-    let mut p2p = P2PNode::with_identity(!args.no_mdns, node_identity)?;
+    // The sync and block-notify identifiers are bound to this chain (RFC 0006
+    // §7): a peer of another network fails negotiation on both.
+    let mut p2p = P2PNode::with_identity(&selected.genesis.chain_id, !args.no_mdns, node_identity)?;
     println!("  PeerId:   {}", p2p.peer_id);
     // Printed only with --no-mdns: the default node's output is unchanged.
     if !p2p.mdns_enabled() {

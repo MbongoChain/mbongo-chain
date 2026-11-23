@@ -9,9 +9,15 @@ use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use libp2p::PeerId;
+use mbongo_core::ChainId;
 use mbongo_network::{P2PNode, SyncCommand, SyncEvent, SyncRequest, SyncResponse};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time::{timeout, Instant};
+
+/// The network every node and peer of this file runs. They share it, so
+/// their streams negotiate and the tests exercise the request rate limit, not the
+/// chain binding (RFC 0006 §7).
+const CHAIN: ChainId = ChainId([0x5a; 32]);
 
 const WAIT: Duration = Duration::from_secs(30);
 
@@ -59,7 +65,7 @@ async fn outcomes(events: &mut UnboundedReceiver<SyncEvent>, n: u64) -> (u64, u6
 }
 
 async fn peer_of(victim: PeerId) -> (UnboundedReceiver<SyncEvent>, UnboundedSender<SyncCommand>) {
-    let mut node = P2PNode::with_mdns(false).unwrap();
+    let mut node = P2PNode::with_mdns(&CHAIN, false).unwrap();
     let mut events = node.take_sync_event_rx().unwrap();
     let cmd = node.sync_commander();
     node.dial(&format!("/ip4/127.0.0.1/tcp/{RATE_P2P}/p2p/{victim}")).unwrap();
@@ -78,7 +84,7 @@ fn full_range(victim: PeerId) -> SyncCommand {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_get_blocks_flood_reaches_the_node_only_at_its_rate() {
-    let mut victim = P2PNode::with_mdns(false).unwrap();
+    let mut victim = P2PNode::with_mdns(&CHAIN, false).unwrap();
     victim.listen_on_host(Ipv4Addr::LOCALHOST, RATE_P2P).unwrap();
     let victim_id = victim.peer_id;
     let counters = victim.counters();

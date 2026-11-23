@@ -2,9 +2,12 @@
 //! (S3 A2.0). Test tooling only; it is not part of any node.
 //!
 //! It speaks the frozen wire format directly (`u32` LE length, then bytes) over
-//! the node's own negotiation strings, through a raw request/response codec,
-//! so the traffic is the same whatever node version receives it. It never
-//! answers anything it is asked.
+//! the node's own negotiation identifiers, through a raw request/response
+//! codec. The identifiers are bound to the target's network (`--chain-id`,
+//! RFC 0006 §7), so a node of another network, or one built before that
+//! binding, refuses this traffic at negotiation; the A2 baselines are driven by
+//! the tool built at their own pinned revision (`scripts/stress/build-baselines.sh`).
+//! It never answers anything it is asked.
 //!
 //! **Local targets only.** The target must be a loopback or private address
 //! (IPv4 loopback or RFC 1918, IPv6 loopback or unique-local); any other
@@ -23,11 +26,12 @@ use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, StreamExt};
 use libp2p::multiaddr::Protocol;
 use libp2p::request_response::{self, ProtocolSupport};
 use libp2p::swarm::{NetworkBehaviour, SwarmEvent};
-use libp2p::{noise, tcp, yamux, Multiaddr, PeerId, Swarm};
+use libp2p::{noise, tcp, yamux, Multiaddr, PeerId, StreamProtocol, Swarm};
 use mbongo_core::{
-    Address, Block, BlockBody, BlockHeader, Hash, Transaction, TransactionPayload, TransactionType,
+    Address, Block, BlockBody, BlockHeader, ChainId, Hash, Transaction, TransactionPayload,
+    TransactionType,
 };
-use mbongo_network::{SyncNotification, SyncRequest, BLOCK_NOTIFY_PROTOCOL, SYNC_PROTOCOL};
+use mbongo_network::{block_notify_protocol, sync_protocol, SyncNotification, SyncRequest};
 use parity_scale_codec::Encode;
 use tokio::time::Instant;
 
@@ -62,6 +66,11 @@ struct Args {
     /// private addresses only.
     #[arg(long)]
     target: Multiaddr,
+    /// The target's chain id, as the node prints it (64 hex characters). The
+    /// negotiation identifiers are bound to it (RFC 0006 §7); there is no
+    /// default network.
+    #[arg(long, value_parser = parse_chain_id)]
+    chain_id: ChainId,
     #[arg(long, value_enum)]
     scenario: Scenario,
     /// Peer identities, each with its own connection.
@@ -79,6 +88,21 @@ struct Args {
     /// Attempts per second per identity (churn-rate only).
     #[arg(long, default_value_t = 10)]
     attempts_per_second: u32,
+}
+
+/// A chain id as `mbongo-node` prints it: 64 hex characters, no prefix.
+fn parse_chain_id(text: &str) -> Result<ChainId, String> {
+    let bytes = text.as_bytes();
+    if bytes.len() != 64 || !bytes.iter().all(u8::is_ascii_hexdigit) {
+        return Err("expected 64 hex characters".to_string());
+    }
+    let mut id = [0u8; 32];
+    for (byte, pair) in id.iter_mut().zip(bytes.chunks_exact(2)) {
+        // Both characters are ASCII hex digits, checked above.
+        let pair = std::str::from_utf8(pair).map_err(|e| e.to_string())?;
+        *byte = u8::from_str_radix(pair, 16).map_err(|e| e.to_string())?;
+    }
+    Ok(ChainId(id))
 }
 
 /// Refuses anything that is not a loopback or private address.
@@ -112,7 +136,7 @@ struct RawCodec;
 
 #[async_trait]
 impl request_response::Codec for RawCodec {
-    type Protocol = &'static str;
+    type Protocol = StreamProtocol;
     type Request = Raw;
     type Response = u64;
 
@@ -378,11 +402,14 @@ fn build_swarm(args: &Args) -> Result<Swarm<Flood>, Box<dyn std::error::Error>> 
         )?
         .with_behaviour(|_| Flood {
             sync: request_response::Behaviour::new(
-                iter::once((SYNC_PROTOCOL, ProtocolSupport::Outbound)),
+                iter::once((sync_protocol(&args.chain_id), ProtocolSupport::Outbound)),
                 config.clone(),
             ),
             notify: request_response::Behaviour::new(
-                iter::once((BLOCK_NOTIFY_PROTOCOL, ProtocolSupport::Outbound)),
+                iter::once((
+                    block_notify_protocol(&args.chain_id),
+                    ProtocolSupport::Outbound,
+                )),
                 config.clone(),
             ),
         })?
@@ -563,6 +590,26 @@ mod tests {
             "/dns4/localhost/tcp/1",
         ] {
             assert!(local_only(&addr(refused)).is_err(), "{refused}");
+        }
+    }
+
+    #[test]
+    fn a_chain_id_is_read_as_the_node_prints_it() {
+        let dev = mbongo_core::Genesis::dev().chain_id;
+        assert_eq!(parse_chain_id(&dev.to_string()).unwrap(), dev);
+        assert_eq!(
+            parse_chain_id(&dev.to_string().to_uppercase()).unwrap(),
+            dev
+        );
+        let short = &dev.to_string()[..63];
+        for bad in [
+            "",
+            short,
+            &format!("{dev}0"),
+            &format!("0x{}", &dev.to_string()[2..]),
+            &"g".repeat(64),
+        ] {
+            assert!(parse_chain_id(bad).is_err(), "{bad}");
         }
     }
 

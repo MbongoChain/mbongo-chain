@@ -1,42 +1,121 @@
-//! Mixed-version protocol negotiation tests (RFC 0002 Phase 4).
+//! Protocol negotiation across networks and versions (RFC 0006 §7, S1-9;
+//! RFC 0002 Phase 4 before it).
 //!
-//! Proves that a peer advertising a legacy v0.2 protocol string and a
-//! v0.3 node share no common protocol on either negotiated channel
-//! (Sync and Block Notify): the request fails at libp2p
-//! multistream-select negotiation with `UnsupportedProtocols` —
-//! deterministic, bounded, before any SCALE payload byte is exchanged
-//! (the codec is never invoked), with no silent downgrade (neither side
-//! carries a fallback protocol list). Matching-version positive
-//! controls prove the failures are caused by the version mismatch and
-//! not by the test harness.
+//! The sync and block-notify identifiers are bound to the chain id:
+//! `/mbongo-sync/3/<c>` and `/mbongo/block_notify/0.3.0/<c>`, with `<c>` the
+//! first 16 lowercase hex characters of `chain_id`. Two swarms that speak the
+//! identifiers of different networks, or an identifier of an earlier version,
+//! or any near miss of the right one, share no protocol: the request fails at
+//! libp2p multistream-select negotiation with `UnsupportedProtocols`. Neither
+//! side carries a fallback list, so there is no silent downgrade.
+//!
+//! Every swarm here counts its codec's calls. A failure must leave both counts
+//! at zero: no payload byte was encoded or decoded, so no block was. Each
+//! failure has a positive control on the same identifiers that does reach the
+//! codec, so a failure comes from the identifiers, not from the harness.
 
+use std::io;
 use std::iter;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
-use futures::StreamExt;
+use async_trait::async_trait;
+use futures::{AsyncRead, AsyncWrite, StreamExt};
 use libp2p::request_response::{self, Codec, ProtocolSupport};
 use libp2p::swarm::SwarmEvent;
-use libp2p::{noise, tcp, yamux, Multiaddr, Swarm};
-use mbongo_core::{Block, BlockBody, BlockHeader, Hash};
+use libp2p::{noise, tcp, yamux, Multiaddr, StreamProtocol, Swarm};
+use mbongo_core::{Block, BlockBody, BlockHeader, ChainId, Hash};
 use mbongo_network::{
+    block_notify_protocol, chain_prefix, sync_protocol, Announcement, BlockNotifyAck,
     BlockNotifyCodec, SyncCodec, SyncNotification, SyncRequest, SyncResponse,
-    BLOCK_NOTIFY_PROTOCOL, SYNC_PROTOCOL,
 };
 
-/// The v0.2 protocol strings, reproduced here as literals: the v0.3
-/// codebase intentionally no longer defines them anywhere.
-const LEGACY_SYNC_PROTOCOL: &str = "/mbongo-sync/1";
-const LEGACY_BLOCK_NOTIFY_PROTOCOL: &str = "/mbongo/block_notify/0.1.0";
+/// Two networks. `A` is the one "this node" runs.
+const A: ChainId = ChainId([0xa1; 32]);
+const B: ChainId = ChainId([0xb2; 32]);
 
 /// Overall per-test deadline: the failure must be bounded.
 const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Builds a minimal swarm speaking exactly one protocol string with the
-/// given codec, mirroring the transport stack used by `P2PNode`
-/// (tcp/noise/yamux).
-fn make_swarm<C>(protocol: &'static str) -> Swarm<request_response::Behaviour<C>>
+/// A codec that counts every call into it, then hands the call on.
+#[derive(Clone, Default)]
+struct Counting<C> {
+    inner: C,
+    calls: Arc<AtomicUsize>,
+}
+
+impl<C> Counting<C> {
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+
+    fn count(&self) {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[async_trait]
+impl<C> Codec for Counting<C>
 where
-    C: Codec<Protocol = &'static str> + Default + Clone + Send + 'static,
+    C: Codec<Protocol = StreamProtocol> + Clone + Send,
+    C::Request: Send,
+    C::Response: Send,
+{
+    type Protocol = StreamProtocol;
+    type Request = C::Request;
+    type Response = C::Response;
+
+    async fn read_request<T>(&mut self, p: &StreamProtocol, io: &mut T) -> io::Result<C::Request>
+    where
+        T: AsyncRead + Unpin + Send,
+    {
+        self.count();
+        self.inner.read_request(p, io).await
+    }
+
+    async fn read_response<T>(&mut self, p: &StreamProtocol, io: &mut T) -> io::Result<C::Response>
+    where
+        T: AsyncRead + Unpin + Send,
+    {
+        self.count();
+        self.inner.read_response(p, io).await
+    }
+
+    async fn write_request<T>(
+        &mut self,
+        p: &StreamProtocol,
+        io: &mut T,
+        req: C::Request,
+    ) -> io::Result<()>
+    where
+        T: AsyncWrite + Unpin + Send,
+    {
+        self.count();
+        self.inner.write_request(p, io, req).await
+    }
+
+    async fn write_response<T>(
+        &mut self,
+        p: &StreamProtocol,
+        io: &mut T,
+        res: C::Response,
+    ) -> io::Result<()>
+    where
+        T: AsyncWrite + Unpin + Send,
+    {
+        self.count();
+        self.inner.write_response(p, io, res).await
+    }
+}
+
+type Peer<C> = Swarm<request_response::Behaviour<Counting<C>>>;
+
+/// A minimal swarm speaking exactly one identifier through `codec`, on the
+/// transport stack of `P2PNode` (tcp/noise/yamux).
+fn make_swarm<C>(protocol: StreamProtocol, codec: Counting<C>) -> Peer<C>
+where
+    C: Codec<Protocol = StreamProtocol> + Clone + Send + 'static,
     C::Request: Send,
     C::Response: Send,
 {
@@ -49,7 +128,8 @@ where
         )
         .expect("tcp transport")
         .with_behaviour(|_| {
-            request_response::Behaviour::<C>::new(
+            request_response::Behaviour::with_codec(
+                codec,
                 iter::once((protocol, ProtocolSupport::Full)),
                 request_response::Config::default(),
             )
@@ -60,9 +140,9 @@ where
 }
 
 /// Drives `swarm` until it reports a listen address, returning it.
-async fn listen_addr<C>(swarm: &mut Swarm<request_response::Behaviour<C>>) -> Multiaddr
+async fn listen_addr<C>(swarm: &mut Peer<C>) -> Multiaddr
 where
-    C: Codec<Protocol = &'static str> + Default + Clone + Send + 'static,
+    C: Codec<Protocol = StreamProtocol> + Clone + Send + 'static,
     C::Request: Send,
     C::Response: Send,
 {
@@ -74,77 +154,45 @@ where
     }
 }
 
-/// Dials a listener speaking `legacy` from a node speaking `current`,
-/// sends `request`, and returns the outbound failure. Panics if the
-/// request succeeds.
-async fn negotiation_failure<C>(
-    legacy: &'static str,
-    current: &'static str,
-    request: C::Request,
-) -> request_response::OutboundFailure
-where
-    C: Codec<Protocol = &'static str> + Default + Clone + Send + 'static,
-    C::Request: Send + 'static,
-    C::Response: Send + 'static,
-{
-    let mut legacy_swarm = make_swarm::<C>(legacy);
-    let mut current_swarm = make_swarm::<C>(current);
-
-    let legacy_addr = listen_addr(&mut legacy_swarm).await;
-    current_swarm.dial(legacy_addr).unwrap();
-
-    let mut request = Some(request);
-    tokio::time::timeout(TEST_TIMEOUT, async {
-        loop {
-            tokio::select! {
-                event = current_swarm.select_next_some() => match event {
-                    SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                        if let Some(req) = request.take() {
-                            current_swarm.behaviour_mut().send_request(&peer_id, req);
-                        }
-                    }
-                    SwarmEvent::Behaviour(request_response::Event::OutboundFailure {
-                        error, ..
-                    }) => {
-                        return error;
-                    }
-                    SwarmEvent::Behaviour(request_response::Event::Message { .. }) => {
-                        panic!("request must not succeed across protocol versions");
-                    }
-                    _ => {}
-                },
-                _ = legacy_swarm.select_next_some() => {}
-            }
-        }
-    })
-    .await
-    .expect("negotiation failure must occur within the bounded deadline")
+/// What one exchange showed.
+struct Outcome<R> {
+    /// The response, or the outbound failure the dialer saw.
+    result: Result<R, request_response::OutboundFailure>,
+    /// Whether the two swarms connected, below the protocols.
+    connected: bool,
+    /// Codec calls on the listener and on the dialer.
+    calls: (usize, usize),
 }
 
-/// Matching-version positive control: completes one request/response
-/// round trip over `protocol` and returns the response received.
-async fn roundtrip<C>(
-    protocol: &'static str,
+/// A listener speaking `listening` and a dialer speaking `dialing`: the dialer
+/// connects, sends `request`, and the listener answers `response` if anything
+/// reaches it.
+async fn exchange<C>(
+    listening: StreamProtocol,
+    dialing: StreamProtocol,
     request: C::Request,
     response: C::Response,
-) -> C::Response
+) -> Outcome<C::Response>
 where
-    C: Codec<Protocol = &'static str> + Default + Clone + Send + 'static,
+    C: Codec<Protocol = StreamProtocol> + Clone + Default + Send + 'static,
     C::Request: Send + 'static,
     C::Response: Send + Clone + 'static,
 {
-    let mut server = make_swarm::<C>(protocol);
-    let mut client = make_swarm::<C>(protocol);
+    let (server_codec, client_codec) = (Counting::<C>::default(), Counting::<C>::default());
+    let mut server = make_swarm(listening, server_codec.clone());
+    let mut client = make_swarm(dialing, client_codec.clone());
 
     let server_addr = listen_addr(&mut server).await;
     client.dial(server_addr).unwrap();
 
     let mut request = Some(request);
-    tokio::time::timeout(TEST_TIMEOUT, async {
+    let mut connected = false;
+    let result = tokio::time::timeout(TEST_TIMEOUT, async {
         loop {
             tokio::select! {
                 event = client.select_next_some() => match event {
                     SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                        connected = true;
                         if let Some(req) = request.take() {
                             client.behaviour_mut().send_request(&peer_id, req);
                         }
@@ -152,14 +200,10 @@ where
                     SwarmEvent::Behaviour(request_response::Event::Message {
                         message: request_response::Message::Response { response, .. },
                         ..
-                    }) => {
-                        return response;
-                    }
+                    }) => return Ok(response),
                     SwarmEvent::Behaviour(request_response::Event::OutboundFailure {
                         error, ..
-                    }) => {
-                        panic!("matching protocols must negotiate, got: {error:?}");
-                    }
+                    }) => return Err(error),
                     _ => {}
                 },
                 event = server.select_next_some() => {
@@ -175,11 +219,69 @@ where
         }
     })
     .await
-    .expect("round trip must complete within the deadline")
+    .expect("the exchange must end within the deadline");
+    Outcome {
+        result,
+        connected,
+        calls: (server_codec.calls(), client_codec.calls()),
+    }
 }
 
-/// An empty block for block-notify payloads (content is irrelevant: in
-/// the mismatch test it must never be encoded at all).
+/// The exchange must fail at negotiation: connected below the protocols,
+/// `UnsupportedProtocols`, and neither codec ever called.
+fn assert_refused_at_negotiation<R: std::fmt::Debug>(case: &str, outcome: &Outcome<R>) {
+    assert!(outcome.connected, "{case}: the transport did not connect");
+    assert!(
+        matches!(
+            outcome.result,
+            Err(request_response::OutboundFailure::UnsupportedProtocols)
+        ),
+        "{case}: expected UnsupportedProtocols, got {:?}",
+        outcome.result
+    );
+    assert_eq!(
+        outcome.calls,
+        (0, 0),
+        "{case}: a codec ran, so payload bytes were exchanged"
+    );
+}
+
+/// The exchange must succeed, through both codecs.
+fn assert_negotiated<R: std::fmt::Debug>(case: &str, outcome: &Outcome<R>) {
+    assert!(outcome.result.is_ok(), "{case}: {:?}", outcome.result);
+    // Each side wrote one message and read one.
+    assert_eq!(outcome.calls, (2, 2), "{case}: codec calls");
+}
+
+fn sync_exchange(
+    listening: StreamProtocol,
+    dialing: StreamProtocol,
+) -> impl std::future::Future<Output = Outcome<SyncResponse>> {
+    exchange::<SyncCodec>(
+        listening,
+        dialing,
+        SyncRequest::GetHeight,
+        SyncResponse::Height(7),
+    )
+}
+
+fn notify_exchange(
+    listening: StreamProtocol,
+    dialing: StreamProtocol,
+) -> impl std::future::Future<Output = Outcome<BlockNotifyAck>> {
+    exchange::<BlockNotifyCodec>(
+        listening,
+        dialing,
+        SyncNotification::NewBlock {
+            block: empty_block(),
+        }
+        .into(),
+        BlockNotifyAck,
+    )
+}
+
+/// An empty block for block-notify payloads (content is irrelevant: in the
+/// refused cases it must never be encoded at all).
 fn empty_block() -> Block {
     Block {
         header: BlockHeader {
@@ -197,89 +299,116 @@ fn empty_block() -> Block {
     }
 }
 
-// ── Sync protocol ───────────────────────────────────────────────────────
+/// Identifiers that are not `base` + the prefix of `chain`, but come close.
+fn near_misses(
+    base: &str,
+    earlier: &[&'static str],
+    chain: &ChainId,
+) -> Vec<(String, StreamProtocol)> {
+    let c = chain_prefix(chain);
+    let full = chain.to_string();
+    let mut out: Vec<(String, StreamProtocol)> =
+        earlier.iter().map(|p| (p.to_string(), StreamProtocol::new(p))).collect();
+    for (case, text) in [
+        ("uppercase prefix", format!("{base}{}", c.to_uppercase())),
+        ("15 characters", format!("{base}{}", &c[..15])),
+        ("17 characters", format!("{base}{}", &full[..17])),
+        ("the whole chain id", format!("{base}{full}")),
+        ("no prefix", base.trim_end_matches('/').to_string()),
+        ("an empty prefix", base.to_string()),
+        ("0x before the prefix", format!("{base}0x{c}")),
+    ] {
+        out.push((
+            case.to_string(),
+            StreamProtocol::try_from_owned(text).unwrap(),
+        ));
+    }
+    out
+}
+
+// ── Sync ───────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn sync_mismatched_versions_fail_cleanly() {
-    // Deterministic, negotiation-level failure: UnsupportedProtocols means
-    // multistream-select found no common protocol — the SyncCodec was
-    // never invoked, so no SCALE bytes were exchanged and no decode
-    // error path was reachable. Anything else (timeout, io, decode)
-    // would indicate a half-connection or downgrade.
-    let outcome = negotiation_failure::<SyncCodec>(
-        LEGACY_SYNC_PROTOCOL,
-        SYNC_PROTOCOL,
-        SyncRequest::GetHeight,
-    )
-    .await;
-    assert!(
-        matches!(
-            outcome,
-            request_response::OutboundFailure::UnsupportedProtocols
-        ),
-        "expected UnsupportedProtocols, got: {outcome:?}"
+async fn sync_on_the_same_network_negotiates() {
+    let outcome = sync_exchange(sync_protocol(&A), sync_protocol(&A)).await;
+    assert_negotiated("same network", &outcome);
+    assert!(matches!(outcome.result, Ok(SyncResponse::Height(7))));
+}
+
+#[tokio::test]
+async fn sync_across_networks_fails_at_negotiation() {
+    // Both directions: whichever side dials, nothing is exchanged.
+    let outcome = sync_exchange(sync_protocol(&B), sync_protocol(&A)).await;
+    assert_refused_at_negotiation("A dials B", &outcome);
+    let outcome = sync_exchange(sync_protocol(&A), sync_protocol(&B)).await;
+    assert_refused_at_negotiation("B dials A", &outcome);
+}
+
+#[tokio::test]
+async fn sync_earlier_and_near_miss_identifiers_fail_at_negotiation() {
+    let cases = near_misses("/mbongo-sync/3/", &["/mbongo-sync/2", "/mbongo-sync/1"], &A);
+    assert_eq!(cases.len(), 9, "cases stated before they run");
+    let current = sync_protocol(&A);
+    for (case, other) in cases {
+        assert_ne!(other, current, "{case}");
+        // An old or wrong node dialing this one, and this one dialing it.
+        let outcome = sync_exchange(current.clone(), other.clone()).await;
+        assert_refused_at_negotiation(&format!("{case}, dialing in"), &outcome);
+        let outcome = sync_exchange(other.clone(), current.clone()).await;
+        assert_refused_at_negotiation(&format!("{case}, dialed"), &outcome);
+    }
+    // The earlier version with the right prefix is still another identifier.
+    let v2_prefixed =
+        StreamProtocol::try_from_owned(format!("/mbongo-sync/2/{}", chain_prefix(&A))).unwrap();
+    let outcome = sync_exchange(current, v2_prefixed).await;
+    assert_refused_at_negotiation("version 2 with the prefix", &outcome);
+}
+
+// ── Block notify ───────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn block_notify_on_the_same_network_negotiates() {
+    let outcome = notify_exchange(block_notify_protocol(&A), block_notify_protocol(&A)).await;
+    assert_negotiated("same network", &outcome);
+}
+
+#[tokio::test]
+async fn block_notify_across_networks_fails_at_negotiation() {
+    let outcome = notify_exchange(block_notify_protocol(&B), block_notify_protocol(&A)).await;
+    assert_refused_at_negotiation("A announces to B", &outcome);
+    let outcome = notify_exchange(block_notify_protocol(&A), block_notify_protocol(&B)).await;
+    assert_refused_at_negotiation("B announces to A", &outcome);
+}
+
+#[tokio::test]
+async fn block_notify_earlier_and_near_miss_identifiers_fail_at_negotiation() {
+    let cases = near_misses(
+        "/mbongo/block_notify/0.3.0/",
+        &["/mbongo/block_notify/0.2.0", "/mbongo/block_notify/0.1.0"],
+        &A,
     );
-}
-
-#[tokio::test]
-async fn sync_matching_versions_negotiate() {
-    let response = roundtrip::<SyncCodec>(
-        SYNC_PROTOCOL,
-        SyncRequest::GetHeight,
-        SyncResponse::Height(7),
-    )
-    .await;
-    assert!(matches!(response, SyncResponse::Height(7)));
-}
-
-// ── Block notify protocol ───────────────────────────────────────────────
-
-#[tokio::test]
-async fn block_notify_mismatched_versions_fail_cleanly() {
-    // Same guarantee as the sync test: no notification payload is ever
-    // encoded or decoded — negotiation fails before the BlockNotifyCodec
-    // runs, and there is no fallback to the legacy string.
-    let outcome = negotiation_failure::<BlockNotifyCodec>(
-        LEGACY_BLOCK_NOTIFY_PROTOCOL,
-        BLOCK_NOTIFY_PROTOCOL,
-        SyncNotification::NewBlock {
-            block: empty_block(),
-        }
-        .into(),
-    )
-    .await;
-    assert!(
-        matches!(
-            outcome,
-            request_response::OutboundFailure::UnsupportedProtocols
-        ),
-        "expected UnsupportedProtocols, got: {outcome:?}"
-    );
-}
-
-#[tokio::test]
-async fn block_notify_matching_versions_negotiate() {
-    use mbongo_network::BlockNotifyAck;
-    let _ack: BlockNotifyAck = roundtrip::<BlockNotifyCodec>(
-        BLOCK_NOTIFY_PROTOCOL,
-        SyncNotification::NewBlock {
-            block: empty_block(),
-        }
-        .into(),
-        BlockNotifyAck,
-    )
-    .await;
+    assert_eq!(cases.len(), 9, "cases stated before they run");
+    let current = block_notify_protocol(&A);
+    for (case, other) in cases {
+        assert_ne!(other, current, "{case}");
+        let outcome = notify_exchange(current.clone(), other.clone()).await;
+        assert_refused_at_negotiation(&format!("{case}, announcing in"), &outcome);
+        let outcome = notify_exchange(other.clone(), current.clone()).await;
+        assert_refused_at_negotiation(&format!("{case}, announced to"), &outcome);
+    }
 }
 
 /// S3 A2.2d-1: a broadcast's shared, encoded-once announcement crosses a real
 /// libp2p exchange and is acknowledged like a decoded one.
 #[tokio::test]
 async fn block_notify_shared_encoded_announcement_negotiates() {
-    use mbongo_network::{Announcement, BlockNotifyAck};
-    let _ack: BlockNotifyAck = roundtrip::<BlockNotifyCodec>(
-        BLOCK_NOTIFY_PROTOCOL,
+    let protocol = block_notify_protocol(&A);
+    let outcome = exchange::<BlockNotifyCodec>(
+        protocol.clone(),
+        protocol,
         Announcement::new_block(&empty_block()),
         BlockNotifyAck,
     )
     .await;
+    assert_negotiated("shared announcement", &outcome);
 }

@@ -1,6 +1,6 @@
 //! F-N2 (docs/security/MVP_LAUNCH_SECURITY_REVIEW.md): mDNS discovery can be
 //! switched off. The default node keeps mDNS; a node built with
-//! `P2PNode::with_mdns(false)` (`mbongo-node --no-mdns`) runs no mDNS
+//! `P2PNode::with_mdns(&CHAIN, false)` (`mbongo-node --no-mdns`) runs no mDNS
 //! behaviour, so nothing is advertised, discovered or auto-dialed, while
 //! explicit dials (bootnodes) and the sync protocol keep working.
 //!
@@ -10,9 +10,15 @@ use std::net::TcpListener;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
+use mbongo_core::ChainId;
 use mbongo_network::{P2PNode, SyncCommand, SyncEvent, SyncRequest, SyncResponse};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::timeout;
+
+/// The network every node and peer of this file runs. They share it, so
+/// their streams negotiate and the tests exercise mDNS, not the
+/// chain binding (RFC 0006 §7).
+const CHAIN: ChainId = ChainId([0x5a; 32]);
 
 // The P2P layer reports mDNS discoveries only in its log ("mDNS discovered:
 // <peer> at <addr>"), so the tests read that log.
@@ -76,15 +82,15 @@ async fn next_connected(
 fn default_node_keeps_mdns_enabled() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let _guard = rt.enter();
-    assert!(P2PNode::new().unwrap().mdns_enabled());
-    assert!(P2PNode::with_mdns(true).unwrap().mdns_enabled());
+    assert!(P2PNode::new(&CHAIN).unwrap().mdns_enabled());
+    assert!(P2PNode::with_mdns(&CHAIN, true).unwrap().mdns_enabled());
 }
 
 #[test]
 fn with_mdns_false_disables_mdns() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let _guard = rt.enter();
-    assert!(!P2PNode::with_mdns(false).unwrap().mdns_enabled());
+    assert!(!P2PNode::with_mdns(&CHAIN, false).unwrap().mdns_enabled());
 }
 
 /// A node without mDNS never connects to a peer it was not told about,
@@ -93,14 +99,14 @@ fn with_mdns_false_disables_mdns() {
 async fn disabled_node_auto_dials_nothing() {
     let _serial = MDNS_SERIAL.lock().await;
     capture_log();
-    let mut quiet = P2PNode::with_mdns(false).unwrap();
+    let mut quiet = P2PNode::with_mdns(&CHAIN, false).unwrap();
     quiet
         .listen_on_host(std::net::Ipv4Addr::LOCALHOST, free_loopback_port())
         .unwrap();
     let mut quiet_events = quiet.take_sync_event_rx().unwrap();
     assert!(!quiet.mdns_enabled());
 
-    let mut announcer = P2PNode::with_mdns(true).unwrap();
+    let mut announcer = P2PNode::with_mdns(&CHAIN, true).unwrap();
     announcer
         .listen_on_host(std::net::Ipv4Addr::LOCALHOST, free_loopback_port())
         .unwrap();
@@ -141,14 +147,14 @@ async fn disabled_node_auto_dials_nothing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn static_peers_still_connect_and_sync_without_mdns() {
     let port = free_loopback_port();
-    let mut a = P2PNode::with_mdns(false).unwrap();
+    let mut a = P2PNode::with_mdns(&CHAIN, false).unwrap();
     a.listen_on_host(std::net::Ipv4Addr::LOCALHOST, port).unwrap();
     let a_id = a.peer_id;
     let mut a_requests = a.take_sync_rx().unwrap();
     let mut a_events = a.take_sync_event_rx().unwrap();
     let a_cmd = a.sync_commander();
 
-    let mut b = P2PNode::with_mdns(false).unwrap();
+    let mut b = P2PNode::with_mdns(&CHAIN, false).unwrap();
     let b_id = b.peer_id;
     let mut b_events = b.take_sync_event_rx().unwrap();
     let b_cmd = b.sync_commander();
@@ -196,10 +202,10 @@ async fn static_peers_still_connect_and_sync_without_mdns() {
 async fn enabled_nodes_discover_each_other() {
     let _serial = MDNS_SERIAL.lock().await;
     capture_log();
-    let mut a = P2PNode::with_mdns(true).unwrap();
+    let mut a = P2PNode::with_mdns(&CHAIN, true).unwrap();
     a.listen_on_host(std::net::Ipv4Addr::LOCALHOST, free_loopback_port()).unwrap();
     let a_id = a.peer_id;
-    let mut b = P2PNode::with_mdns(true).unwrap();
+    let mut b = P2PNode::with_mdns(&CHAIN, true).unwrap();
     b.listen_on_host(std::net::Ipv4Addr::LOCALHOST, free_loopback_port()).unwrap();
     let b_id = b.peer_id;
     tokio::spawn(a.run());

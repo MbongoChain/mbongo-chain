@@ -15,7 +15,8 @@ use std::task::{Context, Poll};
 
 use futures::AsyncRead;
 use libp2p::request_response::Codec;
-use mbongo_network::{BlockNotifyCodec, BLOCK_NOTIFY_PROTOCOL};
+use mbongo_core::ChainId;
+use mbongo_network::{block_notify_protocol, BlockNotifyCodec};
 
 struct Counting;
 
@@ -109,7 +110,9 @@ fn a_pending_frame_holds_memory_in_proportion_to_what_arrived() {
     let mut cx = Context::from_waker(&waker);
 
     let base = LIVE.load(Ordering::SeqCst);
-    let mut read = codec.read_request(&BLOCK_NOTIFY_PROTOCOL, &mut wire);
+    // The codec reads the same bytes whatever identifier it is given.
+    let protocol = block_notify_protocol(&ChainId([0x5a; 32]));
+    let mut read = codec.read_request(&protocol, &mut wire);
 
     // (bytes of the frame body sent so far, most the codec may hold)
     let steps = [
