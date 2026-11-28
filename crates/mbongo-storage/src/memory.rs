@@ -9,7 +9,10 @@ use parity_scale_codec::{Decode, Encode};
 
 use mbongo_core::{Account, Address, Block, Hash, Transaction};
 
-use crate::storage::{BatchOp, Storage, StorageError};
+use crate::storage::{
+    check_identity_write, identity_from, BatchOp, ChainIdentity, Durability, Storage, StorageError,
+    CHAIN_ID_KEY, GENESIS_HASH_KEY,
+};
 
 /// In-memory storage that keeps all data in a `HashMap<Vec<u8>, Vec<u8>>`.
 ///
@@ -226,7 +229,20 @@ impl Storage for InMemoryStorage {
         Ok(map.get(task_id.as_slice()).cloned())
     }
 
-    fn write_batch(&self, ops: Vec<BatchOp>) -> Result<(), StorageError> {
+    fn chain_identity(&self) -> Result<Option<ChainIdentity>, StorageError> {
+        let meta = self.meta.read().map_err(|_| StorageError::Database)?;
+        identity_from(
+            meta.get(CHAIN_ID_KEY).map(Vec::as_slice),
+            meta.get(GENESIS_HASH_KEY).map(Vec::as_slice),
+        )
+    }
+
+    /// Nothing here outlives the process, so both durabilities are the same.
+    fn write_batch_with(
+        &self,
+        ops: Vec<BatchOp>,
+        _durability: Durability,
+    ) -> Result<(), StorageError> {
         // Acquire all locks up front to guarantee atomicity.
         let mut accounts = self.accounts.write().map_err(|_| StorageError::Database)?;
         let mut blocks = self.blocks.write().map_err(|_| StorageError::Database)?;
@@ -236,6 +252,18 @@ impl Storage for InMemoryStorage {
         let mut meta = self.meta.write().map_err(|_| StorageError::Database)?;
         let mut receipts = self.receipts.write().map_err(|_| StorageError::Database)?;
         let mut tasks = self.tasks.write().map_err(|_| StorageError::Database)?;
+
+        // An identity is checked against the stored one before anything is
+        // written, so a refused batch writes nothing.
+        let stored = identity_from(
+            meta.get(CHAIN_ID_KEY).map(Vec::as_slice),
+            meta.get(GENESIS_HASH_KEY).map(Vec::as_slice),
+        )?;
+        for op in &ops {
+            if let BatchOp::PutChainIdentity(new) = op {
+                check_identity_write(stored, new)?;
+            }
+        }
 
         let mut max_height: Option<u64> = None;
 
@@ -271,6 +299,10 @@ impl Storage for InMemoryStorage {
                 }
                 BatchOp::PutTask(task_id, bytes) => {
                     tasks.insert(task_id.to_vec(), bytes);
+                }
+                BatchOp::PutChainIdentity(identity) => {
+                    meta.insert(CHAIN_ID_KEY.to_vec(), identity.chain_id.0.to_vec());
+                    meta.insert(GENESIS_HASH_KEY.to_vec(), identity.genesis_hash.0.to_vec());
                 }
             }
         }

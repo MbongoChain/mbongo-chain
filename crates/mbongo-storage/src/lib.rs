@@ -11,8 +11,9 @@ pub mod rocksdb;
 pub mod storage;
 
 pub use memory::InMemoryStorage;
+pub use rocksdb::Opened;
 pub use rocksdb::RocksDbStorage;
-pub use storage::{BatchOp, Storage, StorageError};
+pub use storage::{BatchOp, ChainIdentity, Durability, Storage, StorageError};
 
 #[cfg(test)]
 mod tests {
@@ -470,30 +471,197 @@ mod tests {
         // receipts column family — exactly the v0.2 on-disk state.
     }
 
+    // ── Storage schema 4 (RFC 0006) ──────────────────────────────────────
+
+    use crate::storage::{ChainIdentity, Durability};
+    use crate::Opened;
+    use mbongo_core::ChainId;
+    use std::collections::BTreeMap;
+    use std::path::Path;
+
+    const SCHEMA_4_CFS: [&str; 8] = [
+        "accounts",
+        "blocks",
+        "transactions",
+        "meta",
+        "height_index",
+        "tx_seq_index",
+        "receipts",
+        "tasks",
+    ];
+
+    /// The identity of test chain `n`, whose genesis block hashes to
+    /// `[0xC0 + n; 32]` (the storage layer stores hashes, it does not
+    /// compute them).
+    fn identity(n: u8) -> ChainIdentity {
+        ChainIdentity {
+            chain_id: ChainId([n; 32]),
+            genesis_hash: Hash([0xC0 + n; 32]),
+        }
+    }
+
+    /// The genesis batch of test chain `n`: block 0, its height index, one
+    /// allocation, and the identity, synced.
+    fn genesis_ops(n: u8) -> Vec<BatchOp> {
+        let id = identity(n);
+        let (_, mut block) = sample_block();
+        block.header.height = 0;
+        let (addr, account) = sample_account();
+        vec![
+            BatchOp::PutBlock(id.genesis_hash, block),
+            BatchOp::PutBlockHeightIndex(0, id.genesis_hash),
+            BatchOp::PutAccount(addr, account),
+            BatchOp::PutChainIdentity(id),
+        ]
+    }
+
+    fn write_genesis(store: &dyn Storage, n: u8) {
+        store.write_batch_with(genesis_ops(n), Durability::Synced).unwrap();
+    }
+
+    /// Opens an existing database with raw RocksDB, every column family it
+    /// has, to build the states a test needs.
+    fn raw(path: &Path) -> DB {
+        let existing = DB::list_cf(&Options::default(), path).unwrap();
+        let cfs: Vec<ColumnFamilyDescriptor> = existing
+            .iter()
+            .map(|n| ColumnFamilyDescriptor::new(n.clone(), Options::default()))
+            .collect();
+        DB::open_cf_descriptors(&Options::default(), path, cfs).unwrap()
+    }
+
+    /// Creates a database of the schema-4 layout with raw RocksDB, `stamp`
+    /// written if given, nothing else.
+    fn create_layout(path: &Path, names: &[&str], stamp: Option<&[u8]>) {
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+        let cfs: Vec<ColumnFamilyDescriptor> = names
+            .iter()
+            .map(|n| ColumnFamilyDescriptor::new(*n, Options::default()))
+            .collect();
+        let db = DB::open_cf_descriptors(&opts, path, cfs).unwrap();
+        if let Some(stamp) = stamp {
+            let cf = db.cf_handle("meta").unwrap();
+            db.put_cf(&cf, b"schema_version", stamp).unwrap();
+        }
+    }
+
+    /// A schema-3 (v0.4) database: the eight column families, stamp 3, and
+    /// a block if `with_block`.
+    fn create_v3_database(path: &Path, with_block: bool) {
+        create_layout(path, &SCHEMA_4_CFS, Some(&3u32.to_be_bytes()));
+        if with_block {
+            let db = raw(path);
+            let (hash, block) = sample_block();
+            let cf = db.cf_handle("blocks").unwrap();
+            db.put_cf(&cf, hash.0, parity_scale_codec::Encode::encode(&block)).unwrap();
+            let cf = db.cf_handle("height_index").unwrap();
+            db.put_cf(&cf, 0u64.to_be_bytes(), hash.0).unwrap();
+        }
+    }
+
+    /// Creates a database with the v0.3 (schema v2) layout the way v0.3
+    /// code did: the six v1 column families plus `receipts`, stamped 2.
+    /// Optionally seeds one receipt through raw handles.
+    fn create_v2_database(path: &Path, seed_receipt: Option<([u8; 32], Vec<u8>)>) {
+        let mut names: Vec<&str> = V1_CFS.to_vec();
+        names.push("receipts");
+        create_layout(path, &names, Some(&2u32.to_be_bytes()));
+        if let Some((task_id, bytes)) = seed_receipt {
+            let db = raw(path);
+            let cf = db.cf_handle("receipts").unwrap();
+            db.put_cf(&cf, task_id, bytes).unwrap();
+        }
+    }
+
+    type Snapshot = BTreeMap<String, Vec<(Vec<u8>, Vec<u8>)>>;
+
+    /// Every column family of the database at `path`, with every key and
+    /// value: what "logically unchanged" compares.
+    fn snapshot(path: &Path) -> Snapshot {
+        let names = DB::list_cf(&Options::default(), path).unwrap();
+        let db = DB::open_cf_for_read_only(&Options::default(), path, &names, false).unwrap();
+        names
+            .iter()
+            .map(|name| {
+                let iter = if name == "default" {
+                    db.iterator(::rocksdb::IteratorMode::Start)
+                } else {
+                    let cf = db.cf_handle(name).unwrap();
+                    db.iterator_cf(&cf, ::rocksdb::IteratorMode::Start)
+                };
+                let entries = iter.map(|r| {
+                    let (k, v) = r.unwrap();
+                    (k.to_vec(), v.to_vec())
+                });
+                (name.clone(), entries.collect())
+            })
+            .collect()
+    }
+
+    /// Every file of `dir`, with its bytes, except RocksDB's info `LOG`
+    /// files, which a read-only open may write.
+    fn files(dir: &Path) -> BTreeMap<String, Vec<u8>> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap())
+            .filter(|e| e.file_type().unwrap().is_file())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| !name.starts_with("LOG"))
+            .map(|name| {
+                let bytes = std::fs::read(dir.join(&name)).unwrap();
+                (name, bytes)
+            })
+            .collect()
+    }
+
+    /// `open` and `open_chain` both refuse the directory, with a message
+    /// containing `needle`, and leave it logically unchanged, and every file
+    /// but RocksDB's info log byte for byte.
+    fn assert_refused(path: &Path, needle: &str) {
+        let (keys, bytes) = (snapshot(path), files(path));
+        for result in [
+            RocksDbStorage::open(path).map(|_| ()),
+            RocksDbStorage::open_chain(path, &identity(1)).map(|_| ()),
+        ] {
+            match result {
+                Err(StorageError::Schema(msg)) => {
+                    assert!(msg.contains(needle), "expected {needle:?} in: {msg}");
+                }
+                Err(other) => panic!("expected a Schema refusal ({needle}), got {other:?}"),
+                Ok(()) => panic!("expected a refusal ({needle}), the directory was opened"),
+            }
+        }
+        assert_eq!(snapshot(path), keys, "{needle}: the database changed");
+        assert_eq!(files(path), bytes, "{needle}: a file changed");
+    }
+
     #[test]
-    fn rocksdb_fresh_database_is_schema_v3() {
+    fn rocksdb_fresh_database_is_schema_4() {
         let dir = tempfile::tempdir().unwrap();
         let store = RocksDbStorage::open(dir.path()).unwrap();
-        assert_eq!(SCHEMA_VERSION_CURRENT, 3);
-        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION_CURRENT);
+        assert_eq!(SCHEMA_VERSION_CURRENT, 4);
+        assert_eq!(store.schema_version().unwrap(), Some(4));
+        assert_eq!(store.chain_identity().unwrap(), None);
         assert!(!store.has_receipt(&[0u8; 32]).unwrap());
         assert!(!store.has_task(&[0u8; 32]).unwrap());
-    }
-
-    #[test]
-    fn rocksdb_fresh_database_holds_only_the_schema_stamp() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = RocksDbStorage::open(dir.path()).unwrap();
-        assert!(store.holds_only_schema_stamp().unwrap());
         drop(store);
-        // Reopening writes nothing.
-        let store = RocksDbStorage::open(dir.path()).unwrap();
-        assert!(store.holds_only_schema_stamp().unwrap());
+        // The layout is exactly the eight column families and the default.
+        let mut names = DB::list_cf(&Options::default(), dir.path()).unwrap();
+        names.sort();
+        let mut expected: Vec<String> = SCHEMA_4_CFS.iter().map(ToString::to_string).collect();
+        expected.push("default".to_string());
+        expected.sort();
+        assert_eq!(names, expected);
+        // Reopening a store that holds only its stamp writes nothing.
+        let before = snapshot(dir.path());
+        drop(RocksDbStorage::open(dir.path()).unwrap());
+        assert_eq!(snapshot(dir.path()), before);
     }
 
     #[test]
-    fn rocksdb_any_chain_data_is_more_than_the_schema_stamp() {
-        use crate::storage::BatchOp;
+    fn rocksdb_chain_data_without_an_identity_is_refused() {
         type Write = Box<dyn Fn(&RocksDbStorage)>;
         let cases: Vec<(&str, Write)> = vec![
             (
@@ -541,224 +709,489 @@ mod tests {
         assert_eq!(cases.len(), 8);
         for (name, write) in &cases {
             let dir = tempfile::tempdir().unwrap();
-            let store = RocksDbStorage::open(dir.path()).unwrap();
-            write(&store);
-            assert!(!store.holds_only_schema_stamp().unwrap(), "{name}");
+            write(&RocksDbStorage::open(dir.path()).unwrap());
+            assert_refused(dir.path(), "chain data but no chain identity");
+            let _ = name;
         }
         // The default column family, which no API writes, counts too.
         let dir = tempfile::tempdir().unwrap();
         drop(RocksDbStorage::open(dir.path()).unwrap());
+        raw(dir.path()).put(b"stray", b"x").unwrap();
+        assert_refused(dir.path(), "chain data but no chain identity");
+    }
+
+    #[test]
+    fn rocksdb_earlier_schemas_are_refused_unchanged() {
+        type Make = Box<dyn Fn(&Path)>;
+        let cases: Vec<(&str, Make, &str)> = vec![
+            (
+                "schema 1, empty",
+                Box::new(|p| create_v1_database(p, false)),
+                "schema 1",
+            ),
+            (
+                "schema 1, with data",
+                Box::new(|p| create_v1_database(p, true)),
+                "schema 1",
+            ),
+            (
+                "schema 2, empty",
+                Box::new(|p| create_v2_database(p, None)),
+                "schema 2",
+            ),
+            (
+                "schema 2, with a receipt",
+                Box::new(|p| create_v2_database(p, Some(([7u8; 32], vec![1])))),
+                "schema 2",
+            ),
+            (
+                "schema 3, stamp only",
+                Box::new(|p| create_v3_database(p, false)),
+                "schema 3",
+            ),
+            (
+                "schema 3, with a block",
+                Box::new(|p| create_v3_database(p, true)),
+                "schema 3",
+            ),
+        ];
+        assert_eq!(cases.len(), 6, "cases stated before they run");
+        for (name, make, needle) in &cases {
+            let dir = tempfile::tempdir().unwrap();
+            make(dir.path());
+            assert_refused(dir.path(), needle);
+            // Neither stamped nor given a column family.
+            let after = snapshot(dir.path());
+            let stamp = after["meta"].iter().find(|(k, _)| k == b"schema_version");
+            match *needle {
+                "schema 1" => assert!(stamp.is_none(), "{name}"),
+                _ => assert_ne!(stamp.unwrap().1, 4u32.to_be_bytes().to_vec(), "{name}"),
+            }
+            if *needle != "schema 3" {
+                assert!(
+                    !after.contains_key("tasks"),
+                    "{name}: a column family was added"
+                );
+            }
+            assert!(
+                matches!(RocksDbStorage::open(dir.path()), Err(StorageError::Schema(m)) if m.contains("not migrated")),
+                "{name}"
+            );
+        }
+    }
+
+    /// What a refused open leaves on disk. Every file but RocksDB's info logs
+    /// is byte for byte the same (asserted in every refusal test); this test
+    /// records, without asserting, what happens to the info logs, which
+    /// RocksDB may write even on a read-only open.
+    #[test]
+    fn rocksdb_refusal_changes_at_most_the_info_logs() {
+        let dir = tempfile::tempdir().unwrap();
+        create_v3_database(dir.path(), true);
+        let logs = |dir: &Path| -> BTreeMap<String, u64> {
+            std::fs::read_dir(dir)
+                .unwrap()
+                .map(|e| e.unwrap())
+                .filter(|e| e.file_name().to_string_lossy().starts_with("LOG"))
+                .map(|e| {
+                    (
+                        e.file_name().to_string_lossy().into_owned(),
+                        e.metadata().unwrap().len(),
+                    )
+                })
+                .collect()
+        };
+        let (before, bytes) = (logs(dir.path()), files(dir.path()));
+        assert!(RocksDbStorage::open(dir.path()).is_err());
+        let after = logs(dir.path());
+        assert_eq!(files(dir.path()), bytes);
+        println!("REFUSAL-LOGS before {before:?} after {after:?}");
+    }
+
+    #[test]
+    fn rocksdb_newer_or_malformed_stamps_are_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        create_layout(dir.path(), &SCHEMA_4_CFS, Some(&5u32.to_be_bytes()));
+        assert_refused(dir.path(), "schema 5 is newer than supported version 4");
+
+        let dir = tempfile::tempdir().unwrap();
+        create_layout(dir.path(), &SCHEMA_4_CFS, Some(&[0, 0, 4]));
+        assert_refused(dir.path(), "malformed schema_version");
+    }
+
+    #[test]
+    fn rocksdb_unknown_or_missing_column_families_are_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut names = SCHEMA_4_CFS.to_vec();
+        names.push("future_cf");
+        create_layout(dir.path(), &names, Some(&4u32.to_be_bytes()));
+        assert_refused(dir.path(), "unknown column family 'future_cf'");
+
+        // Stamp 4 without `tasks`.
+        let dir = tempfile::tempdir().unwrap();
+        create_layout(dir.path(), &SCHEMA_4_CFS[..7], Some(&4u32.to_be_bytes()));
+        assert_refused(dir.path(), "missing column family 'tasks'");
+
+        // No meta at all.
+        let dir = tempfile::tempdir().unwrap();
+        create_layout(dir.path(), &["accounts", "blocks"], None);
+        assert_refused(dir.path(), "missing column family 'meta'");
+    }
+
+    #[test]
+    fn rocksdb_files_that_are_not_a_database_are_refused_unchanged() {
+        // Any other file.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("notes.txt"), b"keep me").unwrap();
+        let before = files(dir.path());
+        for result in [
+            RocksDbStorage::open(dir.path()).map(|_| ()),
+            RocksDbStorage::open_chain(dir.path(), &identity(1)).map(|_| ()),
+        ] {
+            assert!(
+                matches!(result, Err(StorageError::Schema(m)) if m.contains("no database")),
+                "a directory of other files must be refused"
+            );
+        }
+        assert_eq!(files(dir.path()), before);
+
+        // Crash point 1: interrupted before the database existed. RocksDB
+        // writes CURRENT last; without it the files are no database yet.
+        let dir = tempfile::tempdir().unwrap();
+        create_layout(dir.path(), &SCHEMA_4_CFS, None);
+        std::fs::remove_file(dir.path().join("CURRENT")).unwrap();
+        let before = files(dir.path());
+        assert!(matches!(
+            RocksDbStorage::open(dir.path()),
+            Err(StorageError::Schema(m)) if m.contains("no database")
+        ));
+        assert_eq!(files(dir.path()), before, "nothing reinitialized");
+    }
+
+    #[test]
+    fn rocksdb_identity_is_checked_on_reopen() {
+        let dir = tempfile::tempdir().unwrap();
         {
-            let names = [
-                "accounts",
-                "blocks",
-                "transactions",
-                "meta",
-                "height_index",
-                "tx_seq_index",
-                "receipts",
-                "tasks",
-            ];
-            let cfs: Vec<ColumnFamilyDescriptor> = names
-                .iter()
-                .map(|name| ColumnFamilyDescriptor::new(*name, Options::default()))
+            let (store, opened) = RocksDbStorage::open_chain(dir.path(), &identity(1)).unwrap();
+            assert_eq!(opened, Opened::Created);
+            write_genesis(&store, 1);
+            assert_eq!(store.chain_identity().unwrap(), Some(identity(1)));
+        }
+        let (store, opened) = RocksDbStorage::open_chain(dir.path(), &identity(1)).unwrap();
+        assert_eq!(opened, Opened::Reopened);
+        assert_eq!(store.chain_identity().unwrap(), Some(identity(1)));
+        drop(store);
+
+        // Another chain id, and the same chain id with another genesis hash.
+        let other_chain = identity(2);
+        let other_genesis = ChainIdentity {
+            genesis_hash: Hash([0xEE; 32]),
+            ..identity(1)
+        };
+        for other in [other_chain, other_genesis] {
+            let (keys, bytes) = (snapshot(dir.path()), files(dir.path()));
+            match RocksDbStorage::open_chain(dir.path(), &other) {
+                Err(StorageError::Schema(msg)) => {
+                    assert!(msg.contains("belongs to chain"), "{msg}");
+                }
+                Err(e) => panic!("expected a refusal, got {e:?}"),
+                Ok(_) => panic!("another chain's directory was opened"),
+            }
+            assert_eq!(snapshot(dir.path()), keys);
+            assert_eq!(files(dir.path()), bytes);
+        }
+        // Plain `open` does not choose a chain: it opens it.
+        assert_eq!(
+            RocksDbStorage::open(dir.path()).unwrap().chain_identity().unwrap(),
+            Some(identity(1))
+        );
+    }
+
+    #[test]
+    fn rocksdb_partial_malformed_or_inconsistent_identities_are_refused() {
+        type Damage = Box<dyn Fn(&DB)>;
+        let cases: Vec<(&str, Damage, &str)> = vec![
+            (
+                "chain_id only",
+                Box::new(|db| {
+                    db.delete_cf(&db.cf_handle("meta").unwrap(), b"genesis_hash").unwrap()
+                }),
+                "partial",
+            ),
+            (
+                "genesis_hash only",
+                Box::new(|db| db.delete_cf(&db.cf_handle("meta").unwrap(), b"chain_id").unwrap()),
+                "partial",
+            ),
+            (
+                "chain_id of 31 bytes",
+                Box::new(|db| {
+                    db.put_cf(&db.cf_handle("meta").unwrap(), b"chain_id", [1u8; 31]).unwrap()
+                }),
+                "not 32 bytes",
+            ),
+            (
+                "genesis_hash of 33 bytes",
+                Box::new(|db| {
+                    db.put_cf(&db.cf_handle("meta").unwrap(), b"genesis_hash", [1u8; 33]).unwrap();
+                }),
+                "not 32 bytes",
+            ),
+            (
+                "genesis_hash not the indexed block 0",
+                Box::new(|db| {
+                    db.put_cf(
+                        &db.cf_handle("height_index").unwrap(),
+                        0u64.to_be_bytes(),
+                        [9u8; 32],
+                    )
+                    .unwrap();
+                }),
+                "not this database's block 0",
+            ),
+            (
+                "block 0 missing",
+                Box::new(|db| {
+                    db.delete_cf(&db.cf_handle("blocks").unwrap(), identity(1).genesis_hash.0)
+                        .unwrap();
+                }),
+                "not this database's block 0",
+            ),
+        ];
+        assert_eq!(cases.len(), 6, "cases stated before they run");
+        for (name, damage, needle) in &cases {
+            let dir = tempfile::tempdir().unwrap();
+            write_genesis(&RocksDbStorage::open(dir.path()).unwrap(), 1);
+            damage(&raw(dir.path()));
+            assert_refused(dir.path(), needle);
+            let _ = name;
+        }
+    }
+
+    #[test]
+    fn rocksdb_identity_and_genesis_are_one_atomic_batch() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RocksDbStorage::open(dir.path()).unwrap();
+        write_genesis(&store, 1);
+        assert_eq!(store.chain_identity().unwrap(), Some(identity(1)));
+        assert!(store.get_block(&identity(1).genesis_hash).unwrap().is_some());
+
+        // A second genesis batch of another chain is refused whole: its
+        // block, account and identity are all absent afterwards.
+        let before = snapshot(dir.path());
+        drop(store);
+        let store = RocksDbStorage::open(dir.path()).unwrap();
+        assert!(matches!(
+            store.write_batch_with(genesis_ops(2), Durability::Synced),
+            Err(StorageError::Schema(m)) if m.contains("refusing to record chain")
+        ));
+        assert!(store.get_block(&identity(2).genesis_hash).unwrap().is_none());
+        assert_eq!(store.chain_identity().unwrap(), Some(identity(1)));
+        drop(store);
+        assert_eq!(snapshot(dir.path()), before);
+        // Writing the same identity again is allowed and changes nothing.
+        let store = RocksDbStorage::open(dir.path()).unwrap();
+        store.write_batch(vec![BatchOp::PutChainIdentity(identity(1))]).unwrap();
+        drop(store);
+        assert_eq!(snapshot(dir.path()), before);
+    }
+
+    #[test]
+    fn rocksdb_interrupted_creation_resumes_only_when_empty() {
+        // Crash points 2 and 3: every column family, no stamp, nothing else.
+        let dir = tempfile::tempdir().unwrap();
+        create_layout(dir.path(), &SCHEMA_4_CFS, None);
+        let (store, opened) = RocksDbStorage::open_chain(dir.path(), &identity(1)).unwrap();
+        assert_eq!(opened, Opened::Resumed);
+        assert_eq!(store.schema_version().unwrap(), Some(4));
+        write_genesis(&store, 1);
+        drop(store);
+        assert_eq!(
+            RocksDbStorage::open_chain(dir.path(), &identity(1)).unwrap().1,
+            Opened::Reopened
+        );
+
+        // Crash point 4: stamp 4, nothing else.
+        let dir = tempfile::tempdir().unwrap();
+        create_layout(dir.path(), &SCHEMA_4_CFS, Some(&4u32.to_be_bytes()));
+        let (_, opened) = RocksDbStorage::open_chain(dir.path(), &identity(1)).unwrap();
+        assert_eq!(opened, Opened::Resumed);
+
+        // During column-family creation: some column families, no stamp. It
+        // cannot be told from an empty v0.2 database, so it is refused.
+        let dir = tempfile::tempdir().unwrap();
+        create_layout(dir.path(), &V1_CFS, None);
+        assert_refused(dir.path(), "schema 1");
+
+        // No stamp with any data is not an interrupted creation.
+        let dir = tempfile::tempdir().unwrap();
+        create_layout(dir.path(), &SCHEMA_4_CFS, None);
+        let db = raw(dir.path());
+        db.put_cf(&db.cf_handle("accounts").unwrap(), b"a", b"b").unwrap();
+        drop(db);
+        assert_refused(dir.path(), "schema 1");
+    }
+
+    #[test]
+    fn rocksdb_one_store_at_a_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let (first, _) = RocksDbStorage::open_chain(dir.path(), &identity(1)).unwrap();
+        // While it is open, nothing else opens the directory, whatever chain.
+        for chain in [1, 2] {
+            assert!(RocksDbStorage::open_chain(dir.path(), &identity(chain)).is_err());
+        }
+        write_genesis(&first, 1);
+        drop(first);
+        // Two starts at once on a new directory, for two chains: at most one
+        // opens it, and the directory ends up with exactly one identity.
+        for _ in 0..10 {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().to_path_buf();
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let starts: Vec<_> = [1u8, 2]
+                .into_iter()
+                .map(|n| {
+                    let (path, barrier) = (path.clone(), barrier.clone());
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        let (store, _) = RocksDbStorage::open_chain(&path, &identity(n)).ok()?;
+                        store.write_batch_with(genesis_ops(n), Durability::Synced).ok()?;
+                        Some(n)
+                    })
+                })
                 .collect();
-            let db = DB::open_cf_descriptors(&Options::default(), dir.path(), cfs).unwrap();
-            db.put(b"stray", b"x").unwrap();
+            let won: Vec<u8> = starts.into_iter().filter_map(|t| t.join().unwrap()).collect();
+            assert!(
+                won.len() <= 1,
+                "two starts initialized one directory: {won:?}"
+            );
+            if let [n] = won[..] {
+                let store = RocksDbStorage::open_chain(&path, &identity(n)).unwrap().0;
+                assert_eq!(store.chain_identity().unwrap(), Some(identity(n)));
+            }
         }
-        let store = RocksDbStorage::open(dir.path()).unwrap();
-        assert!(!store.holds_only_schema_stamp().unwrap(), "default");
     }
 
     #[test]
-    fn rocksdb_v1_database_migrates_to_v3() {
-        let dir = tempfile::tempdir().unwrap();
-        create_v1_database(dir.path(), true);
-
-        let store = RocksDbStorage::open(dir.path()).unwrap();
-        // Migration created the receipts and tasks CFs and stamped the
-        // version.
-        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION_CURRENT);
-        assert!(!store.has_receipt(&[0u8; 32]).unwrap());
-        assert!(!store.has_task(&[0u8; 32]).unwrap());
-
-        // Existing v0.2 data survives migration.
-        let (addr, account) = sample_account();
-        assert_eq!(store.get_account(&addr).unwrap(), Some(account));
-        let (block_hash, block) = sample_block();
-        assert_eq!(store.get_block(&block_hash).unwrap(), Some(block));
-        let (tx_hash, tx) = sample_transaction();
-        assert_eq!(store.get_transaction(&tx_hash).unwrap(), Some(tx));
-    }
-
-    /// Creates a database with the v0.3 (schema v2) layout the way v0.3
-    /// code did: the six v1 column families plus `receipts`, stamped 2.
-    /// Optionally seeds one receipt through raw handles.
-    fn create_v2_database(path: &std::path::Path, seed_receipt: Option<([u8; 32], Vec<u8>)>) {
-        let mut db_opts = Options::default();
-        db_opts.create_if_missing(true);
-        db_opts.create_missing_column_families(true);
-        let mut names: Vec<&str> = V1_CFS.to_vec();
-        names.push("receipts");
-        let cfs: Vec<ColumnFamilyDescriptor> = names
-            .iter()
-            .map(|name| ColumnFamilyDescriptor::new(*name, Options::default()))
-            .collect();
-        let db = DB::open_cf_descriptors(&db_opts, path, cfs).unwrap();
-        let cf = db.cf_handle("meta").unwrap();
-        db.put_cf(&cf, b"schema_version", 2u32.to_be_bytes()).unwrap();
-        if let Some((task_id, bytes)) = seed_receipt {
-            let cf = db.cf_handle("receipts").unwrap();
-            db.put_cf(&cf, task_id, bytes).unwrap();
+    fn rocksdb_a_directory_changed_while_opening_is_refused() {
+        // Between the read-only decision and the lock, another start records
+        // a chain in a directory that held only the stamp. The decision under
+        // the lock sees it and refuses, whichever chain is expected: without
+        // that second decision, the open would report a resumed creation.
+        for chain in [1, 2] {
+            let dir = tempfile::tempdir().unwrap();
+            drop(RocksDbStorage::open(dir.path()).unwrap());
+            crate::rocksdb::BETWEEN_INSPECT_AND_OPEN.with(|h| {
+                *h.borrow_mut() = Some(Box::new(|p: &Path| {
+                    let (other, _) = RocksDbStorage::open_chain(p, &identity(1)).unwrap();
+                    write_genesis(&other, 1);
+                }));
+            });
+            let err = RocksDbStorage::open_chain(dir.path(), &identity(chain))
+                .err()
+                .expect("a directory that changed while opening was accepted")
+                .to_string();
+            assert!(err.contains("changed while it was being opened"), "{err}");
+            assert!(
+                crate::rocksdb::BETWEEN_INSPECT_AND_OPEN.with(|h| h.borrow().is_none()),
+                "the change ran"
+            );
+            // Left as the other start wrote it.
+            let store = RocksDbStorage::open_chain(dir.path(), &identity(1)).unwrap().0;
+            assert_eq!(store.chain_identity().unwrap(), Some(identity(1)));
         }
-        // Dropped here: exactly the v0.3 on-disk state, no `tasks` CF.
     }
 
     #[test]
-    fn rocksdb_v2_database_migrates_to_v3() {
+    fn rocksdb_synced_writes_sync_the_log_and_buffered_writes_do_not() {
         let dir = tempfile::tempdir().unwrap();
-        let task_id = [0x77u8; 32];
-        let bytes = vec![42u8; 16];
-        create_v2_database(dir.path(), Some((task_id, bytes.clone())));
-
-        // Migration created the tasks CF and stamped 3; the anchored
-        // receipt survives untouched and no task appears from nowhere.
-        let store = RocksDbStorage::open(dir.path()).unwrap();
-        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION_CURRENT);
-        assert!(store.has_receipt(&task_id).unwrap());
-        assert_eq!(store.get_receipt(&task_id).unwrap(), Some(bytes));
-        assert!(!store.has_task(&task_id).unwrap());
-    }
-
-    #[test]
-    fn rocksdb_interrupted_migration_recovers() {
-        let dir = tempfile::tempdir().unwrap();
-        create_v1_database(dir.path(), false);
-
-        // Simulate a crash between migration steps 5 and 6: both derived
-        // CFs created, schema_version never stamped.
-        {
-            let db_opts = Options::default();
-            let existing = DB::list_cf(&Options::default(), dir.path()).unwrap();
-            let cfs: Vec<ColumnFamilyDescriptor> = existing
-                .iter()
-                .map(|n| ColumnFamilyDescriptor::new(n.clone(), Options::default()))
-                .collect();
-            let mut db = DB::open_cf_descriptors(&db_opts, dir.path(), cfs).unwrap();
-            db.create_cf("receipts", &Options::default()).unwrap();
-            db.create_cf("tasks", &Options::default()).unwrap();
+        let store = RocksDbStorage::open_with_statistics(dir.path()).unwrap();
+        let base = store.wal_syncs();
+        for i in 0..5u8 {
+            store.write_batch(vec![BatchOp::PutTask([i; 32], vec![i])]).unwrap();
         }
-
-        // Reopen: creation is skipped, the stamp is applied — idempotent.
-        let store = RocksDbStorage::open(dir.path()).unwrap();
-        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION_CURRENT);
-        assert!(!store.has_receipt(&[0u8; 32]).unwrap());
-        assert!(!store.has_task(&[0u8; 32]).unwrap());
-    }
-
-    #[test]
-    fn rocksdb_interrupted_v3_migration_recovers() {
-        // A v2 database whose open crashed after creating `tasks` but
-        // before stamping 3: reopen must skip creation and stamp.
-        let dir = tempfile::tempdir().unwrap();
-        create_v2_database(dir.path(), None);
-        {
-            let existing = DB::list_cf(&Options::default(), dir.path()).unwrap();
-            let cfs: Vec<ColumnFamilyDescriptor> = existing
-                .iter()
-                .map(|n| ColumnFamilyDescriptor::new(n.clone(), Options::default()))
-                .collect();
-            let mut db = DB::open_cf_descriptors(&Options::default(), dir.path(), cfs).unwrap();
-            db.create_cf("tasks", &Options::default()).unwrap();
-        }
-        let store = RocksDbStorage::open(dir.path()).unwrap();
-        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION_CURRENT);
-        assert!(!store.has_task(&[0u8; 32]).unwrap());
-    }
-
-    #[test]
-    fn rocksdb_v3_database_reopens() {
-        let dir = tempfile::tempdir().unwrap();
-        let task_id = [0x77u8; 32];
-        let bytes = vec![42u8; 16];
-        let task_bytes = vec![43u8; 24];
-        {
-            let store = RocksDbStorage::open(dir.path()).unwrap();
+        assert_eq!(store.wal_syncs(), base, "a buffered write synced the log");
+        for i in 0..5u8 {
             store
-                .write_batch(vec![
-                    BatchOp::PutReceipt(task_id, bytes.clone()),
-                    BatchOp::PutTask(task_id, task_bytes.clone()),
-                ])
+                .write_batch_with(vec![BatchOp::PutTask([i; 32], vec![i])], Durability::Synced)
                 .unwrap();
         }
-        // Receipt and task persist across reopen; version stays 3.
-        let store = RocksDbStorage::open(dir.path()).unwrap();
-        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION_CURRENT);
-        assert!(store.has_receipt(&task_id).unwrap());
-        assert_eq!(store.get_receipt(&task_id).unwrap(), Some(bytes));
-        assert!(store.has_task(&task_id).unwrap());
-        assert_eq!(store.get_task(&task_id).unwrap(), Some(task_bytes));
+        assert_eq!(
+            store.wal_syncs(),
+            base + 5,
+            "each synced write syncs the log once"
+        );
+        // The plain write_batch is the buffered one.
+        store
+            .write_batch_with(
+                vec![BatchOp::PutTask([9; 32], vec![9])],
+                Durability::Buffered,
+            )
+            .unwrap();
+        assert_eq!(store.wal_syncs(), base + 5);
     }
 
     #[test]
-    fn rocksdb_newer_schema_rejected() {
+    fn memory_and_rocksdb_agree_on_identity() {
         let dir = tempfile::tempdir().unwrap();
-        // Create a valid v3 database, then stamp a newer version directly.
-        {
-            let _ = RocksDbStorage::open(dir.path()).unwrap();
-        }
-        {
-            let existing = DB::list_cf(&Options::default(), dir.path()).unwrap();
-            let cfs: Vec<ColumnFamilyDescriptor> = existing
-                .iter()
-                .map(|n| ColumnFamilyDescriptor::new(n.clone(), Options::default()))
-                .collect();
-            let db = DB::open_cf_descriptors(&Options::default(), dir.path(), cfs).unwrap();
-            let cf = db.cf_handle("meta").unwrap();
-            db.put_cf(&cf, b"schema_version", 4u32.to_be_bytes()).unwrap();
-        }
-        match RocksDbStorage::open(dir.path()) {
-            Err(StorageError::Schema(msg)) => {
-                assert!(
-                    msg.contains('4'),
-                    "error should name the found version: {msg}"
-                );
-                assert!(
-                    msg.contains('3'),
-                    "error should name the supported version: {msg}"
-                );
-            }
-            Err(other) => panic!("expected Schema error, got: {other:?}"),
-            Ok(_) => panic!("open must reject a newer schema version"),
+        let rocks = RocksDbStorage::open(dir.path()).unwrap();
+        let memory = InMemoryStorage::new();
+        for store in [&rocks as &dyn Storage, &memory] {
+            assert_eq!(store.chain_identity().unwrap(), None);
+            write_genesis(store, 1);
+            assert_eq!(store.chain_identity().unwrap(), Some(identity(1)));
+            assert!(matches!(
+                store.write_batch(genesis_ops(2)),
+                Err(StorageError::Schema(m)) if m.contains("refusing to record chain")
+            ));
+            assert!(store.get_block(&identity(2).genesis_hash).unwrap().is_none());
+            store.write_batch(vec![BatchOp::PutChainIdentity(identity(1))]).unwrap();
+            assert_eq!(store.chain_identity().unwrap(), Some(identity(1)));
         }
     }
 
+    /// The cost of a synced write against a buffered one, on this machine.
+    /// A measurement, not a check: it changes nothing the node does.
+    ///
+    /// ```bash
+    /// cargo test -p mbongo-storage --release -- --ignored --nocapture fsync_cost
+    /// ```
     #[test]
-    fn rocksdb_unknown_column_family_rejected() {
+    #[ignore = "measurement; run by hand, preferably with --release"]
+    fn fsync_cost() {
         let dir = tempfile::tempdir().unwrap();
-        // Create a database containing a column family this binary does
-        // not know.
-        {
-            let mut db_opts = Options::default();
-            db_opts.create_if_missing(true);
-            db_opts.create_missing_column_families(true);
-            let mut names: Vec<&str> = V1_CFS.to_vec();
-            names.push("future_cf");
-            let cfs: Vec<ColumnFamilyDescriptor> = names
-                .iter()
-                .map(|n| ColumnFamilyDescriptor::new(*n, Options::default()))
+        let store = RocksDbStorage::open_with_statistics(dir.path()).unwrap();
+        let (_, block) = sample_block();
+        let mut report = Vec::new();
+        for durability in [Durability::Buffered, Durability::Synced] {
+            let mut micros: Vec<u128> = (0..200u64)
+                .map(|i| {
+                    let mut b = block.clone();
+                    b.header.height = i;
+                    let hash = Hash([u8::try_from(i % 251).unwrap(); 32]);
+                    let start = std::time::Instant::now();
+                    store
+                        .write_batch_with(
+                            vec![
+                                BatchOp::PutBlock(hash, b),
+                                BatchOp::PutBlockHeightIndex(i, hash),
+                            ],
+                            durability,
+                        )
+                        .unwrap();
+                    start.elapsed().as_micros()
+                })
                 .collect();
-            let _db = DB::open_cf_descriptors(&db_opts, dir.path(), cfs).unwrap();
+            micros.sort_unstable();
+            report.push(format!(
+                "{durability:?}: p50 {} us, p95 {} us, p99 {} us",
+                micros[100], micros[190], micros[198]
+            ));
         }
-        match RocksDbStorage::open(dir.path()) {
-            Err(StorageError::Schema(msg)) => {
-                assert!(
-                    msg.contains("future_cf"),
-                    "error should name the unknown CF: {msg}"
-                );
-            }
-            Err(other) => panic!("expected Schema error, got: {other:?}"),
-            Ok(_) => panic!("open must reject an unknown column family"),
-        }
+        println!(
+            "FSYNC-COST {} | wal syncs {}",
+            report.join(" | "),
+            store.wal_syncs()
+        );
     }
 }
