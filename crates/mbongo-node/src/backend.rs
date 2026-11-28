@@ -17,7 +17,7 @@ use mbongo_core::{
 };
 use mbongo_network::rpc::{BackendError, RpcBackend};
 use mbongo_network::BlockBroadcaster;
-use mbongo_storage::{BatchOp, Storage, StorageError};
+use mbongo_storage::{BatchOp, ChainIdentity, Durability, Storage, StorageError};
 use mbongo_verification::{verify_receipt_signature, ReceiptError, ReceiptIndex, RECEIPT_VERSION};
 use parity_scale_codec::{Decode, Encode};
 use tokio::sync::RwLock;
@@ -340,28 +340,31 @@ impl<S: Storage> NodeBackend<S> {
     }
 
     /// Writes the genesis of `genesis` if height 0 is absent, or checks the
-    /// stored genesis block against it if present (RFC 0006 §1).
+    /// stored genesis block and chain identity against it if present
+    /// (RFC 0006 §1; storage schema 4).
     ///
-    /// The block, its height index and every allocation are written in one
-    /// `write_batch`, so a failure leaves nothing behind. An allocation
-    /// creates an account with its amount and nonce 0, a zero amount
-    /// included (plan D-3). The node calls this only once it has proven the
-    /// directory belongs to `genesis` (`genesis_dir`).
+    /// The block, its height index, every allocation and the chain identity
+    /// (`chain_id` and the hash of block 0) are written in one synced batch,
+    /// so a failure leaves nothing behind, and success is on stable storage.
+    /// An allocation creates an account with its amount and nonce 0, a zero
+    /// amount included (plan D-3). The node calls this only once storage has
+    /// opened the directory for this chain (`genesis_dir`).
     ///
     /// # Errors
     ///
-    /// On a storage failure, if the stored genesis block is not the one
-    /// `genesis` derives, or if this backend already runs another chain.
+    /// On a storage failure; if the stored genesis block is not the one
+    /// `genesis` derives; if a stored genesis has no identity, or another
+    /// one; or if this backend already runs another chain.
     ///
     /// On success the backend runs the chain of `genesis`: every
     /// transaction signature is verified for its `chain_id` (RFC 0006 §2).
     pub fn ensure_genesis(&self, genesis: &Genesis) -> Result<(), BackendError> {
+        let storage_err =
+            |e: mbongo_storage::StorageError| BackendError::Internal(format!("storage error: {e}"));
         let block = genesis_block(genesis);
         let block_hash = compute_block_hash(&block);
-        let stored = self
-            .storage
-            .get_block_by_height(0)
-            .map_err(|e| BackendError::Internal(format!("storage error: {e}")))?;
+        let identity = chain_identity(genesis);
+        let stored = self.storage.get_block_by_height(0).map_err(storage_err)?;
         if let Some(stored) = stored {
             let stored_hash = compute_block_hash(&stored);
             if stored_hash != block_hash {
@@ -371,6 +374,20 @@ impl<S: Storage> NodeBackend<S> {
                     hex::encode(block_hash.0),
                     genesis.chain_id
                 )));
+            }
+            match self.storage.chain_identity().map_err(storage_err)? {
+                Some(stored) if stored == identity => {}
+                Some(stored) => {
+                    return Err(BackendError::Internal(format!(
+                        "the store records chain {}, not chain {}",
+                        stored.chain_id, genesis.chain_id
+                    )))
+                }
+                None => {
+                    return Err(BackendError::Internal(
+                        "the store holds a genesis block but no chain identity".to_string(),
+                    ))
+                }
             }
             return self.bind_chain(genesis);
         }
@@ -385,9 +402,8 @@ impl<S: Storage> NodeBackend<S> {
             account.balance = *amount;
             ops.push(BatchOp::PutAccount(*address, account));
         }
-        self.storage
-            .write_batch(ops)
-            .map_err(|e| BackendError::Internal(format!("storage error: {e}")))
+        ops.push(BatchOp::PutChainIdentity(identity));
+        self.storage.write_batch_with(ops, Durability::Synced).map_err(storage_err)
     }
 
     /// Validate and atomically apply a block to storage.
@@ -404,16 +420,32 @@ impl<S: Storage> NodeBackend<S> {
     ///    and from what the block changes (RFC 0006 §4, §5).
     ///
     /// On success the block, its transactions, and all account updates are
-    /// committed atomically via [`Storage::write_batch`]. On any failure,
+    /// committed atomically, [`Durability::Buffered`]. On any failure,
     /// including a `state_root` mismatch, nothing is written.
     ///
-    /// Used by both `produce_block` (after building the block locally) and
-    /// the follower sync path (applying blocks received from peers).
+    /// The path for blocks received from peers. A block this node produced
+    /// goes through [`Self::apply_block_with`], synced.
     ///
     /// # Errors
     ///
     /// Returns [`ApplyBlockError`] if validation or storage fails.
     pub fn apply_block(&self, block: &Block) -> Result<Hash, ApplyBlockError> {
+        self.apply_block_with(block, Durability::Buffered)
+    }
+
+    /// [`Self::apply_block`], committed with `durability`. `produce_block`
+    /// uses [`Durability::Synced`]: the block is on stable storage when this
+    /// returns `Ok`, before anything announces it (RFC 0006 §3).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ApplyBlockError`] if validation or storage fails; on a
+    /// storage failure nothing of the block is written.
+    pub fn apply_block_with(
+        &self,
+        block: &Block,
+        durability: Durability,
+    ) -> Result<Hash, ApplyBlockError> {
         let storage = &self.storage;
 
         // ── Parent linkage ─────────────────────────────────────────────
@@ -506,8 +538,10 @@ impl<S: Storage> NodeBackend<S> {
             block_hash,
         ));
 
-        // Atomic commit.
-        storage.write_batch(ops).map_err(|e| ApplyBlockError::Storage(e.to_string()))?;
+        // Atomic commit, as durable as the caller asks.
+        storage
+            .write_batch_with(ops, durability)
+            .map_err(|e| ApplyBlockError::Storage(e.to_string()))?;
 
         Ok(block_hash)
     }
@@ -1202,6 +1236,15 @@ pub(crate) fn genesis_block(genesis: &Genesis) -> Block {
 }
 
 /// Computes a deterministic blake3 hash over the SCALE-encoded block.
+/// The identity a store of the chain `genesis` defines holds: its `chain_id`
+/// and the hash of its block 0 (storage schema 4).
+pub(crate) fn chain_identity(genesis: &Genesis) -> ChainIdentity {
+    ChainIdentity {
+        chain_id: genesis.chain_id,
+        genesis_hash: compute_block_hash(&genesis_block(genesis)),
+    }
+}
+
 pub(crate) fn compute_block_hash(block: &Block) -> Hash {
     let encoded = block.encode();
     let digest = blake3::hash(&encoded);
@@ -1646,12 +1689,15 @@ impl<S: Storage + Send + Sync + 'static> RpcBackend for NodeBackend<S> {
                 producer_signature,
             };
 
-            // Delegate to apply_block, which validates the block as it
-            // would a peer's and commits it atomically. On failure this
-            // returns early and the mempool is untouched: every selected
-            // transaction is still pending.
-            let block_hash =
-                backend.apply_block(&block).map_err(|e| BackendError::Internal(e.to_string()))?;
+            // Delegate to apply_block_with, which validates the block as it
+            // would a peer's and commits it atomically and synced (RFC 0006
+            // §3): it is on stable storage before anything below announces
+            // it. On failure this returns early, nothing is broadcast, and
+            // the mempool is untouched: every selected transaction is still
+            // pending.
+            let block_hash = backend
+                .apply_block_with(&block, Durability::Synced)
+                .map_err(|e| BackendError::Internal(e.to_string()))?;
 
             // Applied and committed — only now do the included transactions
             // leave the mempool.
@@ -7661,3 +7707,8 @@ mod state_tests;
 #[cfg(test)]
 #[path = "backend_block_tests.rs"]
 mod block_tests;
+
+/// S1-8: synced genesis and production commits, before any broadcast.
+#[cfg(test)]
+#[path = "backend_durability_tests.rs"]
+mod durability_tests;

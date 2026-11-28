@@ -181,7 +181,7 @@ const MEMPOOL_SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_se
 const RPC_AUTHORITY: &str = "rpc_v0.3";
 /// The on-disk schema this binary writes (informational; the storage layer
 /// is the authority and stamps it itself).
-const STORAGE_SCHEMA: u32 = 3;
+const STORAGE_SCHEMA: u32 = 4;
 
 /// Diagnostic builds count every heap allocation (S3 A2.2a, `alloc-stats`).
 #[cfg(feature = "alloc-stats")]
@@ -651,7 +651,7 @@ mod tests {
     fn dev_selects_the_built_in_genesis() {
         let args = parse(&["--dev"]).unwrap();
         let selected = args.genesis.load().unwrap();
-        assert_eq!(selected.bytes, mbongo_core::genesis::DEV_GENESIS_FILE);
+        assert_eq!(selected.source, "dev (built in)");
         assert_eq!(
             selected.genesis.chain_id,
             mbongo_core::Genesis::dev().chain_id

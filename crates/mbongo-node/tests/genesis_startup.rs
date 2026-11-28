@@ -19,7 +19,17 @@ const RPC_PORT: u16 = 24944;
 const REST_PORT: u16 = 24080;
 const P2P_PORT: u16 = 24333;
 
+/// The S1-4 marker: never written since schema 4; its presence refuses a
+/// directory.
 const MARKER: &str = "MBONGO_GENESIS";
+
+/// The chain id the directory records (storage schema 4), read with the node
+/// stopped.
+fn stored_chain(data: &Path) -> String {
+    let storage = RocksDbStorage::open(data).unwrap();
+    let identity = storage.chain_identity().unwrap().expect("no chain identity");
+    identity.chain_id.to_string()
+}
 
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -214,7 +224,8 @@ fn starts_and_restarts_on_its_own_genesis() {
         line(&banner, "Data dir:").ends_with("(new chain)"),
         "{banner}"
     );
-    let marker = std::fs::read(dev_data.join(MARKER)).unwrap();
+    assert_eq!(stored_chain(&dev_data), dev_id);
+    assert!(!dev_data.join(MARKER).exists(), "no marker is written");
     for _ in 0..2 {
         let banner = started(&["--dev"], &dev_data);
         assert_eq!(line(&banner, "Chain id:"), dev_id);
@@ -222,7 +233,7 @@ fn starts_and_restarts_on_its_own_genesis() {
             line(&banner, "Data dir:").ends_with("(existing chain)"),
             "{banner}"
         );
-        assert_eq!(std::fs::read(dev_data.join(MARKER)).unwrap(), marker);
+        assert_eq!(stored_chain(&dev_data), dev_id);
     }
 
     // --genesis on a new directory, and again.
@@ -304,7 +315,7 @@ fn starts_and_restarts_on_its_own_genesis() {
         stderr.contains(&format!("belongs to chain {net_id}")),
         "{stderr}"
     );
-    assert_eq!(std::fs::read(dev_data.join(MARKER)).unwrap(), marker);
+    assert_eq!(stored_chain(&dev_data), dev_id);
     // Still usable with the right one.
     let banner = started(&["--dev"], &dev_data);
     assert!(
@@ -314,13 +325,24 @@ fn starts_and_restarts_on_its_own_genesis() {
 
     // While a node runs on a directory, RocksDB's lock refuses a second
     // node on it, before the network, even with the same genesis.
+    // The first node is stopped before any assertion, so a failure here
+    // cannot leave it running.
     let (mut first, _) = running(&["--dev"], &dev_data);
     let out = refused(&["--dev"], &dev_data);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("storage error"), "{stderr}");
     first.kill().unwrap();
     first.wait().unwrap();
-    assert_eq!(std::fs::read(dev_data.join(MARKER)).unwrap(), marker);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("storage error"), "{stderr}");
+    // An engine failure (the lock), not a refusal of the directory's content.
+    assert!(stderr.contains("Database error"), "{stderr}");
+    assert!(!stderr.contains("Schema error"), "{stderr}");
+    assert_eq!(stored_chain(&dev_data), dev_id);
+    // The lock was the only obstacle: once released, the same start opens it.
+    let banner = started(&["--dev"], &dev_data);
+    assert!(
+        line(&banner, "Data dir:").ends_with("(existing chain)"),
+        "{banner}"
+    );
 
     // Two nodes with different genesis files started at once on one new
     // directory: one chain, the winner's, and the other genesis refused
@@ -338,14 +360,7 @@ fn starts_and_restarts_on_its_own_genesis() {
         let (won, lost) = (order[winner], order[1 - winner]);
         let won_id = if won == dev_args { &dev_id } else { &net_id };
         eprintln!("race round {round}: {:?} started, {:?} refused", won, lost);
-        let marker = std::fs::read_to_string(data.join(MARKER)).unwrap();
-        assert!(
-            marker.contains(&format!(
-                "chain_id {won_id}
-"
-            )),
-            "round {round}"
-        );
+        assert_eq!(&stored_chain(&data), won_id, "round {round}");
         let out = refused(lost, &data);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
@@ -405,20 +420,15 @@ fn an_invalid_or_missing_genesis_file_stops_the_node_first() {
 }
 
 #[test]
-fn a_directory_without_a_marker_is_refused_unchanged() {
-    // A database written without a marker, as v0.4 did: it is never
-    // opened, so even its RocksDB files stay byte-identical.
-    let dir = scratch("nomarker");
-    let data = dir.join("data");
-    {
-        let storage = RocksDbStorage::open(&data).unwrap();
-        storage.put_block_height_index(0, mbongo_core::Hash([1u8; 32])).unwrap();
-    }
+fn earlier_directories_are_refused_unchanged() {
+    // Storage schema 4 (S1-8): a directory of an earlier version is refused,
+    // never migrated. Every file but RocksDB's info logs stays byte for byte.
     let snapshot = |d: &Path| -> Vec<(String, Vec<u8>)> {
         let mut files: Vec<(String, Vec<u8>)> = std::fs::read_dir(d)
             .unwrap()
             .map(|e| e.unwrap().path())
             .filter(|p| p.is_file())
+            .filter(|p| !p.file_name().unwrap().to_string_lossy().starts_with("LOG"))
             .map(|p| {
                 (
                     p.file_name().unwrap().to_string_lossy().into_owned(),
@@ -429,12 +439,42 @@ fn a_directory_without_a_marker_is_refused_unchanged() {
         files.sort();
         files
     };
+    let dir = scratch("earlier");
+
+    // Schema 3, as a v0.4 node or this node before S1-8 left it: a chain,
+    // stamp 3, no identity.
+    let data = dir.join("schema3");
+    {
+        let storage = RocksDbStorage::open(&data).unwrap();
+        storage.put_block_height_index(0, mbongo_core::Hash([1u8; 32])).unwrap();
+    }
+    {
+        let names = rocksdb::DB::list_cf(&rocksdb::Options::default(), &data).unwrap();
+        let db = rocksdb::DB::open_cf(&rocksdb::Options::default(), &data, &names).unwrap();
+        let meta = db.cf_handle("meta").unwrap();
+        db.put_cf(&meta, b"schema_version", 3u32.to_be_bytes()).unwrap();
+    }
     let before = snapshot(&data);
     let out = refused(&["--dev"], &data);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("no MBONGO_GENESIS marker"), "{stderr}");
+    assert!(stderr.contains("storage schema 3"), "{stderr}");
+    assert!(stderr.contains("not migrated"), "{stderr}");
     assert_eq!(snapshot(&data), before);
-    assert!(!data.join(MARKER).exists());
+
+    // The same directory with the S1-4 marker beside it: refused before the
+    // database is opened, whatever the marker says.
+    std::fs::write(
+        data.join(MARKER),
+        b"mbongo-genesis-marker:v1
+",
+    )
+    .unwrap();
+    let before = snapshot(&data);
+    let out = refused(&["--dev"], &data);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("MBONGO_GENESIS"), "{stderr}");
+    assert!(stderr.contains("storage schema 3"), "{stderr}");
+    assert_eq!(snapshot(&data), before);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

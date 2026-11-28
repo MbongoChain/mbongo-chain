@@ -57,10 +57,10 @@ use tokio::time::sleep;
 /// The authority the operator is running. Informational; not a protocol field.
 const PROTOCOL_AUTHORITY: &str = "PROTOCOL_LOCK_v0.4";
 const RPC_AUTHORITY: &str = "rpc_v0.3";
-const STORAGE_SCHEMA: u32 = 3;
+const STORAGE_SCHEMA: u32 = 4;
 /// The line every node prints at start-up; the harness requires it from all
 /// three, which is the operational version check (one binary, one lock).
-const NODE_BANNER: &str = "  Protocol: PROTOCOL_LOCK_v0.4 (rpc_v0.3, storage schema 3)";
+const NODE_BANNER: &str = "  Protocol: PROTOCOL_LOCK_v0.4 (rpc_v0.3, storage schema 4)";
 /// The line a node prints right after its PeerId when it runs with
 /// `--no-mdns` (SEC-MDNS). The harness requires it from every node it starts:
 /// the evidence that the process really runs without mDNS, not only that the
@@ -550,7 +550,7 @@ async fn run(base: &Path, trace: &mut Trace) -> Result<(), String> {
         std::fs::remove_dir_all(base).map_err(|e| e.to_string())?;
     }
     std::fs::create_dir_all(base).map_err(|e| e.to_string())?;
-    println!("  fresh data directories under {} — no prior chain state exists, so every node starts from genesis (schema 3)", base.display());
+    println!("  fresh data directories under {} — no prior chain state exists, so every node starts from genesis (schema 4)", base.display());
 
     // ── Phase 1: fresh three-node devnet, health gate ────────────────
     println!("Phase 1: starting a fresh three-node devnet...");
